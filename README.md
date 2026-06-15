@@ -24,7 +24,7 @@ Copy-Item config.example.json config.json
 
 O jeito mais simples de mandar para outro bot do Discord e criar um webhook no canal onde esse bot consegue ler mensagens.
 
-Se o Jarvis Bot tiver um endpoint HTTP proprio, coloque a URL em `jarvis_endpoint_url`. Nesse modo o programa manda JSON para o Jarvis em vez de mandar pelo webhook.
+Se o Jarvis Bot tiver um endpoint HTTP proprio, coloque a URL em `jarvis_endpoint_url`. Nesse modo o programa manda JSON para o Jarvis em vez de mandar pelo webhook. Use `https://` quando o servidor tiver HTTPS.
 
 O programa reconhece dois layouts:
 
@@ -92,6 +92,12 @@ Se o Jarvis Bot tiver um pequeno servidor HTTP, cole a URL no campo `Endpoint Ja
 
 ```text
 http://127.0.0.1:3000/freefire-kills
+```
+
+Para seu endpoint hospedado na Square Cloud, use:
+
+```text
+https://jarvis-da-shopee.squareweb.app/api/freefire-kills
 ```
 
 O programa vai enviar JSON assim:

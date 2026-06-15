@@ -484,13 +484,24 @@ def send_to_discord(webhook_url: str, content: str, screenshot: Path | None) -> 
             handle.close()
 
 
-def send_to_jarvis_endpoint(endpoint_url: str, content: str, players: list[PlayerKill]) -> None:
+def normalize_endpoint_url(endpoint_url: str) -> str:
+    endpoint_url = endpoint_url.strip()
+    if endpoint_url.startswith("http://"):
+        return "https://" + endpoint_url[len("http://") :]
+    return endpoint_url
+
+
+def send_to_jarvis_endpoint(endpoint_url: str, content: str, players: list[PlayerKill]) -> str:
     payload = {
         "content": content,
         "players": [{"name": player.name, "kills": player.kills} for player in players],
     }
-    response = requests.post(endpoint_url, json=payload, timeout=20)
+    response = requests.post(normalize_endpoint_url(endpoint_url), json=payload, timeout=20, allow_redirects=False)
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
     response.raise_for_status()
+    return response.text.strip()
 
 
 def foreground_window_box() -> tuple[int, int, int, int] | None:
@@ -581,8 +592,11 @@ def process_image(
     if not dry_run:
         jarvis_endpoint_url = config.get("jarvis_endpoint_url", "").strip()
         if jarvis_endpoint_url:
-            send_to_jarvis_endpoint(jarvis_endpoint_url, message, players)
-            emit("Enviado para o endpoint do Jarvis Bot.")
+            response_text = send_to_jarvis_endpoint(jarvis_endpoint_url, message, players)
+            if response_text:
+                emit(f"Enviado para o endpoint do Jarvis Bot. Resposta: {response_text[:300]}")
+            else:
+                emit("Enviado para o endpoint do Jarvis Bot.")
         else:
             screenshot = image_path if config.get("attach_screenshot", True) else None
             send_to_discord(config["discord_webhook_url"], message, screenshot)
@@ -746,7 +760,8 @@ def run_gui(config_path: Path) -> int:
 
     def update_config_from_form() -> dict[str, Any]:
         config["discord_webhook_url"] = webhook_var.get().strip()
-        config["jarvis_endpoint_url"] = jarvis_var.get().strip()
+        config["jarvis_endpoint_url"] = normalize_endpoint_url(jarvis_var.get())
+        jarvis_var.set(config["jarvis_endpoint_url"])
         config["message_title"] = title_var.get().strip() or "Kills da partida"
         config["attach_screenshot"] = bool(attach_var.get())
         config["capture_target"] = capture_options.get(capture_target_var.get(), "primary")
