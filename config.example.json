@@ -1,0 +1,119 @@
+{
+  "hotkey": "CTRL+SHIFT+F12",
+  "discord_webhook_url": "COLE_AQUI_O_WEBHOOK_DO_DISCORD",
+  "jarvis_endpoint_url": "",
+  "message_title": "Kills da partida",
+  "attach_screenshot": true,
+  "capture_target": "primary",
+  "ignored_players": [],
+  "captures_dir": "captures",
+  "debug_dir": "debug",
+  "reference_size": [
+    2560,
+    1080
+  ],
+  "name_corrections": {
+    "ruan lokol": "ruan loko'",
+    "vt cutcútn": "vt cutcut",
+    "vt cutcutn": "vt cutcut",
+    "AIZEN": "AIZEN OFC",
+    "AZARAD": "AZARADOyt",
+    "NEFLEXBB": "NEFLEX88",
+    "LOIJD": "LOUD",
+    "@JlJHHOfC": "@JUHHOfc",
+    "@JlJHH0fC": "@JUHHOfc",
+    "JlJHHOfC": "@JUHHOfc",
+    "JlJHH0fC": "@JUHHOfc",
+    "URIEL": "URIEL__WIN:)"
+  },
+  "layout": {
+    "kill_mode": "single_column",
+    "name_height": 46,
+    "rows": [
+      [
+        445,
+        529
+      ],
+      [
+        539,
+        622
+      ],
+      [
+        631,
+        715
+      ],
+      [
+        724,
+        807
+      ]
+    ],
+    "left": {
+      "name": [
+        488,
+        782
+      ],
+      "kills": [
+        820,
+        880
+      ]
+    },
+    "right": {
+      "name": [
+        1472,
+        1774
+      ],
+      "kills": [
+        1810,
+        1865
+      ]
+    }
+  },
+  "final_layout": {
+    "kill_mode": "kda",
+    "name_height": 67,
+    "header_detection": [
+      350,
+      400,
+      2050,
+      480
+    ],
+    "rows": [
+      [
+        478,
+        565
+      ],
+      [
+        568,
+        654
+      ],
+      [
+        658,
+        744
+      ],
+      [
+        748,
+        833
+      ]
+    ],
+    "left": {
+      "name": [
+        535,
+        850
+      ],
+      "kills": [
+        835,
+        975
+      ]
+    },
+    "right": {
+      "name": [
+        1470,
+        1768
+      ],
+      "kills": [
+        1765,
+        1915
+      ]
+    }
+  }
+}
