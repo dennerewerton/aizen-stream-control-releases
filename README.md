@@ -225,10 +225,10 @@ Formato do manifesto:
 
 ```json
 {
-  "version": "2.6.21",
-  "notes": "Fila FF com acoes reais do Jarvis: chamar proximo, remover, limpar, +1/-1 salas e sincronizar.",
+  "version": "2.6.22",
+  "notes": "Kills FF com acoes reais do Jarvis no ranking: +1/-1, definir, editar nome/ID, ignorar, reexibir e resetar.",
   "windows": {
-    "portable_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.21/AizenStreamControl.exe",
+    "portable_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.22/AizenStreamControl.exe",
     "sha256": "hash-sha256-do-exe"
   }
 }
@@ -237,7 +237,7 @@ Formato do manifesto:
 Para gerar o manifesto depois de publicar o exe:
 
 ```powershell
-.\build_update_manifest.ps1 -Version "2.6.21" -DownloadUrl "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.21/AizenStreamControl.exe"
+.\build_update_manifest.ps1 -Version "2.6.22" -DownloadUrl "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.22/AizenStreamControl.exe"
 ```
 
 Envie para o servidor:
@@ -246,6 +246,10 @@ Envie para o servidor:
 - `dist\updates.json`
 
 Depois cole a URL do `updates.json` no campo `Manifesto de atualização`.
+
+### Revisão 2.6.22
+
+A versão `2.6.22` aproxima `Kills FF` do painel admin do site: o ranking visual ganhou ações `+1`, `-1`, `Definir`, editar `Nome`, editar `ID`, `Ignorar`, `Reexibir`, `Zerar diario` e `Zerar geral`, usando a rota segura `/api/freefire-kills/action` do Jarvis.
 
 ### Revisão 2.6.21
 

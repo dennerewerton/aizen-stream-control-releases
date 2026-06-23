@@ -47,7 +47,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.21"
+APP_VERSION = "2.6.22"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -192,6 +192,9 @@ MODIFIERS = {
 class PlayerKill:
     name: str
     kills: int
+    key: str = ""
+    ff_player_id: str = ""
+    entries: int = 0
 
 
 @dataclass
@@ -2436,13 +2439,27 @@ def parse_players_payload(payload: Any) -> list[PlayerKill]:
                 ),
             )
             kills = first_present(item, ("kills", "kill", "k", "abates", "score", "points", "value", "total"), 0)
+            key = first_present(item, ("key", "player_key", "playerKey", "id", "uid"), "")
+            ff_player_id = first_present(item, ("ff_player_id", "ffPlayerId", "freefire_id", "freeFireId", "player_id", "playerId"), "")
+            entries = first_present(item, ("entries", "partidas", "matches", "games"), 0)
         elif isinstance(item, (list, tuple)) and len(item) >= 2:
             name, kills = item[0], item[1]
+            key = ""
+            ff_player_id = ""
+            entries = 0
         else:
             continue
         clean = str(name or "").strip()
         if clean:
-            players.append(PlayerKill(clean, normalize_kill_value(kills)))
+            players.append(
+                PlayerKill(
+                    clean,
+                    normalize_kill_value(kills),
+                    str(key or "").strip(),
+                    re.sub(r"\D+", "", str(ff_player_id or "")),
+                    normalize_kill_value(entries),
+                )
+            )
     return players
 
 
@@ -2656,6 +2673,83 @@ def fetch_kills_realtime(
         headers=headers,
         timeout=12,
     )
+    response.raise_for_status()
+    return parse_realtime_state(response.text)
+
+
+def derive_kills_action_endpoint(endpoint_url: str) -> str:
+    clean = normalize_endpoint_url(endpoint_url)
+    parsed = urlparse(clean)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/freefire-kills"):
+        path = f"{path}/action"
+    elif path.endswith("/freefire-kills"):
+        path = f"{path}/action"
+    elif path.endswith("/action"):
+        path = path
+    else:
+        path = f"{path}/action"
+    return parsed._replace(path=path, query="", fragment="").geturl()
+
+
+def send_kills_action_update(
+    endpoint_url: str,
+    action: str,
+    player: PlayerKill | None = None,
+    kills: int | None = None,
+    scope: str = "both",
+    new_name: str = "",
+    ff_player_id: str = "",
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> RealtimeState:
+    payload: dict[str, Any] = {
+        "source": "aizen-stream-control",
+        "mode": "manual",
+        "app_version": APP_VERSION,
+        "room": room,
+        "client_id": device_id,
+        "client_name": device_name,
+        "updated_by": device_name,
+        "action": action,
+        "scope": scope,
+    }
+    if player is not None:
+        payload.update(
+            {
+                "key": player.key or normalize_player_key(player.name),
+                "name": player.name,
+                "ff_player_id": player.ff_player_id,
+            }
+        )
+    if kills is not None:
+        payload["kills"] = normalize_kill_value(kills)
+    if new_name:
+        payload["new_name"] = new_name
+        payload["display_name"] = new_name
+    if ff_player_id:
+        payload["ff_player_id"] = re.sub(r"\D+", "", str(ff_player_id))
+
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-Room": room,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.post(
+        derive_kills_action_endpoint(endpoint_url),
+        json=payload,
+        headers=headers,
+        timeout=20,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
     response.raise_for_status()
     return parse_realtime_state(response.text)
 
@@ -4010,7 +4104,7 @@ class TikfinityRaffleWorker:
 
 def run_gui(config_path: Path) -> int:
     import tkinter as tk
-    from tkinter import colorchooser, filedialog, messagebox
+    from tkinter import colorchooser, filedialog, messagebox, simpledialog
 
     import customtkinter as ctk
 
@@ -4992,6 +5086,51 @@ def run_gui(config_path: Path) -> int:
         font=("Segoe UI Semibold", 12),
     )
     kills_rank_segmented.grid(row=0, column=0, sticky="ew")
+    kills_rank_actions = ctk.CTkFrame(kills_rank_controls, fg_color=panel, corner_radius=0)
+    kills_rank_actions.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+    for action_column in range(3):
+        kills_rank_actions.columnconfigure(action_column, weight=1)
+    button(kills_rank_actions, "Buscar ranking", lambda: fetch_panel_kills(force=True), "default", width=1).grid(
+        row=0, column=0, sticky="ew", padx=(0, 4), pady=0
+    )
+    button(
+        kills_rank_actions,
+        "Zerar diario",
+        lambda: run_kills_rank_action(
+            "reset_daily",
+            scope="daily",
+            label="Zerando diario",
+            confirm_text="Resetar o ranking diario? O ranking geral sera mantido.",
+        ),
+        "danger",
+        width=1,
+    ).grid(row=0, column=1, sticky="ew", padx=4, pady=0)
+    button(
+        kills_rank_actions,
+        "Zerar geral",
+        lambda: run_kills_rank_action(
+            "reset_general",
+            scope="general",
+            label="Zerando geral",
+            confirm_text="Resetar o ranking geral? O ranking diario sera mantido.",
+        ),
+        "danger",
+        width=1,
+    ).grid(row=0, column=2, sticky="ew", padx=(4, 0), pady=0)
+    button(
+        kills_rank_actions,
+        "Ignorar nome",
+        lambda: prompt_ignore_kills_rank_name(),
+        "ghost",
+        width=1,
+    ).grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=(8, 0))
+    button(
+        kills_rank_actions,
+        "Reexibir",
+        lambda: prompt_unignore_kills_rank_name(),
+        "ghost",
+        width=1,
+    ).grid(row=1, column=1, sticky="ew", padx=4, pady=(8, 0))
     kills_rank_metrics = ctk.CTkFrame(kills_rank_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
     kills_rank_metrics.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
     for column in range(3):
@@ -5020,6 +5159,9 @@ def run_gui(config_path: Path) -> int:
     )
     ctk.CTkLabel(kills_rank_header, text="Kills", text_color=muted, font=("Segoe UI Semibold", 11), width=72).grid(
         row=0, column=2, sticky="e", padx=(8, 12), pady=(0, 6)
+    )
+    ctk.CTkLabel(kills_rank_header, text="Acoes", text_color=muted, font=("Segoe UI Semibold", 11), width=220).grid(
+        row=0, column=3, sticky="e", padx=(8, 12), pady=(0, 6)
     )
     kills_rank_table_frame = ctk.CTkScrollableFrame(
         kills_rank_card,
@@ -6029,16 +6171,130 @@ def run_gui(config_path: Path) -> int:
                 continue
             key = normalize_player_key(name)
             if key not in merged:
-                merged[key] = PlayerKill(name=name, kills=max(0, normalize_kill_value(player.kills)))
+                merged[key] = PlayerKill(
+                    name=name,
+                    kills=max(0, normalize_kill_value(player.kills)),
+                    key=player.key,
+                    ff_player_id=player.ff_player_id,
+                    entries=player.entries,
+                )
                 order.append(key)
             else:
                 merged[key].kills = max(merged[key].kills, normalize_kill_value(player.kills))
+                if player.key and not merged[key].key:
+                    merged[key].key = player.key
+                if player.ff_player_id and not merged[key].ff_player_id:
+                    merged[key].ff_player_id = player.ff_player_id
+                merged[key].entries = max(merged[key].entries, normalize_kill_value(player.entries))
         return sorted((merged[key] for key in order), key=lambda item: (-item.kills, normalize_player_key(item.name)))
 
     def current_kills_rank_players() -> list[PlayerKill]:
         if kills_rank_mode_var.get() == "Geral":
             return kills_global_ranking
         return kills_daily_ranking
+
+    def current_kills_rank_scope() -> str:
+        return "general" if kills_rank_mode_var.get() == "Geral" else "daily"
+
+    def run_kills_rank_action(
+        action: str,
+        player: PlayerKill | None = None,
+        kills: int | None = None,
+        scope: str | None = None,
+        label: str = "",
+        confirm_text: str = "",
+        new_name: str = "",
+        ff_player_id: str = "",
+    ) -> bool:
+        if confirm_text and not messagebox.askyesno("Kills FF", confirm_text):
+            return False
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc))
+            return False
+        endpoint_url = local_config.get("kills_realtime_url", "").strip()
+        if not endpoint_url:
+            manual_status_var.set("Sem endpoint")
+            log("Informe a URL do painel/Jarvis para aplicar acoes no ranking.")
+            return False
+        manual_status_var.set(label or "Aplicando acao")
+        action_scope = scope or current_kills_rank_scope()
+
+        def run() -> None:
+            try:
+                state = send_kills_action_update(
+                    endpoint_url,
+                    action,
+                    player=player,
+                    kills=kills,
+                    scope=action_scope,
+                    new_name=new_name,
+                    ff_player_id=ff_player_id,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room=str(local_config.get("kills_sync_room", "principal")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                sync_queue.put(("kills_action_done", {"state": state, "action": action, "label": label or action}))
+            except Exception as exc:
+                sync_queue.put(("kills_action_error", {"error": str(exc), "action": action, "label": label or action}))
+
+        threading.Thread(target=run, daemon=True).start()
+        return True
+
+    def prompt_set_kills_rank_value(player: PlayerKill) -> None:
+        value = simpledialog.askinteger(
+            "Definir kills",
+            f"Novo total de kills para {player.name}:",
+            initialvalue=max(0, normalize_kill_value(player.kills)),
+            minvalue=0,
+            maxvalue=999999,
+            parent=root,
+        )
+        if value is None:
+            return
+        run_kills_rank_action("set", player=player, kills=value, label="Definindo kills")
+
+    def prompt_set_kills_rank_name(player: PlayerKill) -> None:
+        value = simpledialog.askstring("Editar nome", f"Novo nome para {player.name}:", initialvalue=player.name, parent=root)
+        clean = str(value or "").strip()
+        if not clean:
+            return
+        run_kills_rank_action("set_name", player=player, new_name=clean, scope="both", label="Editando nome")
+
+    def prompt_set_kills_rank_ff_id(player: PlayerKill) -> None:
+        value = simpledialog.askstring("Editar ID FF", f"ID Free Fire de {player.name}:", initialvalue=player.ff_player_id, parent=root)
+        if value is None:
+            return
+        clean = re.sub(r"\D+", "", str(value))
+        run_kills_rank_action("set_ff_id", player=player, ff_player_id=clean, scope="both", label="Editando ID FF")
+
+    def prompt_ignore_kills_rank_name() -> None:
+        value = simpledialog.askstring("Ignorar jogador", "Nome do jogador para ignorar no ranking:", parent=root)
+        clean = str(value or "").strip()
+        if not clean:
+            return
+        run_kills_rank_action(
+            "ignore",
+            player=PlayerKill(clean, 0, key=normalize_player_key(clean)),
+            scope="both",
+            label="Ignorando jogador",
+            confirm_text=f"Ignorar {clean} no ranking e no OBS?",
+        )
+
+    def prompt_unignore_kills_rank_name() -> None:
+        value = simpledialog.askstring("Reexibir jogador", "Nome do jogador para voltar ao ranking:", parent=root)
+        clean = str(value or "").strip()
+        if not clean:
+            return
+        run_kills_rank_action(
+            "unignore",
+            player=PlayerKill(clean, 0, key=normalize_player_key(clean)),
+            scope="both",
+            label="Reexibindo jogador",
+        )
 
     def refresh_kills_rank_table() -> None:
         for widget in kills_rank_rows:
@@ -6096,6 +6352,44 @@ def run_gui(config_path: Path) -> int:
                 font=("Segoe UI Semibold", 14),
                 width=72,
             ).grid(row=0, column=2, sticky="e", padx=(6, 12), pady=8)
+            row_actions = ctk.CTkFrame(row_frame, fg_color="transparent", corner_radius=0)
+            row_actions.grid(row=0, column=3, sticky="e", padx=(0, 12), pady=8)
+            button(
+                row_actions,
+                "+1",
+                lambda target=player: run_kills_rank_action("add", player=target, kills=1, label="Somando kill"),
+                "accent",
+                width=38,
+            ).pack(side=tk.LEFT, padx=2)
+            button(
+                row_actions,
+                "-1",
+                lambda target=player: run_kills_rank_action("remove", player=target, kills=1, label="Removendo kill"),
+                "ghost",
+                width=38,
+            ).pack(side=tk.LEFT, padx=2)
+            button(row_actions, "Def", lambda target=player: prompt_set_kills_rank_value(target), "default", width=44).pack(
+                side=tk.LEFT, padx=2
+            )
+            button(row_actions, "Nome", lambda target=player: prompt_set_kills_rank_name(target), "default", width=58).pack(
+                side=tk.LEFT, padx=2
+            )
+            button(row_actions, "ID", lambda target=player: prompt_set_kills_rank_ff_id(target), "default", width=40).pack(
+                side=tk.LEFT, padx=2
+            )
+            button(
+                row_actions,
+                "Ignorar",
+                lambda target=player: run_kills_rank_action(
+                    "ignore",
+                    player=target,
+                    scope="both",
+                    label="Ignorando jogador",
+                    confirm_text=f"Ignorar {target.name} no ranking e no OBS?",
+                ),
+                "danger",
+                width=68,
+            ).pack(side=tk.LEFT, padx=2)
             kills_rank_rows.append(row_frame)
 
     def apply_kills_rankings(state: RealtimeState) -> None:
@@ -9691,6 +9985,26 @@ def run_gui(config_path: Path) -> int:
             manual_sending = False
             manual_status_var.set("Erro no envio")
             log(f"Erro ao enviar kills para o painel: {payload}")
+            return
+
+        if kind == "kills_action_done":
+            state: RealtimeState = payload["state"]
+            apply_kills_rankings(state)
+            manual_remote_count_override = state.total_players
+            manual_remote_total_override = state.total_kills
+            update_manual_metrics()
+            if state.updated_by:
+                manual_source_var.set(state.updated_by)
+            manual_status_var.set("Ranking atualizado")
+            label = str(payload.get("label") or payload.get("action") or "acao")
+            log(f"Ranking Kills FF atualizado pelo Jarvis: {label}.")
+            return
+
+        if kind == "kills_action_error":
+            error = str(payload.get("error") or payload)
+            label = str(payload.get("label") or payload.get("action") or "acao")
+            manual_status_var.set("Erro na acao")
+            log(f"Nao consegui aplicar acao de Kills FF ({label}): {error}")
             return
 
         if kind == "fetched":
