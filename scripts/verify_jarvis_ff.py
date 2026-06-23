@@ -279,7 +279,7 @@ def verify(
     if queue_url.startswith("http://127.0.0.1:"):
         action_queue = send_ff_queue_action_update(
             queue_url,
-            "add_credit",
+            "set_credit",
             FFQueueEntry("AizenVerify", rooms=3, user_id="mock-user"),
             credits=3,
             device_id=device_id,
@@ -289,6 +289,17 @@ def verify(
         )
         if not action_queue.entries or action_queue.entries[0].rooms != 3:
             raise RuntimeError(f"Action Fila FF divergente: {action_queue.entries!r}")
+        reordered_queue = send_ff_queue_action_update(
+            queue_url,
+            "move_top",
+            FFQueueEntry("AizenVerify", rooms=3, user_id="mock-user"),
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not reordered_queue.entries or reordered_queue.entries[0].name != "AizenVerify":
+            raise RuntimeError(f"Ordenacao Fila FF divergente: {reordered_queue.entries!r}")
 
     try:
         send_ff_overlay_realtime_update(

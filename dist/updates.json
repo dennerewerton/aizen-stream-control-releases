@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.23",
-    "notes":  "Kills FF mostra jogadores ignorados do Jarvis e permite reexibir direto pelo app.",
+    "version":  "2.6.24",
+    "notes":  "Fila FF ganha controles iguais ao site: topo, subir, descer, final, salvar nome, salvar ID FF e definir salas por jogador.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.23/AizenStreamControl.exe",
-                    "sha256":  "ed5a50bbf060b672806f9893b14ba8e048ba897e587ff9c4f05f75b03f92ace2"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.24/AizenStreamControl.exe",
+                    "sha256":  "cd558c0f8a8878f09799eb7f30fbeced5888db824f6f63d47cbe35201a43a232"
                 }
 }

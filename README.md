@@ -225,10 +225,10 @@ Formato do manifesto:
 
 ```json
 {
-  "version": "2.6.23",
-  "notes": "Kills FF mostra jogadores ignorados do Jarvis e permite reexibir direto pelo app.",
+  "version": "2.6.24",
+  "notes": "Fila FF ganha controles iguais ao site: topo, subir, descer, final, salvar nome, salvar ID FF e definir salas por jogador.",
   "windows": {
-    "portable_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.23/AizenStreamControl.exe",
+    "portable_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.24/AizenStreamControl.exe",
     "sha256": "hash-sha256-do-exe"
   }
 }
@@ -237,7 +237,7 @@ Formato do manifesto:
 Para gerar o manifesto depois de publicar o exe:
 
 ```powershell
-.\build_update_manifest.ps1 -Version "2.6.23" -DownloadUrl "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.23/AizenStreamControl.exe"
+.\build_update_manifest.ps1 -Version "2.6.24" -DownloadUrl "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.24/AizenStreamControl.exe"
 ```
 
 Envie para o servidor:
@@ -246,6 +246,10 @@ Envie para o servidor:
 - `dist\updates.json`
 
 Depois cole a URL do `updates.json` no campo `Manifesto de atualização`.
+
+### Revisão 2.6.24
+
+A versão `2.6.24` aproxima a `Fila FF` do painel admin do site: cada jogador agora tem ações diretas de `Topo`, `Subir`, `Descer`, `Final`, `+1`, `-1`, `Definir`, `Salvar nome`, `Salvar ID FF` e `Remover`, usando a rota segura `/api/freefire-queue/action` quando configurada.
 
 ### Revisão 2.6.23
 

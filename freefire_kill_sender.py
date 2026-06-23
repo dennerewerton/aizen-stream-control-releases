@@ -47,7 +47,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.23"
+APP_VERSION = "2.6.24"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -7070,6 +7070,79 @@ def run_gui(config_path: Path) -> int:
         update_ff_queue_row_numbers()
         on_ff_queue_change()
 
+    def move_ff_queue_row_to(row: dict[str, Any], target: str) -> None:
+        if row not in ff_queue_rows:
+            return
+        target = "top" if str(target).lower() == "top" else "bottom"
+        remote_action = "move_top" if target == "top" else "move_bottom"
+        if run_ff_queue_remote_action(remote_action, row=row, label="Reordenando fila"):
+            return
+        ff_queue_rows.remove(row)
+        if target == "top":
+            ff_queue_rows.insert(0, row)
+        else:
+            ff_queue_rows.append(row)
+        update_ff_queue_row_numbers()
+        on_ff_queue_change()
+
+    def save_ff_queue_row_name(row: dict[str, Any]) -> None:
+        if row not in ff_queue_rows:
+            return
+        name = row["name_var"].get().strip()
+        if not name:
+            messagebox.showinfo("Fila FF", "Informe o nome do jogador.")
+            return
+        if run_ff_queue_remote_action("set_name", row=row, label="Salvando nome"):
+            return
+        ff_queue_status_var.set("Nome salvo localmente")
+        on_ff_queue_change()
+
+    def edit_ff_queue_ff_id(row: dict[str, Any]) -> None:
+        if row not in ff_queue_rows:
+            return
+        current = str(row.get("ff_player_id", "") or "").strip()
+        value = simpledialog.askstring(
+            "ID Free Fire",
+            f"ID FF de {row['name_var'].get().strip() or 'jogador'}:",
+            initialvalue=current,
+            parent=root,
+        )
+        if value is None:
+            return
+        clean = re.sub(r"\D+", "", str(value or "").strip())
+        if value.strip() and not re.fullmatch(r"\d{5,15}", clean):
+            messagebox.showerror("Fila FF", "ID FF inválido. Use somente números, de 5 a 15 dígitos.")
+            return
+        row["ff_player_id"] = clean
+        id_var = row.get("ff_player_id_var")
+        if id_var is not None:
+            id_var.set(clean or "-")
+        if run_ff_queue_remote_action("set_ff_id", row=row, label="Salvando ID FF"):
+            return
+        ff_queue_status_var.set("ID FF salvo localmente")
+        on_ff_queue_change()
+
+    def set_ff_queue_rooms_prompt(row: dict[str, Any]) -> None:
+        if row not in ff_queue_rows:
+            return
+        current = max(0, normalize_kill_value(row["rooms_var"].get()))
+        value = simpledialog.askinteger(
+            "Definir salas",
+            f"Quantidade de salas de {row['name_var'].get().strip() or 'jogador'}:",
+            initialvalue=current,
+            minvalue=0,
+            maxvalue=9999,
+            parent=root,
+        )
+        if value is None:
+            return
+        if run_ff_queue_remote_action("set_credit", row=row, credits=value, label="Definindo salas"):
+            return
+        if value <= 0:
+            remove_ff_queue_row(row)
+            return
+        row["rooms_var"].set(str(value))
+
     def add_ff_queue_row(
         name: str = "",
         note: str = "",
@@ -7102,6 +7175,7 @@ def run_gui(config_path: Path) -> int:
         note_var = tk.StringVar(value=note)
         status_var = tk.StringVar(value=normalize_queue_status(status))
         rooms_var = tk.StringVar(value=str(max(1, normalize_kill_value(rooms))))
+        ff_player_id_var = tk.StringVar(value=str(ff_player_id or "-").strip() or "-")
         entry(row_frame, name_var).grid(row=0, column=1, sticky="ew", padx=6, pady=8)
         entry(row_frame, note_var).grid(row=0, column=2, sticky="ew", padx=6, pady=8)
         entry(row_frame, rooms_var, width=72).grid(row=0, column=3, sticky="w", padx=6, pady=8)
@@ -7112,11 +7186,32 @@ def run_gui(config_path: Path) -> int:
         def remove() -> None:
             remove_ff_queue_row(row)
 
-        button(row_frame, "↑", lambda: move_ff_queue_row(row, -1), "ghost", width=38).grid(row=0, column=5, padx=(6, 2), pady=8)
-        button(row_frame, "↓", lambda: move_ff_queue_row(row, 1), "ghost", width=38).grid(row=0, column=6, padx=2, pady=8)
-        button(row_frame, "+1", lambda: adjust_ff_queue_rooms(row, 1), "accent", width=44).grid(row=0, column=7, padx=2, pady=8)
-        button(row_frame, "-1", lambda: adjust_ff_queue_rooms(row, -1), "ghost", width=44).grid(row=0, column=8, padx=2, pady=8)
-        button(row_frame, "Remover", remove, "danger", width=92).grid(row=0, column=9, padx=(6, 12), pady=8)
+        action_bar = ctk.CTkFrame(row_frame, fg_color="transparent", corner_radius=0)
+        action_bar.grid(row=1, column=1, columnspan=4, sticky="ew", padx=6, pady=(0, 10))
+        action_bar.columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            action_bar,
+            text="ID FF",
+            text_color=muted,
+            font=("Segoe UI Semibold", 11),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
+        ctk.CTkLabel(
+            action_bar,
+            textvariable=ff_player_id_var,
+            text_color=text,
+            font=("Segoe UI", 11),
+            anchor="w",
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=2)
+        button(action_bar, "Salvar nome", lambda: save_ff_queue_row_name(row), "default", width=94).grid(row=0, column=2, padx=2, pady=2)
+        button(action_bar, "ID FF", lambda: edit_ff_queue_ff_id(row), "default", width=62).grid(row=0, column=3, padx=2, pady=2)
+        button(action_bar, "Topo", lambda: move_ff_queue_row_to(row, "top"), "ghost", width=58).grid(row=1, column=0, padx=(0, 2), pady=2)
+        button(action_bar, "↑", lambda: move_ff_queue_row(row, -1), "ghost", width=38).grid(row=1, column=1, sticky="w", padx=2, pady=2)
+        button(action_bar, "↓", lambda: move_ff_queue_row(row, 1), "ghost", width=38).grid(row=1, column=2, sticky="w", padx=2, pady=2)
+        button(action_bar, "Final", lambda: move_ff_queue_row_to(row, "bottom"), "ghost", width=58).grid(row=1, column=3, sticky="w", padx=2, pady=2)
+        button(action_bar, "+1", lambda: adjust_ff_queue_rooms(row, 1), "accent", width=44).grid(row=1, column=4, padx=2, pady=2)
+        button(action_bar, "-1", lambda: adjust_ff_queue_rooms(row, -1), "ghost", width=44).grid(row=1, column=5, padx=2, pady=2)
+        button(action_bar, "Definir", lambda: set_ff_queue_rooms_prompt(row), "default", width=70).grid(row=1, column=6, padx=2, pady=2)
+        button(action_bar, "Remover", remove, "danger", width=86).grid(row=1, column=7, padx=(2, 0), pady=2)
 
         row.update(
             {
@@ -7129,6 +7224,7 @@ def run_gui(config_path: Path) -> int:
                 "user_id": str(user_id or "").strip(),
                 "panel_user_id": str(panel_user_id or "").strip(),
                 "ff_player_id": str(ff_player_id or "").strip(),
+                "ff_player_id_var": ff_player_id_var,
             }
         )
         ff_queue_rows.append(row)
