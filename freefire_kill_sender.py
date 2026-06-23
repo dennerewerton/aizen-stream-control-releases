@@ -1,21 +1,34 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import ctypes
 import ctypes.wintypes
+import hashlib
+import html
 import json
 import os
 import queue
 import re
+import secrets
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import unicodedata
+import uuid
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime
+from difflib import SequenceMatcher
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import cv2
 import numpy as np
@@ -30,6 +43,128 @@ ROOT = APP_DIR
 DEFAULT_CONFIG = APP_DIR / "config.json"
 CONFIG_EXAMPLE = ASSET_DIR / "config.example.json"
 OCR_SCRIPT = ASSET_DIR / "scripts" / "windows_ocr.ps1"
+APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
+APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
+APP_NAME = "Aizen Stream Control"
+APP_EXE_NAME = "AizenStreamControl.exe"
+APP_VERSION = "2.6.20"
+DEFAULT_UPDATES_MANIFEST_URL = (
+    "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
+)
+DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
+DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
+DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
+LIVE_CHAT_EVENT_NAMES = {"chat", "comment", "message", "command", "chatmessage", "livechat"}
+LIVE_CHAT_TEXT_FIELDS = (
+    "comment",
+    "chatmessage",
+    "message",
+    "msg",
+    "text",
+    "content",
+    "commentText",
+    "messageText",
+    "commandParams",
+    "command",
+)
+
+THEME_SCHEMA_VERSION = "2026.1"
+LEGACY_AIZEN_RED_THEME = {
+    "canvas_bg": "#050506",
+    "bg": "#0b0b0e",
+    "panel": "#111116",
+    "panel_alt": "#181014",
+    "field": "#07080b",
+    "border": "#3a1518",
+    "fg": "#f8f2f1",
+    "muted": "#b8a6a5",
+    "accent": "#ff1717",
+    "accent_hover": "#ff3b32",
+    "teal": "#ff4d4d",
+    "blue": "#c91d1d",
+    "danger": "#9d252d",
+}
+
+
+THEME_PRESETS: dict[str, dict[str, str]] = {
+    "Aizen Red": {
+        "canvas_bg": "#050506",
+        "bg": "#08090d",
+        "panel": "#101116",
+        "panel_alt": "#171217",
+        "field": "#090a0f",
+        "border": "#332025",
+        "fg": "#f8f3f2",
+        "muted": "#ad9da0",
+        "accent": "#ff2633",
+        "accent_hover": "#ff5a4d",
+        "teal": "#35d6a5",
+        "blue": "#8bb0ff",
+        "danger": "#d84855",
+    },
+    "Obsidian Gold": {
+        "canvas_bg": "#050504",
+        "bg": "#0b0a08",
+        "panel": "#12110d",
+        "panel_alt": "#18150d",
+        "field": "#070706",
+        "border": "#4b3412",
+        "fg": "#fff8e6",
+        "muted": "#c4b99e",
+        "accent": "#f5b82e",
+        "accent_hover": "#ffd166",
+        "teal": "#49d6b3",
+        "blue": "#c78b20",
+        "danger": "#9d252d",
+    },
+    "Neon Cyan": {
+        "canvas_bg": "#03070a",
+        "bg": "#071014",
+        "panel": "#0d171b",
+        "panel_alt": "#101b22",
+        "field": "#041014",
+        "border": "#16414a",
+        "fg": "#eefcff",
+        "muted": "#a8c4ca",
+        "accent": "#16e0d6",
+        "accent_hover": "#43fff3",
+        "teal": "#5ef3a3",
+        "blue": "#2c9cff",
+        "danger": "#c43f54",
+    },
+    "Graphite Pro": {
+        "canvas_bg": "#060709",
+        "bg": "#0d0f13",
+        "panel": "#14171d",
+        "panel_alt": "#191b22",
+        "field": "#080a0e",
+        "border": "#303744",
+        "fg": "#f4f6f8",
+        "muted": "#aab2bd",
+        "accent": "#e5edf7",
+        "accent_hover": "#ffffff",
+        "teal": "#72e0c2",
+        "blue": "#79a7ff",
+        "danger": "#d14b5c",
+    },
+}
+
+DEFAULT_THEME_NAME = "Aizen Red"
+THEME_COLOR_KEYS = [
+    "canvas_bg",
+    "bg",
+    "panel",
+    "panel_alt",
+    "field",
+    "border",
+    "fg",
+    "muted",
+    "accent",
+    "accent_hover",
+    "teal",
+    "blue",
+    "danger",
+]
 
 
 VK_CODES = {
@@ -59,6 +194,177 @@ class PlayerKill:
     kills: int
 
 
+@dataclass
+class FFQueueEntry:
+    name: str
+    note: str = ""
+    status: str = "Na fila"
+    rooms: int = 1
+    user_id: str = ""
+    panel_user_id: str = ""
+    ff_player_id: str = ""
+
+
+@dataclass
+class RaffleWinner:
+    key: str
+    name: str
+    avatar_url: str = ""
+    platform: str = ""
+    supporter_tier: str = "normal"
+    entries: int = 1
+    bonus_reason: str = "seguidor"
+
+
+@dataclass
+class RaffleParticipant:
+    key: str
+    name: str
+    avatar_url: str = ""
+    platform: str = ""
+    supporter_tier: str = "normal"
+    entries: int = 1
+    bonus_reason: str = "seguidor"
+    joined_at: str = ""
+
+
+@dataclass
+class LiveChatMessage:
+    username: str
+    comment: str
+    user_id: str = ""
+    avatar_url: str = ""
+    platform: str = "TikTok"
+    message_id: str = ""
+    source: str = ""
+    received_at: str = ""
+    supporter_tier: str = "normal"
+
+
+@dataclass
+class ChatCommand:
+    command: str
+    response: str
+    enabled: bool = True
+    cooldown_seconds: int = 30
+
+
+@dataclass
+class ChatTimer:
+    name: str
+    message: str
+    enabled: bool = True
+    interval_seconds: int = 600
+    min_chat_messages: int = 5
+
+
+@dataclass
+class RealtimeState:
+    players: list[PlayerKill]
+    updated_by: str = ""
+    updated_at: str = ""
+    devices: list[dict[str, Any]] | None = None
+    daily_ranking: list[PlayerKill] | None = None
+    global_ranking: list[PlayerKill] | None = None
+    total_players: int | None = None
+    total_kills: int | None = None
+    visible_players: int | None = None
+    daily_players: int | None = None
+    daily_kills: int | None = None
+    daily_visible_players: int | None = None
+
+
+@dataclass
+class FFQueueState:
+    entries: list[FFQueueEntry]
+    updated_by: str = ""
+    updated_at: str = ""
+    devices: list[dict[str, Any]] | None = None
+
+
+@dataclass
+class LivepixEvent:
+    event_id: str
+    kind: str
+    reference: str = ""
+    username: str = ""
+    message: str = ""
+    amount: int = 0
+    currency: str = "BRL"
+    proof: str = ""
+    flagged: bool = False
+    created_at: str = ""
+    source: str = "api"
+
+
+def default_device_name() -> str:
+    return os.environ.get("COMPUTERNAME") or socket.gethostname() or "PC da live"
+
+
+def is_hex_color(value: Any) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r"#[0-9a-fA-F]{6}", value.strip()))
+
+
+def normalize_hex_color(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{6}", text):
+        text = f"#{text}"
+    return text.lower() if is_hex_color(text) else fallback
+
+
+def default_ui_theme() -> dict[str, str]:
+    theme = dict(THEME_PRESETS[DEFAULT_THEME_NAME])
+    theme["preset"] = DEFAULT_THEME_NAME
+    theme["logo_path"] = ""
+    theme["theme_schema_version"] = THEME_SCHEMA_VERSION
+    return theme
+
+
+def is_legacy_default_theme(raw: dict[str, Any]) -> bool:
+    if str(raw.get("preset") or DEFAULT_THEME_NAME) != DEFAULT_THEME_NAME:
+        return False
+    for key, legacy_value in LEGACY_AIZEN_RED_THEME.items():
+        if key not in raw:
+            continue
+        if normalize_hex_color(raw.get(key), legacy_value) != legacy_value.lower():
+            return False
+    return str(raw.get("theme_schema_version") or "") != THEME_SCHEMA_VERSION
+
+
+def resolve_ui_theme(config: dict[str, Any]) -> dict[str, str]:
+    base = default_ui_theme()
+    raw = config.get("ui_theme", {})
+    if not isinstance(raw, dict):
+        return base
+
+    preset = str(raw.get("preset") or DEFAULT_THEME_NAME)
+    if preset in THEME_PRESETS:
+        base.update(THEME_PRESETS[preset])
+        base["preset"] = preset
+
+    if not is_legacy_default_theme(raw):
+        for key in THEME_COLOR_KEYS:
+            base[key] = normalize_hex_color(raw.get(key), base[key])
+    base["logo_path"] = str(raw.get("logo_path") or "").strip()
+    base["theme_schema_version"] = THEME_SCHEMA_VERSION
+    return base
+
+
+def resolve_logo_path(theme: dict[str, str]) -> Path:
+    raw_path = theme.get("logo_path", "").strip()
+    if raw_path:
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = ROOT / path
+        if path.exists():
+            return path
+    return APP_LOGO
+
+
+def apply_theme_defaults(config: dict[str, Any]) -> None:
+    config["ui_theme"] = resolve_ui_theme(config)
+
+
 def load_config(path: Path) -> dict[str, Any]:
     defaults: dict[str, Any] = {}
     if CONFIG_EXAMPLE.exists():
@@ -77,6 +383,111 @@ def load_config(path: Path) -> dict[str, Any]:
     data.setdefault("attach_screenshot", True)
     data.setdefault("capture_target", "primary")
     data.setdefault("ignored_players", [])
+    data.setdefault("jarvis_api_token", "")
+    data.setdefault("manual_kills", [])
+    data.setdefault("kills_realtime_url", data.get("jarvis_endpoint_url", ""))
+    data.setdefault("kills_realtime_auto_sync", True)
+    data.setdefault("kills_realtime_poll_seconds", 2)
+    data.setdefault("kills_sync_room", "principal")
+    data.setdefault("ff_queue_realtime_url", data.get("jarvis_endpoint_url", ""))
+    data.setdefault("ff_queue_auto_sync", True)
+    data.setdefault("ff_queue_poll_seconds", 2)
+    data.setdefault("ff_queue_room", "principal")
+    data.setdefault("ff_queue_items", [])
+    data.setdefault("jarvis_base_url", "")
+    data.setdefault("ff_overlay_realtime_url", "")
+    data.setdefault("ff_overlay_auto_sync", True)
+    if not str(data.get("device_name", "")).strip():
+        data["device_name"] = default_device_name()
+    if not str(data.get("device_id", "")).strip():
+        data["device_id"] = uuid.uuid4().hex
+    data.setdefault("auto_update_enabled", True)
+    if not str(data.get("updates_manifest_url", "")).strip():
+        data["updates_manifest_url"] = DEFAULT_UPDATES_MANIFEST_URL
+    apply_theme_defaults(data)
+    data.setdefault("tikfinity_chat_url", "")
+    data.setdefault("chat_event_source", "websocket")
+    data.setdefault("chat_webhook_host", "127.0.0.1")
+    data.setdefault("chat_webhook_port", 8765)
+    data.setdefault("chat_webhook_token", "")
+    data.setdefault("chat_websocket_url", DEFAULT_TIKFINITY_WEBSOCKET_URL)
+    if not str(data.get("chat_websocket_url", "")).strip():
+        data["chat_websocket_url"] = DEFAULT_TIKFINITY_WEBSOCKET_URL
+    if (
+        data.get("chat_event_source") == "webhook"
+        and str(data.get("chat_webhook_host", "127.0.0.1")).strip() in {"", "127.0.0.1", "localhost"}
+        and str(data.get("chat_webhook_port", 8765)).strip() in {"", "8765"}
+        and not str(data.get("chat_webhook_token", "")).strip()
+    ):
+        data["chat_event_source"] = "websocket"
+    data.setdefault("chat_max_messages", 250)
+    data.setdefault("raffle_source_mode", "events")
+    data.setdefault("raffle_command", "!sorteio")
+    data.setdefault("raffle_duration_seconds", 600)
+    data.setdefault("raffle_entries_normal", 1)
+    data.setdefault("raffle_entries_fan", 2)
+    data.setdefault("raffle_entries_super_fan", 3)
+    data.setdefault("raffle_entries_gift", 5)
+    data.setdefault("raffle_entries_sub", 10)
+    data.setdefault("raffle_user_cooldown_seconds", 8)
+    data.setdefault("raffle_include_moderators", True)
+    data.setdefault("raffle_history_file", "raffle_history.json")
+    data.setdefault("chat_commands_enabled", False)
+    data.setdefault("chat_commands", [])
+    data.setdefault("chat_timers_enabled", False)
+    data.setdefault("chat_timers", [])
+    data.setdefault("bot_safe_delay_seconds", 15)
+    data.setdefault("bot_default_command_cooldown_seconds", 30)
+    data.setdefault("bot_default_timer_interval_seconds", 600)
+    data.setdefault("bot_default_timer_min_messages", 5)
+    data.setdefault("bot_delivery_method", "streamerbot_websocket")
+    data.setdefault("bot_streamerbot_ws_url", DEFAULT_STREAMERBOT_WEBSOCKET_URL)
+    data.setdefault("bot_streamerbot_http_url", DEFAULT_STREAMERBOT_HTTP_URL)
+    data.setdefault("bot_streamerbot_password", "")
+    data.setdefault("bot_streamerbot_action_name", "Aizen TikFinity Chatbot")
+    data.setdefault("bot_streamerbot_action_id", "")
+    data.setdefault("bot_ignore_usernames", "")
+    data.setdefault("livepix_enabled", False)
+    data.setdefault("livepix_client_id", "")
+    data.setdefault("livepix_client_secret", "")
+    data.setdefault(
+        "livepix_scopes",
+        "account:read wallet:read payments:read payments:write messages:read messages:write subscriptions:read rewards:read webhooks controls currencies:read",
+    )
+    data.setdefault("livepix_webhook_host", "127.0.0.1")
+    data.setdefault("livepix_webhook_port", 8787)
+    data.setdefault("livepix_webhook_token", "")
+    data.setdefault("livepix_redirect_url", "https://livepix.gg")
+    data.setdefault("livepix_goal_amount", 50000)
+    data.setdefault("livepix_goal_label", "Meta da live")
+    data.setdefault("livepix_currency", "BRL")
+    data.setdefault("livepix_plan_id", "")
+    data.setdefault("livepix_plan_slug", "vip-live")
+    data.setdefault("livepix_plan_name", "VIP da live")
+    data.setdefault("livepix_plan_description", "Acesso aos benefícios de apoiador da live.")
+    data.setdefault("livepix_subscription_recurrence", "monthly")
+    data.setdefault("livepix_subscriber_email", "")
+    data.setdefault("livepix_announce_in_chat", True)
+    data.setdefault("livepix_public_page_file", "livepix_public.html")
+    data.setdefault("ui_layout", {})
+    if isinstance(data["ui_layout"], dict):
+        data["ui_layout"].setdefault("participants_height", 560)
+        data["ui_layout"].setdefault("events_height", 170)
+        data["ui_layout"].setdefault("winner_width", 360)
+        data["ui_layout"].setdefault("raffle_font_size", 13)
+        data["ui_layout"].setdefault("chat_overlay_opacity", 84)
+        data["ui_layout"].setdefault("chat_overlay_font_size", 14)
+        data["ui_layout"].setdefault("chat_overlay_width", 430)
+        data["ui_layout"].setdefault("chat_overlay_height", 640)
+        data["ui_layout"].setdefault("chat_overlay_compact", True)
+        data["ui_layout"].setdefault("chat_overlay_controls", True)
+        data["ui_layout"].setdefault("chat_overlay_clickthrough", False)
+        data["ui_layout"].setdefault("ff_overlay_opacity", 92)
+        data["ui_layout"].setdefault("ff_overlay_width", 760)
+        data["ui_layout"].setdefault("ff_overlay_height", 420)
+        data["ui_layout"].setdefault("ff_overlay_compact", False)
+        data["ui_layout"].setdefault("ff_overlay_show_queue", True)
+        data["ui_layout"].setdefault("ff_overlay_show_kills", True)
     data.setdefault("name_corrections", {})
     save_config(path, data)
     return data
@@ -94,6 +505,1170 @@ def merge_defaults(data: dict[str, Any], defaults: dict[str, Any]) -> dict[str, 
 
 def save_config(path: Path, config: dict[str, Any]) -> None:
     path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def append_raffle_history(path: Path, record: dict[str, Any]) -> None:
+    history: list[dict[str, Any]] = []
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(loaded, list):
+                history = loaded
+        except json.JSONDecodeError:
+            backup = path.with_suffix(f".invalid_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+            path.replace(backup)
+
+    history.append(record)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _dict_value(data: Any, *path: str) -> Any:
+    current = data
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _first_text(*values: Any) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        text = re.sub(r"<[^>]+>", "", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if text and not (text.startswith("%") and text.endswith("%")):
+            return text
+    return ""
+
+
+def _chat_payload_candidates(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    candidates = [payload]
+    for key in ("data", "payload", "eventData", "chat", "message", "commentData"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+    return candidates
+
+
+def live_chat_event_name(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    return _first_text(payload.get("event"), payload.get("type"), data.get("event"), data.get("type")).casefold()
+
+
+def is_live_chat_event_payload(payload: Any) -> bool:
+    event_name = live_chat_event_name(payload)
+    if event_name in LIVE_CHAT_EVENT_NAMES:
+        return True
+    for candidate in _chat_payload_candidates(payload):
+        if any(_first_text(candidate.get(field)) for field in LIVE_CHAT_TEXT_FIELDS):
+            return True
+    return False
+
+
+def compact_json_preview(payload: Any, limit: int = 700) -> str:
+    try:
+        text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        text = str(payload)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit] + ("..." if len(text) > limit else "")
+
+
+def _fold_raffle_text(value: Any) -> str:
+    text = str(value or "").casefold()
+    replacements = {
+        "ã": "a",
+        "á": "a",
+        "à": "a",
+        "â": "a",
+        "ä": "a",
+        "é": "e",
+        "ê": "e",
+        "í": "i",
+        "ó": "o",
+        "ô": "o",
+        "õ": "o",
+        "ú": "u",
+        "ç": "c",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return re.sub(r"[^a-z0-9_ -]+", " ", text)
+
+
+def _extract_raffle_badge_texts(value: Any, parent_key: str = "") -> list[str]:
+    texts: list[str] = []
+    parent = _fold_raffle_text(parent_key)
+    relevant_parent = any(
+        marker in parent
+        for marker in ("badge", "fan", "member", "sub", "support", "viewer", "role", "level")
+    )
+    if isinstance(value, dict):
+        for key, item in value.items():
+            folded_key = _fold_raffle_text(key)
+            if isinstance(item, bool) and item:
+                texts.append(f"{folded_key}=true")
+            elif isinstance(item, (str, int, float)) and (relevant_parent or any(marker in folded_key for marker in ("badge", "fan", "member", "sub", "support", "viewer", "role", "level"))):
+                texts.append(f"{folded_key} {item}")
+            elif isinstance(item, (dict, list, tuple)):
+                texts.extend(_extract_raffle_badge_texts(item, folded_key))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            texts.extend(_extract_raffle_badge_texts(item, parent_key))
+    elif relevant_parent and value is not None:
+        texts.append(str(value))
+    return texts
+
+
+def detect_supporter_tier(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return "normal"
+
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    user = (
+        data.get("user")
+        if isinstance(data.get("user"), dict)
+        else payload.get("user")
+        if isinstance(payload.get("user"), dict)
+        else {}
+    )
+    texts = _extract_raffle_badge_texts(payload)
+    texts.extend(_extract_raffle_badge_texts(data))
+    texts.extend(_extract_raffle_badge_texts(user))
+    folded = " ".join(_fold_raffle_text(text) for text in texts)
+
+    if re.search(r"\bsuper[_ -]?fan\b|\bsuper[_ -]?fa\b|\bsuper[_ -]?viewer\b|issuperfan true|is_super_fan true", folded):
+        return "super_fan"
+    if re.search(r"\bsubscriber true\b|\bissubscriber true\b|\bis_subscriber true\b|\bsubscribed true\b", folded):
+        return "super_fan"
+    if re.search(r"\bfan\b|\bfa\b|isfan true|is_fan true|\bfanbadge\b", folded):
+        return "fan"
+    return "normal"
+
+
+def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessage | None:
+    if not isinstance(payload, dict):
+        return None
+
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    author = data.get("authorMeta") if isinstance(data.get("authorMeta"), dict) else {}
+    user_details = data.get("userDetails") if isinstance(data.get("userDetails"), dict) else {}
+    user = (
+        data.get("user")
+        if isinstance(data.get("user"), dict)
+        else payload.get("user")
+        if isinstance(payload.get("user"), dict)
+        else {}
+    )
+    event_name = _first_text(payload.get("event"), payload.get("type"), data.get("event"), data.get("type"))
+    lower_event = event_name.casefold()
+    if lower_event and lower_event not in LIVE_CHAT_EVENT_NAMES:
+        has_comment = any(
+            _first_text(value)
+            for value in (
+                payload.get("comment"),
+                payload.get("message"),
+                payload.get("text"),
+                payload.get("commandParams"),
+                data.get("comment"),
+                data.get("message"),
+                data.get("text"),
+            )
+        )
+        if not has_comment:
+            return None
+
+    comment = _first_text(
+        payload.get("comment"),
+        payload.get("chatmessage"),
+        payload.get("message"),
+        payload.get("msg"),
+        payload.get("text"),
+        payload.get("content"),
+        payload.get("commentText"),
+        payload.get("messageText"),
+        payload.get("commandParams"),
+        payload.get("command"),
+        data.get("comment"),
+        data.get("chatmessage"),
+        data.get("message"),
+        data.get("msg"),
+        data.get("text"),
+        data.get("content"),
+        data.get("commentText"),
+        data.get("messageText"),
+        data.get("commandParams"),
+        data.get("command"),
+    )
+    username = _first_text(
+        payload.get("nickname"),
+        payload.get("displayName"),
+        payload.get("chatname"),
+        payload.get("name"),
+        payload.get("username"),
+        payload.get("uniqueId"),
+        payload.get("unique_id"),
+        payload.get("userName"),
+        data.get("nickname"),
+        data.get("displayName"),
+        data.get("chatname"),
+        data.get("name"),
+        data.get("username"),
+        data.get("uniqueId"),
+        data.get("unique_id"),
+        data.get("userName"),
+        user.get("nickname"),
+        user.get("displayName"),
+        user.get("name"),
+        user.get("username"),
+        user.get("uniqueId"),
+        user.get("unique_id"),
+        author.get("nickname"),
+        author.get("nickName"),
+        author.get("name"),
+        author.get("uniqueId"),
+        author.get("unique_id"),
+        user_details.get("nickname"),
+        user_details.get("displayName"),
+        user_details.get("username"),
+        user_details.get("uniqueId"),
+    )
+    if not username or not comment:
+        return None
+
+    user_id = _first_text(
+        payload.get("userId"),
+        payload.get("userid"),
+        payload.get("user_id"),
+        payload.get("id"),
+        data.get("userId"),
+        data.get("userid"),
+        data.get("user_id"),
+        user.get("userId"),
+        user.get("userid"),
+        user.get("id"),
+        author.get("userId"),
+        author.get("id"),
+        user_details.get("userId"),
+        user_details.get("id"),
+    )
+    avatar_url = _first_text(
+        payload.get("profilePicturUrl"),
+        payload.get("profilePictureUrl"),
+        payload.get("profilePicture"),
+        payload.get("profileImageUrl"),
+        payload.get("avatarUrl"),
+        payload.get("avatar"),
+        payload.get("imageUrl"),
+        payload.get("image"),
+        payload.get("photo"),
+        data.get("profilePicturUrl"),
+        data.get("profilePictureUrl"),
+        data.get("profilePicture"),
+        data.get("profileImageUrl"),
+        data.get("avatarUrl"),
+        data.get("avatar"),
+        user.get("profilePicturUrl"),
+        user.get("profilePictureUrl"),
+        user.get("profilePicture"),
+        user.get("profileImageUrl"),
+        user.get("avatarUrl"),
+        user.get("avatar"),
+        author.get("profilePictureUrl"),
+        author.get("avatar"),
+        author.get("image"),
+        user_details.get("profilePictureUrl"),
+        user_details.get("avatar"),
+    )
+    platform = _first_text(
+        payload.get("platform"),
+        payload.get("source"),
+        payload.get("network"),
+        data.get("platform"),
+        data.get("source"),
+        event_name if event_name and "tiktok" in source.casefold() else "",
+    )
+    message_id = _first_text(
+        payload.get("messageId"),
+        payload.get("msgId"),
+        payload.get("mid"),
+        payload.get("id"),
+        payload.get("timestamp"),
+        payload.get("ts"),
+        data.get("messageId"),
+        data.get("msgId"),
+        data.get("mid"),
+        data.get("id"),
+        data.get("timestamp"),
+        data.get("ts"),
+    )
+    return LiveChatMessage(
+        username=username,
+        comment=comment,
+        user_id=user_id,
+        avatar_url=avatar_url,
+        platform=platform or "TikTok",
+        message_id=message_id,
+        source=source,
+        received_at=datetime.now().strftime("%H:%M:%S"),
+        supporter_tier=detect_supporter_tier(payload),
+    )
+
+
+class LocalChatWebhookServer:
+    def __init__(self, host: str, port: int, token: str, callback: callable, log: callable):
+        self.host = host or "127.0.0.1"
+        self.port = int(port)
+        self.token = token.strip()
+        self.callback = callback
+        self.log = log
+        self.server: ThreadingHTTPServer | None = None
+        self.thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self.server:
+            return
+
+        parent = self
+
+        class ReusableServer(ThreadingHTTPServer):
+            allow_reuse_address = True
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, _format: str, *_args: Any) -> None:
+                return
+
+            def _write_json(self, status: int, payload: dict[str, Any]) -> None:
+                raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Aizen-Token")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def _authorized(self) -> bool:
+                if not parent.token:
+                    return True
+                parsed = urlparse(self.path)
+                query_token = parse_qs(parsed.query).get("token", [""])[0]
+                header_token = self.headers.get("X-Aizen-Token", "")
+                provided = header_token or query_token
+                return secrets.compare_digest(provided, parent.token)
+
+            def do_OPTIONS(self) -> None:
+                self._write_json(200, {"ok": True})
+
+            def do_GET(self) -> None:
+                self._write_json(200, {"ok": True, "app": APP_NAME, "version": APP_VERSION})
+
+            def do_POST(self) -> None:
+                if not self._authorized():
+                    self._write_json(401, {"ok": False, "error": "unauthorized"})
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    length = 0
+                raw_body = self.rfile.read(max(0, min(length, 2_000_000)))
+                if not raw_body:
+                    self._write_json(400, {"ok": False, "error": "empty_body"})
+                    return
+                try:
+                    parsed = json.loads(raw_body.decode("utf-8-sig"))
+                except Exception as exc:
+                    self._write_json(400, {"ok": False, "error": f"invalid_json: {exc}"})
+                    return
+                events = parsed if isinstance(parsed, list) else [parsed]
+                accepted = 0
+                for event in events:
+                    if isinstance(event, dict):
+                        parent.callback(event, "TikFinity Webhook")
+                        accepted += 1
+                self._write_json(200, {"ok": True, "accepted": accepted})
+
+        self.server = ReusableServer((self.host, self.port), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, name="AizenChatWebhook", daemon=True)
+        self.thread.start()
+        self.log(f"Webhook de chat ouvindo em http://{self.host}:{self.port}/api/chat-event")
+
+    def stop(self) -> None:
+        if not self.server:
+            return
+        try:
+            self.server.shutdown()
+            self.server.server_close()
+        finally:
+            self.server = None
+            self.thread = None
+
+
+def livepix_events_path(config_path: Path) -> Path:
+    return config_path.with_name("livepix_events.json")
+
+
+def livepix_events_to_payload(events: list[LivepixEvent]) -> list[dict[str, Any]]:
+    return [
+        {
+            "event_id": event.event_id,
+            "kind": event.kind,
+            "reference": event.reference,
+            "username": event.username,
+            "message": event.message,
+            "amount": event.amount,
+            "currency": event.currency,
+            "proof": event.proof,
+            "flagged": event.flagged,
+            "created_at": event.created_at,
+            "source": event.source,
+        }
+        for event in events
+    ]
+
+
+def parse_livepix_event(payload: Any, kind_hint: str = "payment", source: str = "api") -> LivepixEvent | None:
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    resource = data.get("resource") if isinstance(data.get("resource"), dict) else {}
+    kind = str(data.get("kind") or data.get("type") or resource.get("type") or kind_hint or "payment").strip().lower()
+    event_id = _first_text(data.get("event_id"), data.get("id"), resource.get("id"), data.get("reference"), resource.get("reference"))
+    reference = _first_text(data.get("reference"), resource.get("reference"), event_id)
+    if not event_id and not reference:
+        return None
+    try:
+        amount = int(float(data.get("amount", 0) or 0))
+    except (TypeError, ValueError):
+        amount = 0
+    return LivepixEvent(
+        event_id=event_id or reference,
+        kind=kind,
+        reference=reference,
+        username=_first_text(data.get("username"), data.get("subscriber"), data.get("user"), data.get("name")),
+        message=_first_text(data.get("message"), data.get("text"), data.get("content")),
+        amount=max(0, amount),
+        currency=_first_text(data.get("currency"), "BRL").upper(),
+        proof=_first_text(data.get("proof")),
+        flagged=bool(data.get("flagged", False)),
+        created_at=_first_text(data.get("createdAt"), data.get("created_at"), datetime.now().isoformat(timespec="seconds")),
+        source=source,
+    )
+
+
+def load_livepix_events(path: Path) -> list[LivepixEvent]:
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return []
+    if not isinstance(raw, list):
+        return []
+    events: list[LivepixEvent] = []
+    for item in raw:
+        event = parse_livepix_event(item, source=str(item.get("source", "local")) if isinstance(item, dict) else "local")
+        if event is not None:
+            events.append(event)
+    return events
+
+
+def save_livepix_events(path: Path, events: list[LivepixEvent]) -> None:
+    path.write_text(json.dumps(livepix_events_to_payload(events[-1000:]), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def format_livepix_amount(amount: int, currency: str = "BRL") -> str:
+    value = max(0, int(amount or 0)) / 100
+    symbol = "R$" if str(currency).upper() == "BRL" else str(currency).upper()
+    if symbol == "R$":
+        return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{value:.2f} {symbol}"
+
+
+class LivepixApiClient:
+    api_base_url = "https://api.livepix.gg/v2"
+    token_url = "https://oauth.livepix.gg/oauth2/token"
+
+    def __init__(self, client_id: str, client_secret: str, scopes: str, log: callable | None = None):
+        self.client_id = client_id.strip()
+        self.client_secret = client_secret.strip()
+        self.scopes = scopes.strip()
+        self.log = log
+        self.access_token = ""
+        self.expires_at = 0.0
+
+    def enabled(self) -> bool:
+        return bool(self.client_id and self.client_secret)
+
+    def token(self) -> str:
+        if not self.enabled():
+            raise ValueError("Informe client_id e client_secret da Livepix.")
+        if self.access_token and time.time() < self.expires_at - 60:
+            return self.access_token
+        response = requests.post(
+            self.token_url,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "scope": self.scopes,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        self.access_token = str(payload.get("access_token", ""))
+        self.expires_at = time.time() + int(payload.get("expires_in", 3600) or 3600)
+        if not self.access_token:
+            raise ValueError("Livepix nao retornou access_token.")
+        return self.access_token
+
+    def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        headers = dict(kwargs.pop("headers", {}) or {})
+        headers["Authorization"] = f"Bearer {self.token()}"
+        headers["User-Agent"] = f"{APP_NAME}/{APP_VERSION}"
+        response = requests.request(method, f"{self.api_base_url}{path}", headers=headers, timeout=25, **kwargs)
+        response.raise_for_status()
+        if response.status_code == 204 or not response.content:
+            return {}
+        return response.json()
+
+    def account(self) -> dict[str, Any]:
+        return self.request("GET", "/account").get("data", {})
+
+    def payments(self, limit: int = 50) -> list[LivepixEvent]:
+        payload = self.request("GET", "/payments", params={"limit": limit})
+        return [event for item in payload.get("data", []) if (event := parse_livepix_event(item, "payment", "api"))]
+
+    def payment(self, payment_id: str) -> LivepixEvent | None:
+        payload = self.request("GET", f"/payments/{payment_id}")
+        return parse_livepix_event(payload.get("data", {}), "payment", "api")
+
+    def messages(self, limit: int = 50) -> list[LivepixEvent]:
+        payload = self.request("GET", "/messages", params={"limit": limit})
+        return [event for item in payload.get("data", []) if (event := parse_livepix_event(item, "message", "api"))]
+
+    def message(self, message_id: str) -> LivepixEvent | None:
+        payload = self.request("GET", f"/messages/{message_id}")
+        return parse_livepix_event(payload.get("data", {}), "message", "api")
+
+    def wallet(self) -> list[dict[str, Any]]:
+        data = self.request("GET", "/wallet").get("data", [])
+        return data if isinstance(data, list) else []
+
+    def wallet_transactions(self, currency: str, limit: int = 30) -> list[dict[str, Any]]:
+        payload = self.request("GET", f"/wallet/{currency}/transactions", params={"limit": limit})
+        data = payload.get("data", [])
+        return data if isinstance(data, list) else []
+
+    def wallet_receivables(self, currency: str, limit: int = 30) -> list[dict[str, Any]]:
+        payload = self.request("GET", f"/wallet/{currency}/receivables", params={"limit": limit})
+        data = payload.get("data", [])
+        return data if isinstance(data, list) else []
+
+    def currencies(self) -> list[dict[str, Any]]:
+        payload = self.request("GET", "/currencies")
+        data = payload.get("data", [])
+        return data if isinstance(data, list) else []
+
+    def plans(self) -> list[dict[str, Any]]:
+        payload = self.request("GET", "/subscriptions/plans")
+        data = payload.get("data", [])
+        return data if isinstance(data, list) else []
+
+    def create_plan(self, slug: str, name: str, description: str, amount: int) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            "/subscriptions/plans",
+            json={
+                "slug": slug,
+                "name": name,
+                "description": description,
+                "amount": amount,
+            },
+        ).get("data", {})
+
+    def subscriptions(self, limit: int = 50) -> list[dict[str, Any]]:
+        payload = self.request("GET", "/subscriptions", params={"limit": limit})
+        data = payload.get("data", [])
+        return data if isinstance(data, list) else []
+
+    def create_subscription(
+        self,
+        plan_id: str,
+        recurrence: str,
+        username: str,
+        email: str,
+        redirect_url: str,
+    ) -> dict[str, Any]:
+        subscriber = {"username": username}
+        if email.strip():
+            subscriber["email"] = email.strip()
+        return self.request(
+            "POST",
+            "/subscriptions",
+            json={
+                "planId": plan_id,
+                "recurrence": recurrence,
+                "subscriber": subscriber,
+                "redirectUrl": redirect_url,
+            },
+        ).get("data", {})
+
+    def subscription(self, subscription_id: str) -> LivepixEvent | None:
+        payload = self.request("GET", f"/subscriptions/{subscription_id}")
+        return parse_livepix_event(payload.get("data", {}), "subscription", "api")
+
+    def rewards(self) -> list[dict[str, Any]]:
+        payload = self.request("GET", "/rewards")
+        data = payload.get("data", [])
+        return data if isinstance(data, list) else []
+
+    def reward_grants(self, reward_id: str) -> list[dict[str, Any]]:
+        payload = self.request("GET", f"/rewards/{reward_id}/grants")
+        data = payload.get("data", [])
+        return data if isinstance(data, list) else []
+
+    def controls(self) -> dict[str, Any]:
+        return self.request("GET", "/controls").get("data", {})
+
+    def set_autoplay(self, enabled: bool) -> None:
+        self.request("PATCH", "/controls", json={"autoPlay": bool(enabled)})
+
+    def skip_alert(self) -> None:
+        self.request("POST", "/controls/skip")
+
+    def replay_alert(self) -> None:
+        self.request("POST", "/controls/replay")
+
+    def create_payment(self, amount: int, currency: str, redirect_url: str) -> dict[str, Any]:
+        return self.request("POST", "/payments", json={"amount": amount, "currency": currency, "redirectUrl": redirect_url}).get("data", {})
+
+    def create_message(self, username: str, message: str, amount: int, currency: str, redirect_url: str) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            "/messages",
+            json={
+                "username": username,
+                "message": message,
+                "amount": amount,
+                "currency": currency,
+                "redirectUrl": redirect_url,
+            },
+        ).get("data", {})
+
+    def webhooks(self) -> list[dict[str, Any]]:
+        payload = self.request("GET", "/webhooks")
+        data = payload.get("data", [])
+        return data if isinstance(data, list) else []
+
+    def create_webhook(self, url: str) -> dict[str, Any]:
+        return self.request("POST", "/webhooks", json={"url": url}).get("data", {})
+
+
+class LocalLivepixWebhookServer:
+    def __init__(self, host: str, port: int, token: str, callback: callable, log: callable):
+        self.host = host or "127.0.0.1"
+        self.port = int(port)
+        self.token = token.strip()
+        self.callback = callback
+        self.log = log
+        self.server: ThreadingHTTPServer | None = None
+        self.thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self.server:
+            return
+        parent = self
+
+        class ReusableServer(ThreadingHTTPServer):
+            allow_reuse_address = True
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, _format: str, *_args: Any) -> None:
+                return
+
+            def _write_json(self, status: int, payload: dict[str, Any]) -> None:
+                raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Aizen-Token")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def _authorized(self) -> bool:
+                if not parent.token:
+                    return True
+                parsed = urlparse(self.path)
+                query_token = parse_qs(parsed.query).get("token", [""])[0]
+                provided = self.headers.get("X-Aizen-Token", "") or query_token
+                return secrets.compare_digest(provided, parent.token)
+
+            def do_OPTIONS(self) -> None:
+                self._write_json(200, {"ok": True})
+
+            def do_GET(self) -> None:
+                self._write_json(200, {"ok": True, "app": APP_NAME, "endpoint": "livepix"})
+
+            def do_POST(self) -> None:
+                if not self._authorized():
+                    self._write_json(401, {"ok": False, "error": "unauthorized"})
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    length = 0
+                raw_body = self.rfile.read(max(0, min(length, 2_000_000)))
+                try:
+                    payload = json.loads(raw_body.decode("utf-8-sig"))
+                except Exception as exc:
+                    self._write_json(400, {"ok": False, "error": f"invalid_json: {exc}"})
+                    return
+                parent.callback(payload)
+                self._write_json(200, {"ok": True})
+
+        self.server = ReusableServer((self.host, self.port), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, name="AizenLivepixWebhook", daemon=True)
+        self.thread.start()
+        self.log(f"Webhook Livepix ouvindo em http://{self.host}:{self.port}/api/livepix")
+
+    def stop(self) -> None:
+        if not self.server:
+            return
+        try:
+            self.server.shutdown()
+            self.server.server_close()
+        finally:
+            self.server = None
+            self.thread = None
+
+
+def normalize_tikfinity_websocket_url(url: str) -> str:
+    text = str(url or "").strip()
+    if not text:
+        return DEFAULT_TIKFINITY_WEBSOCKET_URL
+    if "tikfinity.zerody.one/widget" in text or "socialstream.ninja" in text:
+        raise ValueError(
+            "Esse campo precisa da URL Event API do TikFinity, nao da URL do widget/chat. "
+            f"Use {DEFAULT_TIKFINITY_WEBSOCKET_URL}"
+        )
+    if "://" not in text:
+        text = f"ws://{text}"
+    parsed = urlparse(text)
+    if parsed.scheme not in {"ws", "wss"} or not parsed.hostname:
+        raise ValueError(f"URL WebSocket invalida. Use {DEFAULT_TIKFINITY_WEBSOCKET_URL}")
+    if parsed.hostname.casefold() == "localhost":
+        netloc = "127.0.0.1"
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+        parsed = parsed._replace(netloc=netloc)
+    if not parsed.path:
+        parsed = parsed._replace(path="/")
+    return parsed.geturl()
+
+
+def normalize_streamerbot_websocket_url(url: str) -> str:
+    text = str(url or "").strip()
+    if not text:
+        return DEFAULT_STREAMERBOT_WEBSOCKET_URL
+    if "://" not in text:
+        text = f"ws://{text}"
+    parsed = urlparse(text)
+    if parsed.scheme not in {"ws", "wss"} or not parsed.hostname:
+        raise ValueError(f"URL WebSocket do Streamer.bot invalida. Use {DEFAULT_STREAMERBOT_WEBSOCKET_URL}")
+    if not parsed.path:
+        parsed = parsed._replace(path="/")
+    return parsed.geturl()
+
+
+def normalize_streamerbot_http_url(url: str) -> str:
+    text = str(url or "").strip()
+    if not text:
+        return DEFAULT_STREAMERBOT_HTTP_URL
+    if "://" not in text:
+        text = f"http://{text}"
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"URL HTTP do Streamer.bot invalida. Use {DEFAULT_STREAMERBOT_HTTP_URL}")
+    return text.rstrip("/")
+
+
+def parse_chat_commands_payload(payload: Any) -> list[ChatCommand]:
+    commands: list[ChatCommand] = []
+    if not isinstance(payload, list):
+        return commands
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        command = normalize_chat_command(item.get("command", ""))
+        response = str(item.get("response", "")).strip()
+        if not command or not response:
+            continue
+        try:
+            cooldown = int(float(str(item.get("cooldown_seconds", 30)).replace(",", ".")))
+        except ValueError:
+            cooldown = 30
+        commands.append(
+            ChatCommand(
+                command=command,
+                response=response,
+                enabled=bool(item.get("enabled", True)),
+                cooldown_seconds=max(0, cooldown),
+            )
+        )
+    return commands
+
+
+def normalize_chat_command(command: Any) -> str:
+    text = str(command or "").strip().split(maxsplit=1)[0] if str(command or "").strip() else ""
+    if not text:
+        return ""
+    if not text.startswith("!"):
+        text = f"!{text}"
+    return text.casefold()
+
+
+def chat_command_payload(commands: list[ChatCommand]) -> list[dict[str, Any]]:
+    return [
+        {
+            "command": command.command,
+            "response": command.response,
+            "enabled": bool(command.enabled),
+            "cooldown_seconds": int(command.cooldown_seconds),
+        }
+        for command in commands
+        if command.command and command.response
+    ]
+
+
+def parse_chat_timers_payload(payload: Any) -> list[ChatTimer]:
+    timers: list[ChatTimer] = []
+    if not isinstance(payload, list):
+        return timers
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        name = re.sub(r"\s+", " ", str(item.get("name", "")).strip())
+        message = re.sub(r"\s+", " ", str(item.get("message", "")).strip())
+        if not name or not message:
+            continue
+        try:
+            interval = int(float(str(item.get("interval_seconds", 600)).replace(",", ".")))
+        except ValueError:
+            interval = 600
+        try:
+            min_messages = int(float(str(item.get("min_chat_messages", 5)).replace(",", ".")))
+        except ValueError:
+            min_messages = 5
+        timers.append(
+            ChatTimer(
+                name=name[:80],
+                message=message,
+                enabled=bool(item.get("enabled", True)),
+                interval_seconds=max(60, interval),
+                min_chat_messages=max(0, min_messages),
+            )
+        )
+    return timers
+
+
+def chat_timer_payload(timers: list[ChatTimer]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": timer.name,
+            "message": timer.message,
+            "enabled": bool(timer.enabled),
+            "interval_seconds": int(timer.interval_seconds),
+            "min_chat_messages": int(timer.min_chat_messages),
+        }
+        for timer in timers
+        if timer.name and timer.message
+    ]
+
+
+def chat_command_token(message_text: str) -> tuple[str, str]:
+    text = str(message_text or "").strip()
+    if not text:
+        return "", ""
+    parts = text.split(maxsplit=1)
+    token = normalize_chat_command(parts[0])
+    args = parts[1].strip() if len(parts) > 1 else ""
+    return token, args
+
+
+def render_chat_command_response(template: str, message: LiveChatMessage, command: str, args: str) -> str:
+    replacements = {
+        "{user}": message.username,
+        "{username}": message.username,
+        "{nick}": message.username,
+        "{command}": command,
+        "{args}": args,
+        "{message}": message.comment,
+        "{platform}": message.platform or "Live",
+        "{time}": datetime.now().strftime("%H:%M:%S"),
+    }
+    output = str(template or "")
+    for marker, value in replacements.items():
+        output = output.replace(marker, str(value))
+    return re.sub(r"\s+", " ", output).strip()
+
+
+def streamerbot_authentication(password: str, salt: str, challenge: str) -> str:
+    secret_hash = hashlib.sha256((password + salt).encode("utf-8")).digest()
+    secret = base64.b64encode(secret_hash).decode("ascii")
+    auth_hash = hashlib.sha256((secret + challenge).encode("utf-8")).digest()
+    return base64.b64encode(auth_hash).decode("ascii")
+
+
+def streamerbot_action_payload(action_name: str, action_id: str, args: dict[str, Any]) -> dict[str, Any]:
+    action: dict[str, str] = {}
+    if action_id.strip():
+        action["id"] = action_id.strip()
+    if action_name.strip():
+        action["name"] = action_name.strip()
+    if not action:
+        raise ValueError("Configure o nome ou ID da action do Streamer.bot.")
+    return {"action": action, "args": args}
+
+
+def send_streamerbot_action_http(
+    http_url: str,
+    action_name: str,
+    action_id: str,
+    args: dict[str, Any],
+) -> str:
+    base_url = normalize_streamerbot_http_url(http_url)
+    payload = streamerbot_action_payload(action_name, action_id, args)
+    response = requests.post(f"{base_url}/DoAction", json=payload, timeout=8)
+    if response.status_code not in {200, 202, 204}:
+        raise RuntimeError(f"Streamer.bot HTTP respondeu {response.status_code}: {response.text[:180]}")
+    return "Streamer.bot HTTP OK"
+
+
+def send_streamerbot_action_websocket(
+    websocket_url: str,
+    password: str,
+    action_name: str,
+    action_id: str,
+    args: dict[str, Any],
+) -> str:
+    try:
+        import websocket
+    except Exception as exc:
+        raise RuntimeError(f"WebSocket indisponivel. Instale websocket-client: {exc}") from exc
+
+    url = normalize_streamerbot_websocket_url(websocket_url)
+    request_id = f"aizen-{uuid.uuid4().hex}"
+    payload = streamerbot_action_payload(action_name, action_id, args)
+    request_payload = {
+        "request": "DoAction",
+        "id": request_id,
+        "action": payload["action"],
+        "args": payload["args"],
+    }
+    ws = websocket.create_connection(url, timeout=8, http_no_proxy=["localhost", "127.0.0.1", "::1"])
+    try:
+        try:
+            hello_raw = ws.recv()
+            hello = json.loads(hello_raw) if hello_raw else {}
+        except Exception:
+            hello = {}
+        authentication = hello.get("authentication") if isinstance(hello, dict) else None
+        if isinstance(authentication, dict):
+            if not password:
+                raise RuntimeError("Streamer.bot pediu senha. Configure a senha WebSocket na aba Comandos.")
+            auth_id = f"aizen-auth-{uuid.uuid4().hex}"
+            auth_request = {
+                "request": "Authenticate",
+                "id": auth_id,
+                "authentication": streamerbot_authentication(
+                    password,
+                    str(authentication.get("salt", "")),
+                    str(authentication.get("challenge", "")),
+                ),
+            }
+            ws.send(json.dumps(auth_request, ensure_ascii=False))
+            while True:
+                raw_response = ws.recv()
+                auth_response = json.loads(raw_response)
+                if auth_response.get("id") == auth_id:
+                    if auth_response.get("status") != "ok":
+                        raise RuntimeError(f"Falha ao autenticar no Streamer.bot: {compact_json_preview(auth_response)}")
+                    break
+
+        ws.send(json.dumps(request_payload, ensure_ascii=False))
+        while True:
+            raw_response = ws.recv()
+            response = json.loads(raw_response)
+            if response.get("id") != request_id:
+                continue
+            if response.get("status") != "ok":
+                raise RuntimeError(f"Streamer.bot recusou a action: {compact_json_preview(response)}")
+            return "Streamer.bot WebSocket OK"
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+
+def send_chatbot_message_via_streamerbot(settings: dict[str, Any], args: dict[str, Any]) -> str:
+    method = str(settings.get("method") or "streamerbot_websocket")
+    action_name = str(settings.get("action_name") or "")
+    action_id = str(settings.get("action_id") or "")
+    if method == "streamerbot_http":
+        return send_streamerbot_action_http(str(settings.get("http_url") or ""), action_name, action_id, args)
+    return send_streamerbot_action_websocket(
+        str(settings.get("websocket_url") or ""),
+        str(settings.get("password") or ""),
+        action_name,
+        action_id,
+        args,
+    )
+
+
+class ChatWebSocketWorker:
+    def __init__(self, url: str, callback: callable, log: callable):
+        self.url = normalize_tikfinity_websocket_url(url)
+        self.callback = callback
+        self.log = log
+        self.stop_event = threading.Event()
+        self.thread: threading.Thread | None = None
+        self.ws_app: Any | None = None
+        self.chat_event_count = 0
+        self.other_event_count = 0
+        self.config_event_logged = False
+
+    def start(self) -> None:
+        if self.thread and self.thread.is_alive():
+            return
+        self.stop_event.clear()
+        self.chat_event_count = 0
+        self.other_event_count = 0
+        self.config_event_logged = False
+        self.thread = threading.Thread(target=self._run, name="AizenChatWebSocket", daemon=True)
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        if self.ws_app is not None:
+            try:
+                self.ws_app.close()
+            except Exception:
+                pass
+
+    def _run(self) -> None:
+        try:
+            import websocket
+        except Exception as exc:
+            self.log(f"WebSocket indisponivel. Instale websocket-client: {exc}")
+            return
+
+        while not self.stop_event.is_set():
+            try:
+                def on_open(_ws: Any) -> None:
+                    self.chat_event_count = 0
+                    self.other_event_count = 0
+                    self.config_event_logged = False
+                    self.log("WebSocket do TikFinity conectado. Aguardando mensagens do chat.")
+
+                    def warn_if_no_chat() -> None:
+                        time.sleep(15)
+                        if not self.stop_event.is_set() and self.chat_event_count == 0:
+                            self.log(
+                                "WebSocket conectado, mas nenhum evento de chat chegou ainda. "
+                                "Confirme que o TikFinity esta conectado na live e envie uma mensagem de teste."
+                            )
+
+                    threading.Thread(target=warn_if_no_chat, name="AizenChatWebSocketWatch", daemon=True).start()
+
+                def on_message(_ws: Any, raw_message: str) -> None:
+                    try:
+                        parsed = json.loads(raw_message)
+                    except Exception:
+                        return
+                    events = parsed if isinstance(parsed, list) else [parsed]
+                    for event in events:
+                        if isinstance(event, dict):
+                            event_name = live_chat_event_name(event)
+                            if event_name == "config" and not self.config_event_logged:
+                                self.config_event_logged = True
+                                self.log("TikFinity Event API respondeu configuracao. Conexao OK; aguardando evento chat.")
+                                continue
+                            if not is_live_chat_event_payload(event):
+                                self.other_event_count += 1
+                                if self.other_event_count in {1, 50, 200}:
+                                    self.log(
+                                        "Recebendo eventos do TikFinity, mas ainda sem chat "
+                                        f"({self.other_event_count} eventos de live ignorados)."
+                                    )
+                                continue
+
+                            self.chat_event_count += 1
+                            message = normalize_live_chat_payload(event, "TikFinity WebSocket")
+                            if message is None:
+                                self.log(
+                                    "Evento de chat recebido, mas o app ainda nao reconheceu o formato: "
+                                    f"{compact_json_preview(event)}"
+                                )
+                                self.callback(event, "TikFinity WebSocket")
+                                continue
+                            if self.chat_event_count <= 3:
+                                self.log(f"Chat TikFinity recebido: {message.username}: {message.comment[:80]}")
+                            self.callback(message, "TikFinity WebSocket")
+
+                def on_error(_ws: Any, error: Any) -> None:
+                    if not self.stop_event.is_set():
+                        error_text = str(error)
+                        if "getaddrinfo failed" in error_text:
+                            self.log(
+                                "Erro no WebSocket do TikFinity: endereco invalido ou TikFinity Event API offline. "
+                                f"Use {DEFAULT_TIKFINITY_WEBSOCKET_URL} e deixe o TikFinity aberto."
+                            )
+                        elif "Connection refused" in error_text or "10061" in error_text:
+                            self.log(
+                                "Erro no WebSocket do TikFinity: conexao recusada. "
+                                "Abra o TikFinity e ative a Event API antes de iniciar o chat."
+                            )
+                        else:
+                            self.log(f"Erro no WebSocket do TikFinity: {error}")
+
+                def on_close(_ws: Any, _code: Any, _reason: Any) -> None:
+                    if not self.stop_event.is_set():
+                        self.log("WebSocket do TikFinity desconectado. Tentando reconectar...")
+
+                self.ws_app = websocket.WebSocketApp(
+                    self.url,
+                    on_open=on_open,
+                    on_message=on_message,
+                    on_error=on_error,
+                    on_close=on_close,
+                )
+                self.ws_app.run_forever(
+                    ping_interval=20,
+                    ping_timeout=10,
+                    http_no_proxy=["localhost", "127.0.0.1", "::1"],
+                )
+            except Exception as exc:
+                if not self.stop_event.is_set():
+                    self.log(f"Falha no WebSocket do TikFinity: {exc}")
+            finally:
+                self.ws_app = None
+            if not self.stop_event.is_set():
+                time.sleep(3)
 
 
 def parse_hotkey(hotkey: str) -> tuple[int, int]:
@@ -139,11 +1714,15 @@ def clean_name(text: str, corrections: dict[str, str]) -> str:
     text = text.strip()
     text = re.sub(r"\s+", " ", text)
     text = text.replace("’", "'").replace("`", "'").replace("´", "'")
-    text = re.sub(r"[^\wÀ-ÿ_.' @+-]", "", text, flags=re.UNICODE).strip(" -")
+    text = re.sub(r"[^\wÀ-ÿ_.' @+!&$-]", "", text, flags=re.UNICODE).strip(" -")
 
     normalized = text.casefold()
     for wrong, right in corrections.items():
         if normalized == wrong.casefold():
+            return right
+    for wrong, right in corrections.items():
+        wrong_key = wrong.casefold().strip()
+        if len(wrong_key) >= 4 and wrong_key in normalized:
             return right
     return text
 
@@ -174,9 +1753,25 @@ def prepare_name_crops(image: Image.Image, box: tuple[int, int, int, int]) -> li
     crop = image.crop(box).convert("RGB")
     resized = crop.resize((crop.width * 4, crop.height * 4), Image.Resampling.LANCZOS)
     resized_5x = crop.resize((crop.width * 5, crop.height * 5), Image.Resampling.LANCZOS)
+    sharp = ImageEnhance.Sharpness(resized).enhance(2.0)
+    sharp_strong = ImageEnhance.Sharpness(resized).enhance(2.8)
     gray = ImageEnhance.Contrast(ImageOps.grayscale(resized)).enhance(2.0)
     bw = gray.point(lambda pixel: 0 if pixel < 140 else 255)
-    return [("color", resized), ("color5x", resized_5x), ("gray", gray), ("bw", bw)]
+
+    arr = np.array(resized)
+    hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
+    white_mask = np.where((hsv[:, :, 2] > 145) & (hsv[:, :, 1] < 95), 0, 255).astype(np.uint8)
+    white = Image.fromarray(white_mask)
+
+    return [
+        ("white", white),
+        ("sharp", sharp),
+        ("sharp_strong", sharp_strong),
+        ("color", resized),
+        ("color5x", resized_5x),
+        ("gray", gray),
+        ("bw", bw),
+    ]
 
 
 def run_windows_ocr(paths: list[Path]) -> dict[str, list[str]]:
@@ -369,13 +1964,60 @@ def read_kda_kills(
 
 
 def choose_name(candidate_lines: list[list[str]], corrections: dict[str, str], fallback: str) -> str:
-    # Variants are ordered by reliability for the sample UI: color, gray, then thresholded bw.
+    candidates: list[tuple[int, str]] = []
+    seen_counts: dict[str, int] = {}
+    candidate_names: list[str] = []
+    correction_values = {normalize_player_key(value) for value in corrections.values()}
     for lines in candidate_lines:
-        for line in lines:
-            name = clean_name(line, corrections)
-            if len(re.sub(r"[^\wÀ-ÿ]", "", name, flags=re.UNICODE)) >= 2:
-                return name
+        if not lines:
+            continue
+        # The second OCR line is usually clan/title text under the nickname.
+        name = clean_name(lines[0], corrections)
+        significant = re.sub(r"[^\wÀ-ÿ]", "", name, flags=re.UNICODE)
+        if len(significant) < 2:
+            continue
+        candidate_names.append(name)
+        key = normalize_player_key(name)
+        seen_counts[key] = seen_counts.get(key, 0) + 1
+
+    for name in candidate_names:
+        significant = re.sub(r"[^\wÀ-ÿ]", "", name, flags=re.UNICODE)
+
+        digit_only = significant.isdigit()
+        letter_count = len(re.findall(r"[^\W\d_]", significant, flags=re.UNICODE))
+        digit_count = len(re.findall(r"\d", significant))
+        score = len(significant) * 10 + len(name)
+        score += seen_counts.get(normalize_player_key(name), 0) * 60
+        if normalize_player_key(name) in correction_values:
+            score += 1000
+        if re.search(r"\d{2,}[A-Za-zÀ-ÿ]$", name):
+            score -= 120
+        if digit_only:
+            score -= 40
+        elif letter_count <= 2 and digit_count >= 2:
+            score -= 80
+        if name.startswith("Jogador "):
+            score -= 100
+        candidates.append((score, name))
+
+    if candidates:
+        return max(candidates, key=lambda item: item[0])[1]
     return fallback
+
+
+def prepare_kda_crop(image: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
+    crop = image.crop(box).convert("RGB")
+    crop = crop.resize((crop.width * 4, crop.height * 4), Image.Resampling.LANCZOS)
+    return ImageEnhance.Contrast(ImageOps.grayscale(crop)).enhance(2.2)
+
+
+def parse_kda_ocr(lines: list[str]) -> int | None:
+    for line in lines:
+        compact = line.replace(" ", "")
+        match = re.search(r"(\d{1,2})[/|](\d{1,2})[/|](\d{1,2})", compact)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def detect_layout(image: Image.Image, config: dict[str, Any]) -> dict[str, Any]:
@@ -409,37 +2051,62 @@ def extract_players(image_path: Path, config: dict[str, Any], keep_debug: bool =
     templates = digit_templates()
     separators = symbol_templates()
     name_height = int(layout.get("name_height", 46))
+    name_box_variants = layout.get("name_box_variants", [[0, 0, 0, 0]])
     kill_mode = layout.get("kill_mode", "single_column")
 
     with tempfile.TemporaryDirectory(prefix="freefire_ocr_") as tmpdir:
         tmp_path = Path(tmpdir)
         ocr_paths: list[Path] = []
-        slots: list[tuple[str, int, list[Path], tuple[int, int, int, int]]] = []
+        slots: list[tuple[str, int, list[Path], Path | None, tuple[int, int, int, int]]] = []
 
         for side_name, side in (("left", layout["left"]), ("right", layout["right"])):
             for row_index, row in enumerate(layout["rows"], start=1):
                 y1, _ = row
                 name_x1, name_x2 = side["name"]
                 # OCR only the first name line; clan/title text below the nick is noise.
-                name_box = scale_box(name_x1, y1, name_x2, y1 + name_height, image.size, reference_size)
                 crop_paths = []
-                for variant, name_crop in prepare_name_crops(image, name_box):
-                    crop_path = tmp_path / f"{side_name}_{row_index}_name_{variant}.png"
-                    name_crop.save(crop_path)
-                    ocr_paths.append(crop_path)
-                    crop_paths.append(crop_path)
+                name_box = scale_box(name_x1, y1, name_x2, y1 + name_height, image.size, reference_size)
+                for box_index, offsets in enumerate(name_box_variants):
+                    dx1, dy1, dx2, dy2 = offsets
+                    variant_box = scale_box(
+                        name_x1 + dx1,
+                        y1 + dy1,
+                        name_x2 + dx2,
+                        y1 + name_height + dy2,
+                        image.size,
+                        reference_size,
+                    )
+                    for variant, name_crop in prepare_name_crops(image, variant_box):
+                        crop_path = tmp_path / f"{side_name}_{row_index}_name_b{box_index}_{variant}.png"
+                        name_crop.save(crop_path)
+                        ocr_paths.append(crop_path)
+                        crop_paths.append(crop_path)
+
+                        if keep_debug:
+                            debug_dir = ROOT / config.get("debug_dir", "debug")
+                            debug_dir.mkdir(exist_ok=True)
+                            name_crop.save(debug_dir / crop_path.name)
+
+                kda_path = None
+                if kill_mode == "kda":
+                    kill_x1, kill_x2 = side["kills"]
+                    kill_box = scale_box(kill_x1, y1, kill_x2, row[1], image.size, reference_size)
+                    kda_path = tmp_path / f"{side_name}_{row_index}_kda.png"
+                    kda_crop = prepare_kda_crop(image, kill_box)
+                    kda_crop.save(kda_path)
+                    ocr_paths.append(kda_path)
 
                     if keep_debug:
                         debug_dir = ROOT / config.get("debug_dir", "debug")
                         debug_dir.mkdir(exist_ok=True)
-                        name_crop.save(debug_dir / crop_path.name)
+                        kda_crop.save(debug_dir / kda_path.name)
 
-                slots.append((side_name, row_index, crop_paths, name_box))
+                slots.append((side_name, row_index, crop_paths, kda_path, name_box))
 
         ocr_result = run_windows_ocr(ocr_paths)
 
         players: list[PlayerKill] = []
-        for side_name, row_index, crop_paths, _ in slots:
+        for side_name, row_index, crop_paths, kda_path, _ in slots:
             side = layout[side_name]
             row = layout["rows"][row_index - 1]
             y1, y2 = row
@@ -452,7 +2119,8 @@ def extract_players(image_path: Path, config: dict[str, Any], keep_debug: bool =
             ]
             name = choose_name(candidate_lines, corrections, f"Jogador {side_name}-{row_index}")
             if kill_mode == "kda":
-                kills = read_kda_kills(image, kill_box, templates, separators)
+                ocr_kills = parse_kda_ocr(ocr_result.get(str(kda_path), []) if kda_path else [])
+                kills = ocr_kills if ocr_kills is not None else read_kda_kills(image, kill_box, templates, separators)
             else:
                 kills = read_kills(image, kill_box, templates)
             players.append(PlayerKill(name=name, kills=kills))
@@ -464,6 +2132,723 @@ def format_message(players: list[PlayerKill], title: str) -> str:
     lines = [title, ""]
     lines.extend(f"({player.name}, {player.kills})" for player in players)
     return "\n".join(lines)
+
+
+def player_payload(players: list[PlayerKill]) -> list[dict[str, Any]]:
+    return [{"name": player.name, "kills": int(player.kills)} for player in players]
+
+
+FF_QUEUE_STATUSES = ["Na fila", "Chamado", "Jogando", "Concluido"]
+
+
+def normalize_queue_status(value: Any) -> str:
+    if isinstance(value, bool):
+        return "Jogando" if value else "Na fila"
+    text = str(value or "").strip()
+    folded = text.casefold()
+    aliases = {
+        "fila": "Na fila",
+        "na fila": "Na fila",
+        "waiting": "Na fila",
+        "wait": "Na fila",
+        "pending": "Na fila",
+        "queued": "Na fila",
+        "queue": "Na fila",
+        "aguardando": "Na fila",
+        "chamado": "Chamado",
+        "chamada": "Chamado",
+        "called": "Chamado",
+        "calling": "Chamado",
+        "convocado": "Chamado",
+        "convocada": "Chamado",
+        "jogando": "Jogando",
+        "em partida": "Jogando",
+        "playing": "Jogando",
+        "in_game": "Jogando",
+        "ingame": "Jogando",
+        "active": "Jogando",
+        "concluido": "Concluido",
+        "concluído": "Concluido",
+        "finalizado": "Concluido",
+        "finalizada": "Concluido",
+        "done": "Concluido",
+        "finished": "Concluido",
+        "complete": "Concluido",
+        "completed": "Concluido",
+    }
+    return aliases.get(folded, text if text in FF_QUEUE_STATUSES else "Na fila")
+
+
+def first_present(mapping: dict[str, Any], keys: tuple[str, ...], default: Any = None) -> Any:
+    for key in keys:
+        if key in mapping and mapping.get(key) not in (None, ""):
+            return mapping.get(key)
+    return default
+
+
+def ff_queue_payload(entries: list[FFQueueEntry]) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for index, entry in enumerate(merge_ff_queue_entries(entries), start=1):
+        if not entry.name.strip():
+            continue
+        item = {
+            "position": index,
+            "name": entry.name,
+            "note": entry.note,
+            "status": normalize_queue_status(entry.status),
+            "rooms": max(1, normalize_kill_value(entry.rooms)),
+            "credits": max(1, normalize_kill_value(entry.rooms)),
+        }
+        if entry.user_id:
+            item["user_id"] = entry.user_id
+        if entry.panel_user_id:
+            item["panel_user_id"] = entry.panel_user_id
+        if entry.ff_player_id:
+            item["ff_player_id"] = entry.ff_player_id
+        payload.append(item)
+    return payload
+
+
+def is_auto_room_note(note: str) -> bool:
+    return bool(re.fullmatch(r"\d+\s*sala(?:s)?", re.sub(r"\s+", " ", str(note or "").strip()), re.IGNORECASE))
+
+
+def ff_queue_merge_key(entry: FFQueueEntry) -> str:
+    normalized_name = unicodedata.normalize("NFKD", normalize_player_key(entry.name))
+    name_key = "".join(character for character in normalized_name if not unicodedata.combining(character))
+    name_key = re.sub(r"\s+", " ", name_key).strip()
+    if name_key:
+        return f"name:{name_key}"
+    ff_id = re.sub(r"\D+", "", str(entry.ff_player_id or ""))
+    if ff_id:
+        return f"ff:{ff_id}"
+    return "unknown"
+
+
+def ff_queue_status_rank(status: str) -> int:
+    normalized = normalize_queue_status(status)
+    return {"Jogando": 3, "Chamado": 2, "Na fila": 1, "Concluido": 0}.get(normalized, 1)
+
+
+def merge_ff_queue_entries(entries: list[FFQueueEntry]) -> list[FFQueueEntry]:
+    grouped: dict[str, FFQueueEntry] = {}
+    order: list[str] = []
+    for entry in entries:
+        name = entry.name.strip()
+        status = normalize_queue_status(entry.status)
+        if not name:
+            continue
+        key = ff_queue_merge_key(entry)
+        rooms = max(1, normalize_kill_value(entry.rooms))
+        note = "" if is_auto_room_note(entry.note) else entry.note.strip()
+        if key not in grouped:
+            grouped[key] = FFQueueEntry(
+                name=name,
+                note=note,
+                status=status,
+                rooms=rooms,
+                user_id=str(entry.user_id or "").strip(),
+                panel_user_id=str(entry.panel_user_id or "").strip(),
+                ff_player_id=str(entry.ff_player_id or "").strip(),
+            )
+            order.append(key)
+            continue
+        grouped[key].rooms += rooms
+        if ff_queue_status_rank(status) > ff_queue_status_rank(grouped[key].status):
+            grouped[key].status = status
+        if entry.ff_player_id and not grouped[key].ff_player_id:
+            grouped[key].ff_player_id = str(entry.ff_player_id).strip()
+        if entry.user_id and not grouped[key].user_id:
+            grouped[key].user_id = str(entry.user_id).strip()
+        if entry.panel_user_id and not grouped[key].panel_user_id:
+            grouped[key].panel_user_id = str(entry.panel_user_id).strip()
+        if note and note not in grouped[key].note:
+            grouped[key].note = f"{grouped[key].note} | {note}" if grouped[key].note else note
+    return [grouped[key] for key in order]
+
+
+def parse_ff_queue_payload(payload: Any) -> list[FFQueueEntry]:
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+
+    candidates = payload
+    if isinstance(payload, dict):
+        for key in ("queue", "fila", "ff_queue", "ffQueue", "items", "data", "players"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                candidates = value
+                break
+
+    if not isinstance(candidates, list):
+        return []
+
+    entries: list[FFQueueEntry] = []
+    for item in candidates:
+        if isinstance(item, dict):
+            name = first_present(
+                item,
+                (
+                    "name",
+                    "nick",
+                    "nickname",
+                    "username",
+                    "user",
+                    "participant",
+                    "participantName",
+                    "player",
+                    "playerName",
+                    "jogador",
+                    "apelido",
+                    "displayName",
+                ),
+            )
+            note = first_present(item, ("note", "notes", "obs", "observacao", "observação", "room", "sala"), "")
+            status = first_present(item, ("status", "state", "estado", "phase", "situacao", "situação"), "")
+            user_id = first_present(item, ("user_id", "userId", "uid", "id", "jarvis_user_id", "jarvisUserId"), "")
+            panel_user_id = first_present(item, ("panel_user_id", "panelUserId", "public_user_id", "publicUserId"), "")
+            ff_player_id = first_present(
+                item,
+                ("ff_player_id", "ffPlayerId", "freefire_id", "freeFireId", "player_id", "playerId", "id_ff", "idFF"),
+                "",
+            )
+            if not status:
+                if item.get("playing") or item.get("isPlaying") or item.get("inGame"):
+                    status = "Jogando"
+                elif item.get("called") or item.get("isCalled"):
+                    status = "Chamado"
+                elif item.get("done") or item.get("finished") or item.get("completed"):
+                    status = "Concluido"
+                else:
+                    status = "Na fila"
+            rooms = normalize_kill_value(
+                first_present(
+                    item,
+                    (
+                        "rooms",
+                        "credits",
+                        "room_count",
+                        "roomCount",
+                        "salas",
+                        "quantidade_salas",
+                        "qtd_salas",
+                        "quantity",
+                        "qty",
+                        "count",
+                        "amount",
+                    ),
+                    1,
+                )
+            )
+        elif isinstance(item, (list, tuple)) and item:
+            name = item[0]
+            note = item[1] if len(item) > 1 else ""
+            status = item[2] if len(item) > 2 else "Na fila"
+            rooms = 1
+            user_id = ""
+            panel_user_id = ""
+            ff_player_id = ""
+        else:
+            continue
+
+        clean = str(name or "").strip()
+        if clean:
+            entries.append(
+                FFQueueEntry(
+                    clean,
+                    str(note or "").strip(),
+                    normalize_queue_status(status),
+                    max(1, rooms),
+                    str(user_id or "").strip(),
+                    str(panel_user_id or "").strip(),
+                    re.sub(r"\D+", "", str(ff_player_id or "")),
+                )
+            )
+    return merge_ff_queue_entries(entries)
+
+
+def normalize_kill_value(value: Any) -> int:
+    try:
+        if isinstance(value, str):
+            value = re.sub(r"[^\d-]", "", value.strip())
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def optional_int_value(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        if isinstance(value, str):
+            value = re.sub(r"[^\d-]", "", value.strip())
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_players_payload(payload: Any) -> list[PlayerKill]:
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+
+    candidates = payload
+    if isinstance(payload, dict):
+        for key in ("players", "kills", "data", "ranking", "global_ranking", "daily_ranking", "rank", "items"):
+            value = payload.get(key)
+            if isinstance(value, (list, dict)):
+                candidates = value
+                break
+
+    players: list[PlayerKill] = []
+    if isinstance(candidates, dict):
+        iterable = candidates.items()
+        for name, kills in iterable:
+            clean = str(name).strip()
+            if clean:
+                players.append(PlayerKill(clean, normalize_kill_value(kills)))
+        return players
+
+    if not isinstance(candidates, list):
+        return []
+
+    for item in candidates:
+        if isinstance(item, dict):
+            name = first_present(
+                item,
+                (
+                    "name",
+                    "nick",
+                    "nickname",
+                    "username",
+                    "user",
+                    "participant",
+                    "participantName",
+                    "player",
+                    "playerName",
+                    "jogador",
+                    "apelido",
+                    "displayName",
+                ),
+            )
+            kills = first_present(item, ("kills", "kill", "k", "abates", "score", "points", "value", "total"), 0)
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            name, kills = item[0], item[1]
+        else:
+            continue
+        clean = str(name or "").strip()
+        if clean:
+            players.append(PlayerKill(clean, normalize_kill_value(kills)))
+    return players
+
+
+def parse_realtime_state(payload: Any) -> RealtimeState:
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return RealtimeState(players=[])
+
+    players = parse_players_payload(payload)
+    updated_by = ""
+    updated_at = ""
+    devices: list[dict[str, Any]] | None = None
+    daily_ranking: list[PlayerKill] = []
+    global_ranking: list[PlayerKill] = []
+    total_players: int | None = None
+    total_kills: int | None = None
+    visible_players: int | None = None
+    daily_players: int | None = None
+    daily_kills: int | None = None
+    daily_visible_players: int | None = None
+
+    if isinstance(payload, dict):
+        daily_ranking = parse_players_payload(payload.get("daily_ranking") or payload.get("dailyRanking") or [])
+        global_ranking = parse_players_payload(
+            payload.get("ranking")
+            or payload.get("global_ranking")
+            or payload.get("globalRanking")
+            or payload.get("overall_ranking")
+            or payload.get("overallRanking")
+            or []
+        )
+        if not players and global_ranking:
+            players = global_ranking
+        totals_source = payload
+        summary = payload.get("summary") or payload.get("stats") or payload.get("totals")
+        if isinstance(summary, dict):
+            totals_source = {**summary, **payload}
+        total_players = optional_int_value(
+            first_present(
+                totals_source,
+                ("total_players", "totalPlayers", "players_total", "playersTotal", "players_count", "playersCount", "player_count"),
+            )
+        )
+        total_kills = optional_int_value(
+            first_present(totals_source, ("total_kills", "totalKills", "kills_total", "killsTotal", "kills_count", "killsCount"))
+        )
+        visible_players = optional_int_value(
+            first_present(totals_source, ("total_visible_players", "totalVisiblePlayers", "visible_players", "visiblePlayers"))
+        )
+        daily_players = optional_int_value(
+            first_present(totals_source, ("daily_total_players", "dailyTotalPlayers", "daily_players", "dailyPlayers"))
+        )
+        daily_kills = optional_int_value(first_present(totals_source, ("daily_total_kills", "dailyTotalKills", "daily_kills", "dailyKills")))
+        daily_visible_players = optional_int_value(
+            first_present(totals_source, ("daily_total_visible_players", "dailyTotalVisiblePlayers", "daily_visible_players", "dailyVisiblePlayers"))
+        )
+        updated_by = str(
+            payload.get("updated_by")
+            or payload.get("updatedBy")
+            or payload.get("source")
+            or payload.get("sourceName")
+            or payload.get("lastUpdatedBy")
+            or payload.get("client_name")
+            or payload.get("clientName")
+            or payload.get("device_name")
+            or payload.get("deviceName")
+            or ""
+        ).strip()
+        updated_at = str(payload.get("updated_at") or payload.get("updatedAt") or payload.get("timestamp") or payload.get("ts") or "").strip()
+        device = payload.get("device")
+        if not updated_by and isinstance(device, dict):
+            updated_by = str(device.get("name") or device.get("device_name") or "").strip()
+        if not updated_by and ("ranking" in payload or "daily_ranking" in payload):
+            updated_by = "Jarvis Kills FF"
+        raw_devices = payload.get("devices") or payload.get("clients") or payload.get("online_devices") or payload.get("onlineDevices")
+        if isinstance(raw_devices, list):
+            devices = [item for item in raw_devices if isinstance(item, dict)]
+
+    return RealtimeState(
+        players=players,
+        updated_by=updated_by,
+        updated_at=updated_at,
+        devices=devices,
+        daily_ranking=daily_ranking,
+        global_ranking=global_ranking,
+        total_players=total_players,
+        total_kills=total_kills,
+        visible_players=visible_players,
+        daily_players=daily_players,
+        daily_kills=daily_kills,
+        daily_visible_players=daily_visible_players,
+    )
+
+
+def parse_ff_queue_state(payload: Any) -> FFQueueState:
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return FFQueueState(entries=[])
+
+    entries = parse_ff_queue_payload(payload)
+    updated_by = ""
+    updated_at = ""
+    devices: list[dict[str, Any]] | None = None
+
+    if isinstance(payload, dict):
+        updated_by = str(
+            payload.get("updated_by")
+            or payload.get("updatedBy")
+            or payload.get("source")
+            or payload.get("sourceName")
+            or payload.get("lastUpdatedBy")
+            or payload.get("client_name")
+            or payload.get("clientName")
+            or payload.get("device_name")
+            or payload.get("deviceName")
+            or ""
+        ).strip()
+        updated_at = str(payload.get("updated_at") or payload.get("updatedAt") or payload.get("timestamp") or payload.get("ts") or "").strip()
+        device = payload.get("device")
+        if not updated_by and isinstance(device, dict):
+            updated_by = str(device.get("name") or device.get("device_name") or "").strip()
+        raw_devices = payload.get("devices") or payload.get("clients") or payload.get("online_devices") or payload.get("onlineDevices")
+        if isinstance(raw_devices, list):
+            devices = [item for item in raw_devices if isinstance(item, dict)]
+
+    return FFQueueState(entries=entries, updated_by=updated_by, updated_at=updated_at, devices=devices)
+
+
+def send_kills_realtime_update(
+    endpoint_url: str,
+    title: str,
+    players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> str:
+    now = datetime.now().isoformat(timespec="seconds")
+    payload = {
+        "source": "aizen-stream-control",
+        "mode": "manual",
+        "app_version": APP_VERSION,
+        "sync_version": 2,
+        "room": room,
+        "client_id": device_id,
+        "client_name": device_name,
+        "updated_by": device_name,
+        "updated_at": now,
+        "revision": int(time.time() * 1000),
+        "device": {
+            "id": device_id,
+            "name": device_name,
+            "app": APP_NAME,
+            "version": APP_VERSION,
+        },
+        "content": format_message(players, title),
+        "players": player_payload(players),
+    }
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-Room": room,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.post(
+        normalize_endpoint_url(endpoint_url),
+        json=payload,
+        headers=headers,
+        timeout=20,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    return response.text.strip()
+
+
+def fetch_kills_realtime(
+    endpoint_url: str,
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> RealtimeState:
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if room:
+        headers["X-Aizen-Room"] = room
+    if token:
+        headers["X-Aizen-Token"] = token
+    params = {
+        "client_id": device_id,
+        "client_name": device_name,
+        "app_version": APP_VERSION,
+    }
+    if room:
+        params["room"] = room
+    response = requests.get(
+        normalize_endpoint_url(endpoint_url),
+        params=params,
+        headers=headers,
+        timeout=12,
+    )
+    response.raise_for_status()
+    return parse_realtime_state(response.text)
+
+
+def send_ff_queue_realtime_update(
+    endpoint_url: str,
+    entries: list[FFQueueEntry],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> str:
+    now = datetime.now().isoformat(timespec="seconds")
+    payload_entries = ff_queue_payload(entries)
+    payload = {
+        "source": "aizen-stream-control",
+        "mode": "ff_queue",
+        "app_version": APP_VERSION,
+        "sync_version": 2,
+        "room": room,
+        "client_id": device_id,
+        "client_name": device_name,
+        "updated_by": device_name,
+        "updated_at": now,
+        "revision": int(time.time() * 1000),
+        "device": {
+            "id": device_id,
+            "name": device_name,
+            "app": APP_NAME,
+            "version": APP_VERSION,
+        },
+        "queue": payload_entries,
+        "items": payload_entries,
+    }
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-Room": room,
+        "X-Aizen-App-Version": APP_VERSION,
+        "X-Aizen-Mode": "ff_queue",
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.post(
+        normalize_endpoint_url(endpoint_url),
+        json=payload,
+        headers=headers,
+        timeout=20,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    return response.text.strip()
+
+
+def fetch_ff_queue_realtime(
+    endpoint_url: str,
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> FFQueueState:
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-Room": room,
+        "X-Aizen-App-Version": APP_VERSION,
+        "X-Aizen-Mode": "ff_queue",
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.get(
+        normalize_endpoint_url(endpoint_url),
+        params={
+            "mode": "ff_queue",
+            "room": room,
+            "client_id": device_id,
+            "client_name": device_name,
+            "app_version": APP_VERSION,
+        },
+        headers=headers,
+        timeout=12,
+    )
+    response.raise_for_status()
+    return parse_ff_queue_state(response.text)
+
+
+def overlay_payload(
+    players: list[PlayerKill],
+    entries: list[FFQueueEntry],
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload_players = player_payload(players)
+    payload_queue = ff_queue_payload(entries)
+    active_queue = [item for item in payload_queue if item.get("status") != "Concluido"]
+    return {
+        "players": payload_players,
+        "queue": payload_queue,
+        "summary": {
+            "players_count": len(payload_players),
+            "total_kills": sum(int(item.get("kills", 0)) for item in payload_players),
+            "queue_active_count": len(active_queue),
+            "queue_playing_count": sum(1 for item in active_queue if item.get("status") == "Jogando"),
+        },
+        "options": options or {},
+    }
+
+
+def send_ff_overlay_realtime_update(
+    endpoint_url: str,
+    players: list[PlayerKill],
+    entries: list[FFQueueEntry],
+    options: dict[str, Any] | None = None,
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> str:
+    now = datetime.now().isoformat(timespec="seconds")
+    payload = {
+        "source": "aizen-stream-control",
+        "mode": "ff_overlay",
+        "app_version": APP_VERSION,
+        "sync_version": 2,
+        "room": room,
+        "client_id": device_id,
+        "client_name": device_name,
+        "updated_by": device_name,
+        "updated_at": now,
+        "revision": int(time.time() * 1000),
+        "device": {
+            "id": device_id,
+            "name": device_name,
+            "app": APP_NAME,
+            "version": APP_VERSION,
+        },
+        **overlay_payload(players, entries, options),
+    }
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-Room": room,
+        "X-Aizen-App-Version": APP_VERSION,
+        "X-Aizen-Mode": "ff_overlay",
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.post(
+        normalize_endpoint_url(endpoint_url),
+        json=payload,
+        headers=headers,
+        timeout=20,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    return response.text.strip()
+
+
+def fetch_ff_overlay_realtime(
+    endpoint_url: str,
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> tuple[RealtimeState, FFQueueState]:
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-Room": room,
+        "X-Aizen-App-Version": APP_VERSION,
+        "X-Aizen-Mode": "ff_overlay",
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.get(
+        normalize_endpoint_url(endpoint_url),
+        params={
+            "mode": "ff_overlay",
+            "room": room,
+            "client_id": device_id,
+            "client_name": device_name,
+            "app_version": APP_VERSION,
+        },
+        headers=headers,
+        timeout=12,
+    )
+    response.raise_for_status()
+    return parse_realtime_state(response.text), parse_ff_queue_state(response.text)
 
 
 def send_to_discord(webhook_url: str, content: str, screenshot: Path | None) -> None:
@@ -487,14 +2872,427 @@ def send_to_discord(webhook_url: str, content: str, screenshot: Path | None) -> 
 def normalize_endpoint_url(endpoint_url: str) -> str:
     endpoint_url = endpoint_url.strip()
     if endpoint_url.startswith("http://"):
-        return "https://" + endpoint_url[len("http://") :]
+        host = (urlparse(endpoint_url).hostname or "").lower()
+        if host.endswith("squareweb.app"):
+            return "https://" + endpoint_url[len("http://") :]
     return endpoint_url
+
+
+def derive_jarvis_endpoint(base_url: str, panel: str) -> str:
+    base_url = normalize_endpoint_url(base_url).rstrip("/")
+    if not base_url:
+        return ""
+    parsed = urlparse(base_url)
+    path = parsed.path.rstrip("/")
+    origin = parsed._replace(path="", params="", query="", fragment="").geturl().rstrip("/")
+    if path.endswith(("/api/freefire-kills", "/api/freefire-queue", "/api/freefire-overlay")):
+        root_path = path.rsplit("/", 1)[0]
+        root = parsed._replace(path=root_path, params="", query="", fragment="").geturl().rstrip("/")
+    else:
+        path_parts = [part for part in path.split("/") if part]
+        if "api" in path_parts:
+            api_index = path_parts.index("api")
+            root_path = "/" + "/".join(path_parts[: api_index + 1])
+        else:
+            root_path = "/api"
+        root = f"{origin}{root_path}".rstrip("/")
+    suffix = {
+        "queue": "freefire-queue",
+        "overlay": "freefire-overlay",
+    }.get(panel, "freefire-kills")
+    return f"{root}/{suffix}"
+
+
+def version_tuple(version: str) -> tuple[int, ...]:
+    numbers = re.findall(r"\d+", version)
+    return tuple(int(number) for number in numbers[:4]) or (0,)
+
+
+def is_newer_version(remote_version: str, current_version: str = APP_VERSION) -> bool:
+    remote = list(version_tuple(remote_version))
+    current = list(version_tuple(current_version))
+    length = max(len(remote), len(current))
+    remote.extend([0] * (length - len(remote)))
+    current.extend([0] * (length - len(current)))
+    return tuple(remote) > tuple(current)
+
+
+def update_log_path() -> Path:
+    return APP_DIR / "update.log"
+
+
+def write_update_log(message: str) -> None:
+    try:
+        with update_log_path().open("a", encoding="utf-8") as handle:
+            handle.write(f"[{datetime.now().isoformat(timespec='seconds')}] {message}\n")
+    except OSError:
+        pass
+
+
+class UpdateStatusWindow:
+    def __init__(self) -> None:
+        import tkinter as update_tk
+        from tkinter import ttk
+
+        self.tk = update_tk
+        self.root = update_tk.Tk()
+        self.root.title("Aizen Stream Control")
+        self.root.geometry("460x190")
+        self.root.resizable(False, False)
+        self.root.configure(bg="#050506")
+        self.root.protocol("WM_DELETE_WINDOW", lambda: None)
+        try:
+            if APP_ICON.exists():
+                self.root.iconbitmap(str(APP_ICON))
+        except update_tk.TclError:
+            pass
+
+        self.root.update_idletasks()
+        width = 460
+        height = 190
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+
+        shell = update_tk.Frame(self.root, bg="#050506")
+        shell.pack(fill=update_tk.BOTH, expand=True, padx=26, pady=22)
+        update_tk.Label(
+            shell,
+            text=APP_NAME,
+            fg="#f8f2f1",
+            bg="#050506",
+            font=("Segoe UI Semibold", 18),
+        ).pack(anchor="w")
+        self.title_var = update_tk.StringVar(value="Buscando atualizações...")
+        self.detail_var = update_tk.StringVar(value="Verificando manifesto remoto.")
+        update_tk.Label(
+            shell,
+            textvariable=self.title_var,
+            fg="#ff4d4d",
+            bg="#050506",
+            font=("Segoe UI Semibold", 12),
+        ).pack(anchor="w", pady=(18, 2))
+        update_tk.Label(
+            shell,
+            textvariable=self.detail_var,
+            fg="#b8a6a5",
+            bg="#050506",
+            font=("Segoe UI", 10),
+            wraplength=400,
+            justify="left",
+        ).pack(anchor="w")
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except update_tk.TclError:
+            pass
+        style.configure(
+            "Aizen.Horizontal.TProgressbar",
+            troughcolor="#171014",
+            background="#ff1717",
+            bordercolor="#3a1518",
+            lightcolor="#ff4d4d",
+            darkcolor="#b10f17",
+        )
+        self.progress = ttk.Progressbar(
+            shell,
+            mode="indeterminate",
+            length=400,
+            style="Aizen.Horizontal.TProgressbar",
+        )
+        self.progress.pack(fill=update_tk.X, pady=(18, 0))
+        self.progress.start(12)
+        self.is_determinate = False
+        self.pump()
+
+    def pump(self) -> None:
+        try:
+            self.root.update_idletasks()
+            self.root.update()
+        except Exception:
+            pass
+
+    def set_status(self, title: str, detail: str = "", percent: int | None = None) -> None:
+        try:
+            self.title_var.set(title)
+            self.detail_var.set(detail)
+            if percent is not None:
+                if not self.is_determinate:
+                    self.progress.stop()
+                    self.progress.configure(mode="determinate", maximum=100)
+                    self.is_determinate = True
+                self.progress["value"] = max(0, min(100, percent))
+            elif self.is_determinate:
+                self.progress.configure(mode="indeterminate")
+                self.progress.start(12)
+                self.is_determinate = False
+            self.pump()
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        try:
+            self.progress.stop()
+            self.root.destroy()
+        except Exception:
+            pass
+
+
+def cache_busted_url(url: str) -> str:
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}_={int(time.time())}"
+
+
+def read_update_manifest(manifest_url: str) -> dict[str, Any]:
+    response = requests.get(
+        cache_busted_url(manifest_url.strip()),
+        timeout=12,
+        headers={
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "User-Agent": f"{APP_NAME}/{APP_VERSION}",
+        },
+    )
+    response.raise_for_status()
+    data = json.loads(response.content.decode("utf-8-sig"))
+    if not isinstance(data, dict):
+        raise ValueError("Manifesto de atualizacao invalido.")
+    return data
+
+
+def update_asset_from_manifest(manifest: dict[str, Any]) -> dict[str, str]:
+    windows = manifest.get("windows") if isinstance(manifest.get("windows"), dict) else {}
+    source = windows or manifest
+    version = str(source.get("version") or manifest.get("version") or "").strip()
+    url = str(
+        source.get("portable_url")
+        or source.get("exe_url")
+        or source.get("download_url")
+        or source.get("url")
+        or ""
+    ).strip()
+    sha256 = str(source.get("sha256") or manifest.get("sha256") or "").strip().lower()
+    notes = str(source.get("notes") or manifest.get("notes") or "").strip()
+    if not version or not url:
+        raise ValueError("Manifesto precisa ter version e url/exe_url/portable_url.")
+    return {"version": version, "url": url, "sha256": sha256, "notes": notes}
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def download_update_asset(url: str, sha256: str = "", progress_callback: Any | None = None) -> Path:
+    suffix = Path(urlparse(url).path).suffix or ".bin"
+    target_dir = Path(tempfile.mkdtemp(prefix="aizen_update_"))
+    target = target_dir / f"update{suffix}"
+    with requests.get(url, timeout=60, stream=True) as response:
+        response.raise_for_status()
+        total = int(response.headers.get("content-length") or 0)
+        downloaded = 0
+        with target.open("wb") as handle:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback and total:
+                        try:
+                            progress_callback(min(99, int(downloaded * 100 / total)))
+                        except Exception:
+                            pass
+    if sha256:
+        actual = sha256_file(target)
+        if actual.lower() != sha256.lower():
+            raise RuntimeError(f"SHA256 da atualizacao nao confere. Esperado {sha256}, obtido {actual}.")
+    if progress_callback:
+        try:
+            progress_callback(100)
+        except Exception:
+            pass
+    return target
+
+
+def resolve_downloaded_exe(downloaded: Path) -> Path:
+    if downloaded.suffix.lower() == ".zip":
+        extract_dir = downloaded.parent / "extracted"
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(downloaded) as archive:
+            archive.extractall(extract_dir)
+        preferred = list(extract_dir.rglob(APP_EXE_NAME))
+        candidates = preferred or list(extract_dir.rglob("*.exe"))
+        if not candidates:
+            raise RuntimeError("ZIP da atualizacao nao contem executavel.")
+        return candidates[0]
+    if downloaded.suffix.lower() != ".exe":
+        raise RuntimeError("Atualizacao precisa ser um .exe ou .zip contendo o .exe.")
+    return downloaded
+
+
+def launch_self_replacement(new_exe: Path) -> None:
+    current_exe = Path(sys.executable).resolve()
+    staged_exe = new_exe.parent / APP_EXE_NAME
+    if new_exe.resolve() != staged_exe.resolve():
+        shutil.copy2(new_exe, staged_exe)
+
+    def ps_literal(value: Path | str) -> str:
+        return "'" + str(value).replace("'", "''") + "'"
+
+    expected_size = staged_exe.stat().st_size
+    expected_hash = sha256_file(staged_exe)
+    log_path = update_log_path()
+    script = new_exe.parent / "apply_update.ps1"
+    script.write_text(
+        "\n".join(
+            [
+                "$ErrorActionPreference = 'SilentlyContinue'",
+                f"$Source = {ps_literal(staged_exe)}",
+                f"$Target = {ps_literal(current_exe)}",
+                f"$TargetDir = {ps_literal(current_exe.parent)}",
+                f"$LogPath = {ps_literal(log_path)}",
+                f"$ExpectedSize = {expected_size}",
+                f"$ExpectedHash = '{expected_hash}'",
+                "function Write-AizenLog($Message) {",
+                "  try { Add-Content -LiteralPath $LogPath -Value ('[' + (Get-Date -Format s) + '] ' + $Message) -Encoding UTF8 } catch { }",
+                "}",
+                "Write-AizenLog 'Aplicador de update iniciado.'",
+                "$copied = $false",
+                "for ($try = 0; $try -lt 45; $try++) {",
+                "  Start-Sleep -Milliseconds 800",
+                "  try {",
+                "    Copy-Item -LiteralPath $Source -Destination $Target -Force -ErrorAction Stop",
+                "    $item = Get-Item -LiteralPath $Target -ErrorAction Stop",
+                "    if ($item.Length -ge $ExpectedSize) {",
+                "      $hash = (Get-FileHash -LiteralPath $Target -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()",
+                "      if ($hash -eq $ExpectedHash.ToLowerInvariant()) { $copied = $true; break }",
+                "    }",
+                "  } catch { }",
+                "}",
+                "if (-not $copied) { Write-AizenLog 'Falha ao copiar/verificar update.'; exit 1 }",
+                "Write-AizenLog 'Executavel atualizado e hash verificado. Aguardando limpeza do runtime antigo.'",
+                "Start-Sleep -Seconds 12",
+                "try { Get-ChildItem -LiteralPath $TargetDir -Directory -Filter '_MEI*' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } catch { }",
+                "Get-ChildItem Env: | Where-Object { $_.Name -like '_PYI*' } | ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) -ErrorAction SilentlyContinue }",
+                "$env:PYINSTALLER_RESET_ENVIRONMENT = '1'",
+                "Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue",
+                "Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue",
+                "Remove-Item Env:TCL_LIBRARY -ErrorAction SilentlyContinue",
+                "Remove-Item Env:TK_LIBRARY -ErrorAction SilentlyContinue",
+                "if ($env:PATH) {",
+                "  $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and ($_ -notmatch '_MEI\\d+') }) -join ';'",
+                "}",
+                "$started = $false",
+                "try {",
+                "  Start-Process -FilePath $Target -WorkingDirectory $TargetDir -UseNewEnvironment -ErrorAction Stop",
+                "  $started = $true",
+                "  Write-AizenLog 'App reiniciado com UseNewEnvironment.'",
+                "} catch { Write-AizenLog ('Falha UseNewEnvironment: ' + $_.Exception.Message) }",
+                "if (-not $started) {",
+                "  try {",
+                "    Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -ArgumentList ('\"' + $Target + '\"') -ErrorAction Stop",
+                "    $started = $true",
+                "    Write-AizenLog 'App reiniciado via explorer.exe.'",
+                "  } catch { Write-AizenLog ('Falha explorer.exe: ' + $_.Exception.Message) }",
+                "}",
+                "if (-not $started) {",
+                "  try { Start-Process -FilePath $Target -WorkingDirectory $TargetDir -ErrorAction Stop; Write-AizenLog 'App reiniciado por Start-Process padrao.' } catch { Write-AizenLog ('Falha final ao reiniciar: ' + $_.Exception.Message) }",
+                "}",
+                "Start-Sleep -Seconds 3",
+                "Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue",
+                "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    creationflags = 0x08000000 if os.name == "nt" else 0
+    clean_env = os.environ.copy()
+    for key in list(clean_env):
+        if key.startswith("_PYI") or key in {"PYTHONHOME", "PYTHONPATH", "TCL_LIBRARY", "TK_LIBRARY"}:
+            clean_env.pop(key, None)
+    clean_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    if clean_env.get("PATH"):
+        clean_env["PATH"] = ";".join(
+            part for part in clean_env["PATH"].split(";") if part and not re.search(r"_MEI\d+", part, re.IGNORECASE)
+        )
+    subprocess.Popen(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            str(script),
+        ],
+        cwd=str(new_exe.parent),
+        creationflags=creationflags,
+        env=clean_env,
+    )
+
+
+def maybe_apply_auto_update(config_path: Path) -> bool:
+    if not IS_FROZEN:
+        return False
+    status_window: UpdateStatusWindow | None = None
+    try:
+        config = load_config(config_path)
+        if not bool(config.get("auto_update_enabled", True)):
+            return False
+        manifest_url = str(config.get("updates_manifest_url", "")).strip()
+        if not manifest_url:
+            return False
+        status_window = UpdateStatusWindow()
+        status_window.set_status("Buscando atualizações...", "Verificando manifesto remoto.")
+        asset = update_asset_from_manifest(read_update_manifest(manifest_url))
+        if not is_newer_version(asset["version"]):
+            status_window.set_status("Tudo atualizado", f"Versão atual: {APP_VERSION}. Abrindo painel...")
+            time.sleep(0.35)
+            return False
+        write_update_log(f"Atualizacao encontrada: {APP_VERSION} -> {asset['version']}")
+        status_window.set_status(
+            "Atualização encontrada",
+            f"Baixando versão {asset['version']}...",
+        )
+        downloaded = download_update_asset(
+            asset["url"],
+            asset.get("sha256", ""),
+            lambda percent: status_window.set_status(
+                "Baixando atualização",
+                f"Recebendo versão {asset['version']}...",
+                percent,
+            ),
+        )
+        status_window.set_status("Validando atualização", "Conferindo arquivo baixado...", 100)
+        new_exe = resolve_downloaded_exe(downloaded)
+        status_window.set_status("Aplicando atualização", "O app será reiniciado automaticamente.", 100)
+        launch_self_replacement(new_exe)
+        write_update_log("Atualizacao baixada; reiniciando para aplicar.")
+        time.sleep(1.2)
+        return True
+    except Exception as exc:
+        write_update_log(f"Falha ao atualizar: {exc}")
+        if status_window is not None:
+            status_window.set_status("Não foi possível atualizar", "Abrindo a versão atual do app.")
+            time.sleep(1.0)
+        return False
+    finally:
+        if status_window is not None:
+            status_window.close()
 
 
 def send_to_jarvis_endpoint(endpoint_url: str, content: str, players: list[PlayerKill]) -> str:
     payload = {
+        "source": "aizen-stream-control",
+        "mode": "manual",
+        "app_version": APP_VERSION,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
         "content": content,
-        "players": [{"name": player.name, "kills": player.kills} for player in players],
+        "players": player_payload(players),
     }
     response = requests.post(normalize_endpoint_url(endpoint_url), json=payload, timeout=20, allow_redirects=False)
     if 300 <= response.status_code < 400:
@@ -657,117 +3455,5795 @@ class HotkeyWorker:
             self.log(f"Erro no monitor: {exc}")
 
 
+class TikfinityRaffleWorker:
+    def __init__(
+        self,
+        chat_url: str,
+        command: str,
+        duration_seconds: int,
+        log: callable,
+        source_mode: str = "browser",
+        entries_normal: int = 1,
+        entries_fan: int = 2,
+        entries_super_fan: int = 3,
+        entries_gift: int = 5,
+        entries_sub: int = 10,
+        user_cooldown_seconds: int = 8,
+        include_moderators: bool = True,
+    ):
+        self.chat_url = chat_url.strip()
+        self.command = command.strip().lower()
+        self.duration_seconds = duration_seconds
+        self.log = log
+        self.source_mode = source_mode
+        self.entries_by_tier = {
+            "normal": max(1, int(entries_normal)),
+            "fan": max(1, int(entries_fan)),
+            "super_fan": max(1, int(entries_super_fan)),
+            "gift": max(1, int(entries_gift)),
+            "sub": max(1, int(entries_sub)),
+        }
+        self.user_cooldown_seconds = max(0, int(user_cooldown_seconds))
+        self.include_moderators = include_moderators
+        self.thread: threading.Thread | None = None
+        self.stop_event = threading.Event()
+        self.finished_event = threading.Event()
+        self.lock = threading.Lock()
+        self.participants_by_key: dict[str, RaffleParticipant] = {}
+        self.participant_names_seen: dict[str, str] = {}
+        self.user_command_times: dict[str, float] = {}
+        self.seen_messages: set[str] = set()
+        self.blocked_attempts: list[dict[str, Any]] = []
+        self.current_winner: RaffleWinner | None = None
+        self.drawn_winners: list[RaffleWinner] = []
+        self.winner_messages: list[dict[str, str]] = []
+
+    def start(self) -> None:
+        if self.source_mode == "browser" and not self.chat_url:
+            raise ValueError("Configure a URL do chat.")
+        if not self.command:
+            raise ValueError("Configure o comando do sorteio.")
+        if self.duration_seconds <= 0:
+            raise ValueError("A duracao do sorteio precisa ser maior que zero.")
+        if self.thread and self.thread.is_alive():
+            raise RuntimeError("O sorteio ja esta rodando.")
+
+        self.stop_event.clear()
+        self.finished_event.clear()
+        target = self._run_external_events if self.source_mode == "events" else self._run
+        self.thread = threading.Thread(target=target, name="TikfinityRaffle", daemon=True)
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def is_running(self) -> bool:
+        return bool(self.thread and self.thread.is_alive() and not self.finished_event.is_set())
+
+    def is_finished(self) -> bool:
+        return self.finished_event.is_set()
+
+    def participant_names(self) -> list[str]:
+        with self.lock:
+            return [participant.name for participant in self.participants_by_key.values()]
+
+    def participant_items(self) -> list[RaffleParticipant]:
+        with self.lock:
+            return list(self.participants_by_key.values())
+
+    def participant_count(self) -> int:
+        with self.lock:
+            return len(self.participants_by_key)
+
+    def total_entries(self) -> int:
+        with self.lock:
+            return sum(max(1, int(participant.entries)) for participant in self.participants_by_key.values())
+
+    def participant_history_items(self) -> list[dict[str, Any]]:
+        with self.lock:
+            return [
+                {
+                    "name": participant.name,
+                    "key": participant.key,
+                    "platform": participant.platform,
+                    "avatar_url": participant.avatar_url,
+                    "supporter_tier": participant.supporter_tier,
+                    "entries": participant.entries,
+                    "bonus_reason": participant.bonus_reason,
+                    "joined_at": participant.joined_at,
+                }
+                for participant in self.participants_by_key.values()
+            ]
+
+    def blocked_history_items(self) -> list[dict[str, Any]]:
+        with self.lock:
+            return list(self.blocked_attempts)
+
+    def winner_message_items(self) -> list[dict[str, str]]:
+        with self.lock:
+            return list(self.winner_messages)
+
+    def drawn_winner_names(self) -> list[str]:
+        with self.lock:
+            return [winner.name for winner in self.drawn_winners]
+
+    def draw_winner(self) -> RaffleWinner | None:
+        with self.lock:
+            blocked = {winner.key for winner in self.drawn_winners}
+            weighted_candidates = [
+                RaffleWinner(
+                    key=participant.key,
+                    name=participant.name,
+                    avatar_url=participant.avatar_url,
+                    platform=participant.platform,
+                    supporter_tier=participant.supporter_tier,
+                    entries=participant.entries,
+                    bonus_reason=participant.bonus_reason,
+                )
+                for participant in self.participants_by_key.values()
+                if participant.key not in blocked
+                for _ in range(max(1, int(participant.entries)))
+            ]
+        if not weighted_candidates:
+            return None
+        winner = secrets.choice(weighted_candidates)
+        self.set_current_winner(winner)
+        return winner
+
+    def set_current_winner(self, winner: RaffleWinner) -> None:
+        with self.lock:
+            self.current_winner = winner
+            self.drawn_winners.append(winner)
+            self.winner_messages = []
+
+    def has_remaining_winners(self) -> bool:
+        with self.lock:
+            return len(self.drawn_winners) < len(self.participants_by_key)
+
+    def handle_live_chat_event(self, event: LiveChatMessage) -> None:
+        self._handle_message(
+            {
+                "username": event.username,
+                "comment": event.comment,
+                "userId": event.user_id,
+                "platform": event.platform,
+                "avatar": event.avatar_url,
+                "supporterTier": event.supporter_tier,
+                "raw": event.__dict__,
+                "ts": event.message_id or event.received_at,
+            }
+        )
+
+    def _run_external_events(self) -> None:
+        try:
+            self.log("Sorteio conectado aos eventos do app. Aguardando comando no chat.")
+            end_at = time.monotonic() + self.duration_seconds
+            while not self.stop_event.is_set():
+                if not self.finished_event.is_set() and time.monotonic() >= end_at:
+                    self.finished_event.set()
+                    self.log("Tempo do sorteio encerrado. Clique em Sortear vencedor.")
+                    return
+                time.sleep(0.2)
+        finally:
+            self.finished_event.set()
+
+    def _run(self) -> None:
+        driver = None
+        try:
+            driver = self._create_driver()
+            driver.get(self.chat_url)
+            self.log("Leitor do chat conectado. Aguardando comando do sorteio.")
+
+            end_at = time.monotonic() + self.duration_seconds
+            hook_installed = False
+            while not self.stop_event.is_set():
+                if not hook_installed:
+                    hook_installed = self._install_chat_hook(driver)
+
+                for message in self._read_chat_messages(driver):
+                    self._handle_message(message)
+
+                if not self.finished_event.is_set() and time.monotonic() >= end_at:
+                    self.finished_event.set()
+                    self.log("Tempo do sorteio encerrado. Clique em Sortear vencedor.")
+                time.sleep(0.5)
+        except Exception as exc:
+            self.log(f"Erro no leitor do chat: {exc}")
+        finally:
+            self.finished_event.set()
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+    def _create_driver(self):
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options as ChromeOptions
+        from selenium.webdriver.edge.options import Options as EdgeOptions
+
+        errors = []
+        for browser_name, driver_factory, options_factory in (
+            ("Edge", webdriver.Edge, EdgeOptions),
+            ("Chrome", webdriver.Chrome, ChromeOptions),
+        ):
+            try:
+                options = options_factory()
+                options.add_argument("--headless=new")
+                options.add_argument("--disable-gpu")
+                options.add_argument("--log-level=3")
+                options.add_argument("--mute-audio")
+                options.add_argument("--window-size=900,700")
+                driver = driver_factory(options=options)
+                self.log(f"Navegador usado no sorteio: {browser_name} em segundo plano.")
+                return driver
+            except Exception as exc:
+                errors.append(f"{browser_name}: {exc}")
+
+        raise RuntimeError("Nao consegui abrir Edge nem Chrome para ler o chat. " + " | ".join(errors))
+
+    def _install_chat_hook(self, driver) -> bool:
+        try:
+            return bool(
+                driver.execute_script(
+                    """
+                    window.__freeFireRaffleMessages = window.__freeFireRaffleMessages || [];
+                    window.__freeFirePushRaffleMessage = window.__freeFirePushRaffleMessage || function(source) {
+                        source = source || {};
+                        const div = document.createElement("div");
+                        const rawComment = source.comment || source.chatmessage || source.message || source.text || "";
+                        div.innerHTML = String(rawComment);
+                        const comment = (div.innerText || div.textContent || String(rawComment)).trim();
+                        const username = String(source.nickname || source.uniqueId || source.chatname || source.name || source.username || "").trim();
+                        if (!username || !comment) return;
+                        window.__freeFireRaffleMessages.push({
+                            username: username,
+                            comment: comment,
+                            userId: source.userId || source.userid || source.channelid || source.id || "",
+                            platform: source.type || source.source || source.platform || "",
+                            supporterTier: source.supporterTier || source.supporter_tier || source.memberLevel ||
+                                source.membership || source.badge || source.badges || source.userBadges || "",
+                            gift: source.gift || source.giftName || source.giftId || source.diamondCount || source.coins || "",
+                            sub: source.sub || source.subscription || source.subscribe || source.isSubscriber || "",
+                            moderator: source.moderator || source.isModerator || source.mod || "",
+                            avatar: source.profilePictureUrl || source.profilePicture || source.profileImageUrl ||
+                                source.avatar || source.avatarUrl || source.image || source.imageUrl ||
+                                source.chatimg || source.chatImg || source.photo || "",
+                            ts: source.timestamp || source.ts || source.mid || source.id || Date.now()
+                        });
+                        if (window.__freeFireRaffleMessages.length > 500) {
+                            window.__freeFireRaffleMessages.splice(0, 250);
+                        }
+                    };
+                    if (!window.__freeFireRaffleHooked && window.io && typeof window.io.on === "function") {
+                        window.io.on("chat", function(message) {
+                            window.__freeFirePushRaffleMessage(message);
+                        });
+                        window.__freeFireRaffleHooked = true;
+                    }
+                    if (!window.__freeFireSocialStreamHooked && typeof window.processData === "function") {
+                        const originalProcessData = window.processData;
+                        window.processData = function(data) {
+                            try {
+                                window.__freeFirePushRaffleMessage((data && data.contents) || data || {});
+                            } catch (error) {}
+                            return originalProcessData.apply(this, arguments);
+                        };
+                        window.__freeFireSocialStreamHooked = true;
+                    }
+                    return !!window.__freeFireRaffleHooked || !!window.__freeFireSocialStreamHooked;
+                    """
+                )
+            )
+        except Exception:
+            return False
+
+    def _read_chat_messages(self, driver) -> list[dict[str, str]]:
+        try:
+            messages = driver.execute_script(
+                """
+                const hooked = window.__freeFireRaffleMessages || [];
+                window.__freeFireRaffleMessages = [];
+                function htmlToText(value) {
+                    const div = document.createElement("div");
+                    div.innerHTML = String(value || "");
+                    return (div.innerText || div.textContent || String(value || "")).trim();
+                }
+                function firstImage(root) {
+                    const img = root?.querySelector?.("img");
+                    return img?.currentSrc || img?.src || "";
+                }
+                const domMessages = Array.from(document.querySelectorAll(".chatMessage")).map((el) => ({
+                    username: (el.querySelector(".username")?.textContent || "").trim(),
+                    comment: (el.querySelector(".comment")?.textContent || "").trim(),
+                    userId: "",
+                    platform: "",
+                    avatar: firstImage(el),
+                    ts: el.getAttribute("data-ts") || ""
+                }));
+                const socialMessages = Array.from(document.querySelectorAll("[data-mid], .highlight-chat, .hl-message")).map((el) => {
+                    const root = el.matches(".hl-message") ? (el.closest("[data-mid], .highlight-chat") || el.parentElement) : el;
+                    const raw = root?.rawContents || {};
+                    const username = String(
+                        raw.chatname || raw.name || raw.username ||
+                        root?.querySelector(".hl-name, .name, .username, [data-name]")?.textContent ||
+                        ""
+                    ).trim();
+                    const comment = String(
+                        raw.chatmessage ? htmlToText(raw.chatmessage) :
+                        root?.querySelector(".hl-message, .message, .comment")?.textContent ||
+                        ""
+                    ).trim();
+                    return {
+                        username: username,
+                        comment: comment,
+                        userId: raw.userid || raw.userId || raw.channelid || raw.id || "",
+                        platform: raw.type || raw.source || raw.platform || "",
+                        supporterTier: raw.supporterTier || raw.supporter_tier || raw.memberLevel ||
+                            raw.membership || raw.badge || raw.badges || raw.userBadges || "",
+                        gift: raw.gift || raw.giftName || raw.giftId || raw.diamondCount || raw.coins || "",
+                        sub: raw.sub || raw.subscription || raw.subscribe || raw.isSubscriber || "",
+                        moderator: raw.moderator || raw.isModerator || raw.mod || "",
+                        avatar: raw.profilePictureUrl || raw.profilePicture || raw.profileImageUrl ||
+                            raw.avatar || raw.avatarUrl || raw.image || raw.imageUrl ||
+                            raw.chatimg || raw.chatImg || firstImage(root) || "",
+                        ts: raw.timestamp || raw.ts || raw.mid || raw.id || root?.getAttribute("data-mid") || ""
+                    };
+                }).filter((message) => message.username && message.comment);
+                return hooked.concat(domMessages).concat(socialMessages);
+                """
+            )
+        except Exception:
+            return []
+
+        if not isinstance(messages, list):
+            return []
+        return [message for message in messages if isinstance(message, dict)]
+
+    def _handle_message(self, message: dict[str, Any]) -> None:
+        username = str(message.get("username") or "").strip()
+        comment = str(message.get("comment") or "").strip()
+        user_id = str(message.get("userId") or "").strip()
+        avatar_url = str(message.get("avatar") or "").strip()
+        platform = str(message.get("platform") or "").strip()
+        supporter_tier = self._normalize_supporter_tier(str(message.get("supporterTier") or message.get("supporter_tier") or ""))
+        if supporter_tier == "normal":
+            supporter_tier = detect_supporter_tier(message)
+        supporter_tier, entries, bonus_reason = self._entry_profile(message, supporter_tier)
+        ts = str(message.get("ts") or "").strip()
+        if not username or not comment:
+            return
+
+        message_id = f"{user_id}|{username}|{comment}|{ts}"
+        with self.lock:
+            if message_id in self.seen_messages:
+                return
+            self.seen_messages.add(message_id)
+
+        participant_key = self._participant_key(username, user_id)
+        with self.lock:
+            current_winner = self.current_winner
+            winner_match = bool(
+                current_winner
+                and (
+                    participant_key == current_winner.key
+                    or normalize_player_key(username) == normalize_player_key(current_winner.name)
+                )
+            )
+            if winner_match:
+                self.winner_messages.append(
+                    {
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "username": username,
+                        "comment": comment,
+                    }
+                )
+                self.winner_messages = self.winner_messages[-200:]
+
+            if self.finished_event.is_set():
+                return
+
+            if comment.lower() != self.command:
+                return
+
+            now = time.monotonic()
+            name_key = normalize_player_key(username)
+            user_key = self._participant_key(username, user_id)
+            if self._is_moderator(message) and not self.include_moderators:
+                self._record_blocked_locked(username, user_id, "moderador ignorado")
+                return
+            last_command_at = self.user_command_times.get(user_key, 0.0)
+            if self.user_cooldown_seconds and now - last_command_at < self.user_cooldown_seconds:
+                self._record_blocked_locked(username, user_id, "cooldown anti-spam")
+                return
+            self.user_command_times[user_key] = now
+            existing_name_key = self.participant_names_seen.get(name_key)
+            if existing_name_key and existing_name_key != participant_key:
+                self._record_blocked_locked(username, user_id, "nome duplicado")
+                return
+
+            if participant_key in self.participants_by_key:
+                participant = self.participants_by_key[participant_key]
+                if avatar_url and not participant.avatar_url:
+                    participant.avatar_url = avatar_url
+                if platform and not participant.platform:
+                    participant.platform = platform
+                if self._tier_rank(supporter_tier) > self._tier_rank(participant.supporter_tier):
+                    participant.supporter_tier = supporter_tier
+                    participant.entries = entries
+                    participant.bonus_reason = bonus_reason
+                return
+            self.participants_by_key[participant_key] = RaffleParticipant(
+                key=participant_key,
+                name=username,
+                avatar_url=avatar_url,
+                platform=platform,
+                supporter_tier=supporter_tier,
+                entries=entries,
+                bonus_reason=bonus_reason,
+                joined_at=datetime.now().isoformat(timespec="seconds"),
+            )
+            self.participant_names_seen[name_key] = participant_key
+            count = len(self.participants_by_key)
+        tier_label = self._supporter_tier_label(supporter_tier)
+        self.log(f"Entrou no sorteio: {username} - {entries} entrada(s) ({tier_label}) | {count} participante(s)")
+
+    def _record_blocked_locked(self, username: str, user_id: str, reason: str) -> None:
+        self.blocked_attempts.append(
+            {
+                "time": datetime.now().isoformat(timespec="seconds"),
+                "username": username,
+                "user_id": user_id,
+                "reason": reason,
+            }
+        )
+        self.blocked_attempts = self.blocked_attempts[-500:]
+
+    def _participant_key(self, username: str, user_id: str = "") -> str:
+        return user_id or re.sub(r"\s+", " ", username.casefold()).strip()
+
+    def _normalize_supporter_tier(self, value: str) -> str:
+        folded = _fold_raffle_text(value)
+        if "super" in folded and ("fan" in folded or "fa" in folded):
+            return "super_fan"
+        if "subscriber" in folded or "subscribed" in folded:
+            return "sub"
+        if "sub" in folded or "assinante" in folded:
+            return "sub"
+        if "fan" in folded or re.search(r"\bfa\b", folded):
+            return "fan"
+        return "normal"
+
+    def _supporter_tier_label(self, tier: str) -> str:
+        return {"fan": "Fã", "super_fan": "Super fã", "gift": "Gift", "sub": "Sub"}.get(tier, "Seguidor")
+
+    def _tier_rank(self, tier: str) -> int:
+        return {"normal": 0, "fan": 1, "super_fan": 2, "gift": 3, "sub": 4}.get(tier, 0)
+
+    def _entry_profile(self, message: dict[str, Any], supporter_tier: str) -> tuple[str, int, str]:
+        folded = _fold_raffle_text(message)
+        tier = supporter_tier
+        if re.search(r"\bgift\b|\bpresente\b|\bdiamond\b|\bcoin\b|\brose\b", folded):
+            tier = "gift"
+        if re.search(r"\bsub\b|\bsubscriber\b|\bsubscription\b|\bassinante\b|\binscrito\b", folded):
+            tier = "sub"
+        return tier, self.entries_by_tier.get(tier, self.entries_by_tier["normal"]), self._supporter_tier_label(tier)
+
+    def _is_moderator(self, message: dict[str, Any]) -> bool:
+        folded = _fold_raffle_text(message)
+        return bool(re.search(r"\bmoderator\b|\bmoderador\b|\bis_moderator true\b|\bismod true\b|\bmod true\b", folded))
+
+
 def run_gui(config_path: Path) -> int:
     import tkinter as tk
-    from tkinter import messagebox, ttk
+    from tkinter import colorchooser, filedialog, messagebox
+
+    import customtkinter as ctk
 
     config = load_config(config_path)
+    theme_config = resolve_ui_theme(config)
     log_queue: queue.Queue[str] = queue.Queue()
-    worker: HotkeyWorker | None = None
+    sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+    ff_queue_sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+    chat_event_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+    livepix_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+    chat_webhook_server: LocalChatWebhookServer | None = None
+    livepix_webhook_server: LocalLivepixWebhookServer | None = None
+    chat_websocket_worker: ChatWebSocketWorker | None = None
+    raffle_worker: TikfinityRaffleWorker | None = None
+    raffle_end_at = 0.0
+    raffle_animating = False
+    raffle_started_at: datetime | None = None
+    participant_widgets: list[Any] = []
+    chat_widgets: list[Any] = []
+    chat_monitor_widgets: list[Any] = []
+    chat_monitor_window: Any | None = None
+    chat_monitor_messages_frame: Any | None = None
+    chat_monitor_always_on_top_var: tk.BooleanVar | None = None
+    chat_overlay_widgets: list[Any] = []
+    chat_overlay_window: Any | None = None
+    chat_overlay_messages_frame: Any | None = None
+    chat_overlay_controls_frame: Any | None = None
+    ff_overlay_window: Any | None = None
+    ff_overlay_content_frame: Any | None = None
+    ff_overlay_controls_frame: Any | None = None
+    ff_overlay_widgets: list[Any] = []
+    chat_messages: list[LiveChatMessage] = []
+    chat_users: dict[str, LiveChatMessage] = {}
+    chat_seen_messages: set[str] = set()
+    avatar_result_queue: queue.Queue[tuple[str, int, Image.Image | None]] = queue.Queue()
+    avatar_image_cache: dict[tuple[str, int], Any] = {}
+    avatar_pending: set[tuple[str, int]] = set()
+    winner_avatar_current: tuple[str, str] = ("", "-")
+    manual_rows: list[dict[str, Any]] = []
+    kills_rank_rows: list[Any] = []
+    kills_daily_ranking: list[PlayerKill] = []
+    kills_global_ranking: list[PlayerKill] = []
+    ff_queue_summary_widgets: list[Any] = []
+    manual_sync_after_id: str | None = None
+    manual_poll_after_id: str | None = None
+    manual_fetching = False
+    manual_sending = False
+    manual_applying_remote = False
+    manual_last_local_edit_at = 0.0
+    manual_last_signature = ""
+    manual_last_remote_signature = ""
+    manual_remote_count_override: int | None = None
+    manual_remote_total_override: int | None = None
+    manual_last_fetch_error = ""
+    ff_queue_rows: list[dict[str, Any]] = []
+    ff_queue_sync_after_id: str | None = None
+    ff_queue_poll_after_id: str | None = None
+    ff_queue_fetching = False
+    ff_queue_sending = False
+    ff_queue_applying_remote = False
+    ff_queue_last_local_edit_at = 0.0
+    ff_queue_last_signature = ""
+    ff_queue_last_fetch_error = ""
+    ff_overlay_sending = False
+    ff_overlay_fetching = False
+    ff_overlay_last_signature = ""
+    ff_overlay_sync_after_id: str | None = None
+    ff_overlay_poll_after_id: str | None = None
+    ff_overlay_applying_remote = False
+    custom_command_rows: list[dict[str, Any]] = []
+    chat_timer_rows: list[dict[str, Any]] = []
+    chat_timer_runtime: dict[str, dict[str, Any]] = {}
+    bot_reply_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+    bot_send_result_queue: queue.Queue[tuple[bool, str, dict[str, Any]]] = queue.Queue()
+    bot_command_last_sent: dict[str, float] = {}
+    bot_sending = False
+    bot_next_allowed_at = 0.0
+    app_closing = False
+    livepix_events = load_livepix_events(livepix_events_path(config_path))
+    livepix_overlay_window: Any | None = None
+    livepix_overlay_frame: Any | None = None
+    livepix_widgets: list[Any] = []
 
     def log(message: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
         log_queue.put(f"[{stamp}] {message}")
 
-    root = tk.Tk()
-    root.title("Free Fire Kill Sender")
-    root.geometry("720x520")
-    root.minsize(680, 480)
+    ctk.set_appearance_mode("dark")
+    ctk.set_default_color_theme("dark-blue")
 
-    main = ttk.Frame(root, padding=14)
-    main.pack(fill=tk.BOTH, expand=True)
-    main.columnconfigure(1, weight=1)
+    root = ctk.CTk()
+    root.title("Aizen Stream Control")
+    root.geometry("1360x920")
+    root.minsize(980, 640)
+    if APP_ICON.exists():
+        try:
+            root.iconbitmap(str(APP_ICON))
+        except tk.TclError:
+            pass
 
-    webhook_var = tk.StringVar(value=config.get("discord_webhook_url", ""))
-    jarvis_var = tk.StringVar(value=config.get("jarvis_endpoint_url", ""))
+    canvas_bg = theme_config["canvas_bg"]
+    bg = theme_config["bg"]
+    panel = theme_config["panel"]
+    panel_alt = theme_config["panel_alt"]
+    field = theme_config["field"]
+    border = theme_config["border"]
+    fg = theme_config["fg"]
+    muted = theme_config["muted"]
+    accent = theme_config["accent"]
+    accent_hover = theme_config["accent_hover"]
+    teal = theme_config["teal"]
+    blue = theme_config["blue"]
+    danger = theme_config["danger"]
+    header_panel = panel_alt
+    chip_bg = "#171116"
+    chip_bg_alt = "#111820"
+    table_header_bg = "#0c0d12"
+
+    root.configure(fg_color=canvas_bg)
+
+    main = ctk.CTkFrame(root, fg_color=canvas_bg, corner_radius=0)
+    main.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+    main.columnconfigure(0, weight=1)
+    main.rowconfigure(1, weight=1)
+
+    initial_sync_url = str(config.get("kills_realtime_url") or config.get("jarvis_endpoint_url", "")).strip()
+    initial_ff_queue_url = str(config.get("ff_queue_realtime_url") or config.get("jarvis_endpoint_url", "")).strip()
+    initial_jarvis_base_url = str(config.get("jarvis_base_url") or initial_sync_url or initial_ff_queue_url).strip()
+    if initial_jarvis_base_url:
+        if not initial_sync_url:
+            initial_sync_url = derive_jarvis_endpoint(initial_jarvis_base_url, "kills")
+        if not initial_ff_queue_url:
+            initial_ff_queue_url = derive_jarvis_endpoint(initial_jarvis_base_url, "queue")
+    if not initial_ff_queue_url and "freefire-kills" in initial_sync_url:
+        initial_ff_queue_url = initial_sync_url.replace("freefire-kills", "freefire-queue")
+    initial_ff_overlay_url = str(config.get("ff_overlay_realtime_url", "")).strip()
+    if initial_jarvis_base_url and not initial_ff_overlay_url:
+        initial_ff_overlay_url = derive_jarvis_endpoint(initial_jarvis_base_url, "overlay")
+    if not initial_ff_overlay_url and "freefire-kills" in initial_sync_url:
+        initial_ff_overlay_url = initial_sync_url.replace("freefire-kills", "freefire-overlay")
+    if not initial_ff_overlay_url and "freefire-queue" in initial_ff_queue_url:
+        initial_ff_overlay_url = initial_ff_queue_url.replace("freefire-queue", "freefire-overlay")
+    sync_url_var = tk.StringVar(value=initial_sync_url)
     title_var = tk.StringVar(value=config.get("message_title", "Kills da partida"))
-    attach_var = tk.BooleanVar(value=bool(config.get("attach_screenshot", True)))
-    ignored_var = tk.StringVar(value=", ".join(parse_player_list(config.get("ignored_players", []))))
-    capture_options = {
-        "Monitor principal": "primary",
-        "Monitor da janela ativa": "active_monitor",
-        "Janela ativa": "foreground",
-        "Todos os monitores": "all",
-    }
-    reverse_capture_options = {value: label for label, value in capture_options.items()}
-    capture_target_var = tk.StringVar(
-        value=reverse_capture_options.get(config.get("capture_target", "primary"), "Monitor principal")
+    sync_room_var = tk.StringVar(value=config.get("kills_sync_room", "principal"))
+    ff_queue_url_var = tk.StringVar(value=initial_ff_queue_url)
+    ff_overlay_url_var = tk.StringVar(value=initial_ff_overlay_url)
+    ff_queue_room_var = tk.StringVar(value=config.get("ff_queue_room", "principal"))
+    jarvis_base_url_var = tk.StringVar(value=initial_jarvis_base_url)
+    ff_queue_enabled_var = tk.BooleanVar(value=bool(config.get("ff_queue_auto_sync", True)))
+    ff_overlay_enabled_var = tk.BooleanVar(value=bool(config.get("ff_overlay_auto_sync", True)))
+    ff_queue_poll_seconds_var = tk.StringVar(value=str(config.get("ff_queue_poll_seconds", 2)))
+    ff_queue_status_var = tk.StringVar(value="Manual")
+    ff_overlay_status_var = tk.StringVar(value="Local")
+    ff_queue_count_var = tk.StringVar(value="0")
+    ff_queue_playing_var = tk.StringVar(value="0")
+    ff_queue_summary_count_var = tk.StringVar(value="0")
+    ff_queue_summary_rooms_var = tk.StringVar(value="0")
+    ff_queue_source_var = tk.StringVar(value=config.get("device_name", default_device_name()))
+    device_name_var = tk.StringVar(value=config.get("device_name", default_device_name()))
+    jarvis_token_var = tk.StringVar(value=str(config.get("jarvis_api_token", "")))
+    sync_enabled_var = tk.BooleanVar(value=bool(config.get("kills_realtime_auto_sync", True)))
+    poll_seconds_var = tk.StringVar(value=str(config.get("kills_realtime_poll_seconds", 2)))
+    auto_update_var = tk.BooleanVar(value=bool(config.get("auto_update_enabled", True)))
+    general_update_state_var = tk.StringVar(value="Ativa" if auto_update_var.get() else "Desativada")
+    updates_manifest_url_var = tk.StringVar(value=config.get("updates_manifest_url", ""))
+    manual_status_var = tk.StringVar(value="Manual")
+    manual_count_var = tk.StringVar(value="0")
+    manual_total_var = tk.StringVar(value="0")
+    manual_source_var = tk.StringVar(value=device_name_var.get())
+    kills_rank_mode_var = tk.StringVar(value="Diario")
+    kills_rank_count_var = tk.StringVar(value="0")
+    kills_rank_total_var = tk.StringVar(value="0")
+    kills_rank_title_var = tk.StringVar(value="Ranking diario")
+    tikfinity_url_var = tk.StringVar(value=config.get("tikfinity_chat_url", ""))
+    chat_source_var = tk.StringVar(
+        value="TikFinity WebSocket" if config.get("chat_event_source", "webhook") == "websocket" else "Webhook local"
     )
-
-    hotkey = config.get("hotkey", "CTRL+SHIFT+F12").upper()
-    hotkey_parts = set(re.split(r"[+\s]+", hotkey))
-    ctrl_var = tk.BooleanVar(value="CTRL" in hotkey_parts or "CONTROL" in hotkey_parts)
-    shift_var = tk.BooleanVar(value="SHIFT" in hotkey_parts)
-    alt_var = tk.BooleanVar(value="ALT" in hotkey_parts)
-    win_var = tk.BooleanVar(value="WIN" in hotkey_parts or "WINDOWS" in hotkey_parts)
-    selected_key = next((part for part in hotkey_parts if part in VK_CODES and part not in MODIFIERS), "F12")
-    key_var = tk.StringVar(value=selected_key)
-
-    ttk.Label(main, text="Webhook Discord").grid(row=0, column=0, sticky="w", pady=4)
-    ttk.Entry(main, textvariable=webhook_var).grid(row=0, column=1, columnspan=4, sticky="ew", pady=4)
-
-    ttk.Label(main, text="Endpoint Jarvis").grid(row=1, column=0, sticky="w", pady=4)
-    ttk.Entry(main, textvariable=jarvis_var).grid(row=1, column=1, columnspan=4, sticky="ew", pady=4)
-
-    ttk.Label(main, text="Titulo").grid(row=2, column=0, sticky="w", pady=4)
-    ttk.Entry(main, textvariable=title_var).grid(row=2, column=1, columnspan=4, sticky="ew", pady=4)
-
-    ttk.Label(main, text="Atalho").grid(row=3, column=0, sticky="w", pady=8)
-    ttk.Checkbutton(main, text="Ctrl", variable=ctrl_var).grid(row=3, column=1, sticky="w")
-    ttk.Checkbutton(main, text="Shift", variable=shift_var).grid(row=3, column=2, sticky="w")
-    ttk.Checkbutton(main, text="Alt", variable=alt_var).grid(row=3, column=3, sticky="w")
-    ttk.Checkbutton(main, text="Win", variable=win_var).grid(row=3, column=4, sticky="w")
-
-    key_values = [f"F{i}" for i in range(1, 25)] + [chr(i) for i in range(ord("A"), ord("Z") + 1)] + [str(i) for i in range(10)]
-    ttk.Label(main, text="Tecla").grid(row=4, column=0, sticky="w", pady=4)
-    ttk.Combobox(main, textvariable=key_var, values=key_values, state="readonly", width=12).grid(row=4, column=1, sticky="w", pady=4)
-    ttk.Checkbutton(main, text="Anexar print na mensagem do Discord", variable=attach_var).grid(
-        row=4, column=2, columnspan=3, sticky="w", pady=4
+    chat_webhook_host_var = tk.StringVar(value=str(config.get("chat_webhook_host", "127.0.0.1")))
+    chat_webhook_port_var = tk.StringVar(value=str(config.get("chat_webhook_port", 8765)))
+    chat_webhook_token_var = tk.StringVar(value=str(config.get("chat_webhook_token", "")))
+    chat_websocket_url_var = tk.StringVar(value=str(config.get("chat_websocket_url") or DEFAULT_TIKFINITY_WEBSOCKET_URL))
+    chat_filter_var = tk.StringVar(value="")
+    chat_status_var = tk.StringVar(value="Desligado")
+    chat_message_count_var = tk.StringVar(value="0")
+    chat_user_count_var = tk.StringVar(value="0")
+    chat_platform_var = tk.StringVar(value="-")
+    chat_endpoint_var = tk.StringVar(value="")
+    chat_commands_enabled_var = tk.BooleanVar(value=bool(config.get("chat_commands_enabled", False)))
+    bot_delivery_method_var = tk.StringVar(
+        value="Streamer.bot HTTP" if config.get("bot_delivery_method") == "streamerbot_http" else "Streamer.bot WebSocket"
     )
+    bot_streamerbot_ws_url_var = tk.StringVar(
+        value=str(config.get("bot_streamerbot_ws_url") or DEFAULT_STREAMERBOT_WEBSOCKET_URL)
+    )
+    bot_streamerbot_http_url_var = tk.StringVar(
+        value=str(config.get("bot_streamerbot_http_url") or DEFAULT_STREAMERBOT_HTTP_URL)
+    )
+    bot_streamerbot_password_var = tk.StringVar(value=str(config.get("bot_streamerbot_password", "")))
+    bot_streamerbot_action_name_var = tk.StringVar(
+        value=str(config.get("bot_streamerbot_action_name", "Aizen TikFinity Chatbot"))
+    )
+    bot_streamerbot_action_id_var = tk.StringVar(value=str(config.get("bot_streamerbot_action_id", "")))
+    bot_safe_delay_var = tk.StringVar(value=str(config.get("bot_safe_delay_seconds", 15)))
+    bot_default_cooldown_var = tk.StringVar(value=str(config.get("bot_default_command_cooldown_seconds", 30)))
+    chat_timers_enabled_var = tk.BooleanVar(value=bool(config.get("chat_timers_enabled", False)))
+    bot_default_timer_interval_var = tk.StringVar(value=str(config.get("bot_default_timer_interval_seconds", 600)))
+    bot_default_timer_min_messages_var = tk.StringVar(value=str(config.get("bot_default_timer_min_messages", 5)))
+    timer_status_var = tk.StringVar(value="Desligado")
+    timer_active_count_var = tk.StringVar(value="0")
+    timer_next_send_var = tk.StringVar(value="-")
+    bot_ignore_usernames_var = tk.StringVar(value=str(config.get("bot_ignore_usernames", "")))
+    bot_status_var = tk.StringVar(value="Desligado")
+    bot_queue_count_var = tk.StringVar(value="0")
+    bot_last_sent_var = tk.StringVar(value="-")
+    livepix_enabled_var = tk.BooleanVar(value=bool(config.get("livepix_enabled", False)))
+    livepix_client_id_var = tk.StringVar(value=str(config.get("livepix_client_id", "")))
+    livepix_client_secret_var = tk.StringVar(value=str(config.get("livepix_client_secret", "")))
+    livepix_scopes_var = tk.StringVar(value=str(config.get("livepix_scopes", "")))
+    livepix_webhook_host_var = tk.StringVar(value=str(config.get("livepix_webhook_host", "127.0.0.1")))
+    livepix_webhook_port_var = tk.StringVar(value=str(config.get("livepix_webhook_port", 8787)))
+    livepix_webhook_token_var = tk.StringVar(value=str(config.get("livepix_webhook_token", "")))
+    livepix_redirect_url_var = tk.StringVar(value=str(config.get("livepix_redirect_url", "https://livepix.gg")))
+    livepix_goal_amount_var = tk.StringVar(value=str(int(config.get("livepix_goal_amount", 50000)) / 100).replace(".", ","))
+    livepix_goal_label_var = tk.StringVar(value=str(config.get("livepix_goal_label", "Meta da live")))
+    livepix_currency_var = tk.StringVar(value=str(config.get("livepix_currency", "BRL")).upper())
+    livepix_status_var = tk.StringVar(value="Desligado")
+    livepix_account_var = tk.StringVar(value="-")
+    livepix_total_var = tk.StringVar(value="R$ 0,00")
+    livepix_goal_var = tk.StringVar(value="0%")
+    livepix_count_var = tk.StringVar(value="0")
+    livepix_top_var = tk.StringVar(value="-")
+    livepix_wallet_var = tk.StringVar(value="-")
+    livepix_extra_var = tk.StringVar(value="-")
+    livepix_ranking_var = tk.StringVar(value="-")
+    livepix_endpoint_var = tk.StringVar(value="")
+    livepix_checkout_amount_var = tk.StringVar(value="10,00")
+    livepix_checkout_user_var = tk.StringVar(value="Apoiador")
+    livepix_checkout_message_var = tk.StringVar(value="Apoio para a live!")
+    livepix_plan_id_var = tk.StringVar(value=str(config.get("livepix_plan_id", "")))
+    livepix_plan_slug_var = tk.StringVar(value=str(config.get("livepix_plan_slug", "vip-live")))
+    livepix_plan_name_var = tk.StringVar(value=str(config.get("livepix_plan_name", "VIP da live")))
+    livepix_plan_description_var = tk.StringVar(value=str(config.get("livepix_plan_description", "Acesso aos benefícios de apoiador da live.")))
+    livepix_subscription_recurrence_var = tk.StringVar(value=str(config.get("livepix_subscription_recurrence", "monthly")))
+    livepix_subscriber_email_var = tk.StringVar(value=str(config.get("livepix_subscriber_email", "")))
+    livepix_announce_in_chat_var = tk.BooleanVar(value=bool(config.get("livepix_announce_in_chat", True)))
+    livepix_public_page_file_var = tk.StringVar(value=str(config.get("livepix_public_page_file", "livepix_public.html")))
+    raffle_source_mode_var = tk.StringVar(
+        value="URL do chat (legado)" if config.get("raffle_source_mode") == "browser" else "Eventos do app"
+    )
+    raffle_command_var = tk.StringVar(value=config.get("raffle_command", "!sorteio"))
+    raffle_default_seconds = int(config.get("raffle_duration_seconds", 600))
+    raffle_minutes_var = tk.StringVar(value=str(max(1, raffle_default_seconds // 60)))
+    raffle_timer_var = tk.StringVar(value=f"{raffle_default_seconds // 60:02d}:{raffle_default_seconds % 60:02d}")
+    raffle_count_var = tk.StringVar(value="0")
+    raffle_entries_var = tk.StringVar(value="0")
+    raffle_entries_normal_var = tk.StringVar(value=str(config.get("raffle_entries_normal", 1)))
+    raffle_entries_fan_var = tk.StringVar(value=str(config.get("raffle_entries_fan", 2)))
+    raffle_entries_super_fan_var = tk.StringVar(value=str(config.get("raffle_entries_super_fan", 3)))
+    raffle_entries_gift_var = tk.StringVar(value=str(config.get("raffle_entries_gift", 5)))
+    raffle_entries_sub_var = tk.StringVar(value=str(config.get("raffle_entries_sub", 10)))
+    raffle_cooldown_var = tk.StringVar(value=str(config.get("raffle_user_cooldown_seconds", 8)))
+    raffle_include_moderators_var = tk.BooleanVar(value=bool(config.get("raffle_include_moderators", True)))
+    raffle_winner_var = tk.StringVar(value="-")
+    raffle_state_var = tk.StringVar(value="Aguardando")
+    ui_layout = config.get("ui_layout", {}) if isinstance(config.get("ui_layout"), dict) else {}
+    participants_height_var = tk.IntVar(value=max(520, int(ui_layout.get("participants_height", 560))))
+    events_height_var = tk.IntVar(value=int(ui_layout.get("events_height", 170)))
+    winner_width_var = tk.IntVar(value=int(ui_layout.get("winner_width", 360)))
+    raffle_font_size_var = tk.IntVar(value=int(ui_layout.get("raffle_font_size", 13)))
+    chat_overlay_opacity_var = tk.IntVar(value=int(ui_layout.get("chat_overlay_opacity", 84)))
+    chat_overlay_font_size_var = tk.IntVar(value=int(ui_layout.get("chat_overlay_font_size", 14)))
+    chat_overlay_width_var = tk.IntVar(value=int(ui_layout.get("chat_overlay_width", 430)))
+    chat_overlay_height_var = tk.IntVar(value=int(ui_layout.get("chat_overlay_height", 640)))
+    chat_overlay_compact_var = tk.BooleanVar(value=bool(ui_layout.get("chat_overlay_compact", True)))
+    chat_overlay_controls_var = tk.BooleanVar(value=bool(ui_layout.get("chat_overlay_controls", True)))
+    chat_overlay_clickthrough_var = tk.BooleanVar(value=bool(ui_layout.get("chat_overlay_clickthrough", False)))
+    ff_overlay_opacity_var = tk.IntVar(value=int(ui_layout.get("ff_overlay_opacity", 92)))
+    ff_overlay_width_var = tk.IntVar(value=int(ui_layout.get("ff_overlay_width", 760)))
+    ff_overlay_height_var = tk.IntVar(value=int(ui_layout.get("ff_overlay_height", 420)))
+    ff_overlay_compact_var = tk.BooleanVar(value=bool(ui_layout.get("ff_overlay_compact", False)))
+    ff_overlay_show_queue_var = tk.BooleanVar(value=bool(ui_layout.get("ff_overlay_show_queue", True)))
+    ff_overlay_show_kills_var = tk.BooleanVar(value=bool(ui_layout.get("ff_overlay_show_kills", True)))
+    queue_size_text = tk.StringVar(value="")
+    event_size_text = tk.StringVar(value="")
+    winner_size_text = tk.StringVar(value="")
+    font_size_text = tk.StringVar(value="")
+    chat_overlay_opacity_text = tk.StringVar(value="")
+    chat_overlay_font_size_text = tk.StringVar(value="")
+    ff_overlay_opacity_text = tk.StringVar(value="")
+    ff_overlay_size_text = tk.StringVar(value="")
+    status_var = manual_status_var
+    appearance_preset_var = tk.StringVar(value=theme_config.get("preset", DEFAULT_THEME_NAME))
+    logo_path_var = tk.StringVar(value=theme_config.get("logo_path", ""))
+    theme_color_vars = {key: tk.StringVar(value=theme_config[key]) for key in THEME_COLOR_KEYS}
 
-    ttk.Label(main, text="Captura").grid(row=5, column=0, sticky="w", pady=4)
-    ttk.Combobox(
+    def section_label(parent: Any, text: str, row: int, column: int = 0, **kwargs: Any) -> None:
+        ctk.CTkLabel(parent, text=text, text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+            row=row, column=column, sticky="w", pady=(10, 5), **kwargs
+        )
+
+    def card(parent: Any, title: str, subtitle: str | None = None) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(
+            parent,
+            fg_color=panel,
+            corner_radius=10,
+            border_width=1,
+            border_color=border,
+        )
+        frame.columnconfigure(1, weight=1)
+        title_bar = ctk.CTkFrame(frame, fg_color="transparent", corner_radius=0)
+        title_bar.grid(row=0, column=0, columnspan=4, sticky="ew", padx=18, pady=(16, 0))
+        ctk.CTkFrame(title_bar, fg_color=accent, width=4, height=22, corner_radius=99).pack(
+            side=tk.LEFT, padx=(0, 10)
+        )
+        ctk.CTkLabel(title_bar, text=title, text_color=fg, font=("Segoe UI Semibold", 15)).pack(side=tk.LEFT)
+        if subtitle:
+            ctk.CTkLabel(frame, text=subtitle, text_color=muted, font=("Segoe UI", 11)).grid(
+                row=1, column=0, columnspan=4, sticky="w", padx=18, pady=(2, 10)
+            )
+        return frame
+
+    def entry(parent: Any, variable: tk.StringVar, **kwargs: Any) -> ctk.CTkEntry:
+        return ctk.CTkEntry(
+            parent,
+            textvariable=variable,
+            height=40,
+            fg_color=field,
+            border_color=border,
+            border_width=1,
+            text_color=fg,
+            placeholder_text_color="#7f7277",
+            corner_radius=10,
+            font=("Segoe UI", 12),
+            **kwargs,
+        )
+
+    def combo(parent: Any, variable: tk.StringVar, values: list[str], width: int = 180) -> ctk.CTkComboBox:
+        return ctk.CTkComboBox(
+            parent,
+            variable=variable,
+            values=values,
+            width=width,
+            height=40,
+            fg_color=field,
+            border_color=border,
+            button_color=chip_bg,
+            button_hover_color="#2a171c",
+            dropdown_fg_color=panel,
+            dropdown_hover_color=chip_bg,
+            text_color=fg,
+            corner_radius=10,
+            font=("Segoe UI", 12),
+            dropdown_font=("Segoe UI", 12),
+        )
+
+    def button(
+        parent: Any,
+        text: str,
+        command: callable,
+        kind: str = "default",
+        width: int | None = None,
+    ) -> ctk.CTkButton:
+        colors = {
+            "default": (chip_bg, "#272129", fg),
+            "accent": (accent, accent_hover, "#fff7f7"),
+            "danger": ("#451b22", danger, fg),
+            "ghost": ("#0d0f14", "#191d25", fg),
+        }
+        fg_color, hover_color, text_color = colors[kind]
+        return ctk.CTkButton(
+            parent,
+            text=text,
+            command=command,
+            width=width if width is not None else 140,
+            height=40,
+            corner_radius=10,
+            border_width=1 if kind in {"default", "ghost"} else 0,
+            border_color=border,
+            fg_color=fg_color,
+            hover_color=hover_color,
+            text_color=text_color,
+            font=("Segoe UI Semibold", 12),
+        )
+
+    def avatar_initials(name: str) -> str:
+        words = [part for part in re.split(r"\s+", name.strip()) if part]
+        if not words:
+            return "?"
+        if len(words) == 1:
+            return words[0][:2].upper()
+        return (words[0][:1] + words[-1][:1]).upper()
+
+    def crop_avatar(image: Image.Image, size: int) -> Image.Image:
+        image = image.convert("RGBA")
+        side = min(image.size)
+        left = (image.width - side) // 2
+        top = (image.height - side) // 2
+        image = image.crop((left, top, left + side, top + side)).resize((size, size), Image.Resampling.LANCZOS)
+        mask = Image.new("L", (size, size), 0)
+        draw = ImageDraw.Draw(mask)
+        draw.ellipse((0, 0, size - 1, size - 1), fill=255)
+        image.putalpha(mask)
+        return image
+
+    def request_avatar_image(url: str, size: int) -> Any | None:
+        clean_url = (url or "").strip()
+        if not clean_url:
+            return None
+        key = (clean_url, size)
+        if key in avatar_image_cache:
+            return avatar_image_cache[key]
+        if key not in avatar_pending and clean_url.lower().startswith(("http://", "https://")):
+            avatar_pending.add(key)
+
+            def load() -> None:
+                try:
+                    response = requests.get(clean_url, timeout=8, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "")
+                    if content_type and "image" not in content_type:
+                        raise ValueError("URL nao retornou imagem.")
+                    image = Image.open(BytesIO(response.content))
+                    avatar_result_queue.put((clean_url, size, crop_avatar(image, size)))
+                except Exception:
+                    avatar_result_queue.put((clean_url, size, None))
+
+            threading.Thread(target=load, daemon=True).start()
+        return None
+
+    def configure_avatar_label(label: Any, name: str, avatar_url: str, size: int) -> None:
+        image = request_avatar_image(avatar_url, size)
+        label.configure(
+            image=image,
+            text="" if image else avatar_initials(name),
+        )
+        label._avatar_url = (avatar_url or "").strip()  # type: ignore[attr-defined]
+        label._avatar_size = size  # type: ignore[attr-defined]
+        label._avatar_name = name  # type: ignore[attr-defined]
+        label._avatar_image = image  # type: ignore[attr-defined]
+
+    def make_avatar_label(parent: Any, name: str, avatar_url: str, size: int = 42) -> Any:
+        label = ctk.CTkLabel(
+            parent,
+            text=avatar_initials(name),
+            width=size,
+            height=size,
+            fg_color=field,
+            text_color=accent,
+            corner_radius=size // 2,
+            font=("Segoe UI Semibold", max(10, size // 3)),
+        )
+        configure_avatar_label(label, name, avatar_url, size)
+        return label
+
+    header = ctk.CTkFrame(
         main,
-        textvariable=capture_target_var,
-        values=list(capture_options.keys()),
-        state="readonly",
-        width=20,
-    ).grid(row=5, column=1, sticky="w", pady=4)
+        fg_color=header_panel,
+        corner_radius=14,
+        border_width=1,
+        border_color=border,
+    )
+    header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+    header.columnconfigure(2, weight=1)
+    logo_image = None
+    active_logo_path = resolve_logo_path(theme_config)
+    if active_logo_path.exists():
+        try:
+            source_logo = Image.open(active_logo_path)
+            logo_image = ctk.CTkImage(light_image=source_logo, dark_image=source_logo, size=(58, 58))
+            root._app_logo_image = logo_image  # type: ignore[attr-defined]
+        except Exception:
+            logo_image = None
 
-    ttk.Label(main, text="Ignorar jogadores").grid(row=6, column=0, sticky="w", pady=4)
-    ttk.Entry(main, textvariable=ignored_var).grid(row=6, column=1, columnspan=4, sticky="ew", pady=4)
+    logo_card = ctk.CTkFrame(
+        header,
+        fg_color=field,
+        corner_radius=16,
+        border_width=2,
+        border_color=accent,
+        width=66,
+        height=66,
+    )
+    ctk.CTkFrame(header, fg_color=accent, width=4, corner_radius=99).grid(
+        row=0, column=0, sticky="nsw", padx=(14, 0), pady=12
+    )
+    logo_card.grid(row=0, column=1, sticky="w", padx=(16, 16), pady=12)
+    logo_card.grid_propagate(False)
+    if logo_image:
+        ctk.CTkLabel(logo_card, image=logo_image, text="").place(relx=0.5, rely=0.5, anchor="center")
+    else:
+        ctk.CTkLabel(logo_card, text="A", text_color=accent, font=("Segoe UI Semibold", 32)).place(relx=0.5, rely=0.5, anchor="center")
 
-    status_var = tk.StringVar(value="Parado")
-    ttk.Label(main, text="Status").grid(row=7, column=0, sticky="w", pady=4)
-    ttk.Label(main, textvariable=status_var).grid(row=7, column=1, columnspan=4, sticky="w", pady=4)
+    title_stack = ctk.CTkFrame(header, fg_color="transparent", corner_radius=0)
+    title_stack.grid(row=0, column=2, sticky="ew")
+    ctk.CTkLabel(
+        title_stack,
+        text="Aizen Stream Control",
+        text_color=fg,
+        font=("Segoe UI Semibold", 26),
+    ).pack(anchor="w")
+    ctk.CTkLabel(
+        title_stack,
+        text="Live suite 2026 para Free Fire, chat, sorteios, overlays e automações em tempo real",
+        text_color=muted,
+        font=("Segoe UI", 11),
+    ).pack(anchor="w", pady=(2, 0))
+    badge_row = ctk.CTkFrame(header, fg_color="transparent", corner_radius=0)
+    badge_row.grid(row=0, column=3, sticky="e", padx=14)
+    ctk.CTkLabel(
+        badge_row,
+        text="AIZEN",
+        text_color=fg,
+        fg_color=chip_bg,
+        corner_radius=999,
+        font=("Segoe UI Semibold", 11),
+        padx=14,
+        pady=7,
+    ).pack(side=tk.LEFT, padx=(0, 8))
+    ctk.CTkLabel(
+        badge_row,
+        text=f"v{APP_VERSION}",
+        text_color=muted,
+        fg_color=field,
+        corner_radius=999,
+        font=("Segoe UI Semibold", 11),
+        padx=14,
+        pady=7,
+    ).pack(side=tk.LEFT, padx=(0, 8))
+    ctk.CTkLabel(
+        badge_row,
+        text="LIVE SUITE",
+        text_color=blue,
+        fg_color=chip_bg_alt,
+        corner_radius=999,
+        font=("Segoe UI Semibold", 11),
+        padx=14,
+        pady=7,
+    ).pack(side=tk.LEFT, padx=(0, 8))
+    ctk.CTkLabel(
+        badge_row,
+        text="AUTO UPDATE",
+        text_color=teal,
+        fg_color="#0d1714",
+        corner_radius=999,
+        font=("Segoe UI Semibold", 11),
+        padx=14,
+        pady=7,
+    ).pack(side=tk.LEFT)
 
-    log_text = tk.Text(main, height=14, wrap="word")
-    log_text.grid(row=9, column=0, columnspan=5, sticky="nsew", pady=(10, 0))
-    main.rowconfigure(9, weight=1)
+    tabview = ctk.CTkTabview(
+        main,
+        fg_color=bg,
+        segmented_button_fg_color=field,
+        segmented_button_selected_color=accent,
+        segmented_button_selected_hover_color=accent_hover,
+        segmented_button_unselected_color=field,
+        segmented_button_unselected_hover_color=chip_bg,
+        text_color=fg,
+        corner_radius=16,
+        border_width=1,
+        border_color=border,
+    )
+    tabview.grid(row=1, column=0, sticky="nsew")
+    tabview.add("Geral")
+    tabview.add("Kills FF")
+    tabview.add("Fila FF")
+    tabview.add("Overlay FF")
+    tabview.add("Livepix")
+    tabview.add("Chat Ao Vivo")
+    tabview.add("Comandos")
+    tabview.add("Temporizador")
+    tabview.add("Sorteio Chat")
+    tabview.add("Eventos")
+    tabview.add("Aparência")
+    general_tab_root = tabview.tab("Geral")
+    kills_tab_root = tabview.tab("Kills FF")
+    ff_queue_tab_root = tabview.tab("Fila FF")
+    ff_overlay_tab_root = tabview.tab("Overlay FF")
+    livepix_tab_root = tabview.tab("Livepix")
+    live_chat_tab_root = tabview.tab("Chat Ao Vivo")
+    commands_tab_root = tabview.tab("Comandos")
+    timers_tab_root = tabview.tab("Temporizador")
+    raffle_tab = tabview.tab("Sorteio Chat")
+    events_tab_root = tabview.tab("Eventos")
+    appearance_tab = tabview.tab("Aparência")
+    general_tab_root.configure(fg_color=bg)
+    kills_tab_root.configure(fg_color=bg)
+    ff_queue_tab_root.configure(fg_color=bg)
+    ff_overlay_tab_root.configure(fg_color=bg)
+    livepix_tab_root.configure(fg_color=bg)
+    live_chat_tab_root.configure(fg_color=bg)
+    commands_tab_root.configure(fg_color=bg)
+    timers_tab_root.configure(fg_color=bg)
+    raffle_tab.configure(fg_color=bg)
+    events_tab_root.configure(fg_color=bg)
+    appearance_tab.configure(fg_color=bg)
 
-    def current_hotkey() -> str:
-        parts = []
-        if ctrl_var.get():
-            parts.append("CTRL")
-        if shift_var.get():
-            parts.append("SHIFT")
-        if alt_var.get():
-            parts.append("ALT")
-        if win_var.get():
-            parts.append("WIN")
-        parts.append(key_var.get())
-        return "+".join(parts)
+    for tab_root in (
+        general_tab_root,
+        kills_tab_root,
+        ff_queue_tab_root,
+        ff_overlay_tab_root,
+        livepix_tab_root,
+        live_chat_tab_root,
+        commands_tab_root,
+        timers_tab_root,
+        events_tab_root,
+    ):
+        tab_root.columnconfigure(0, weight=1)
+        tab_root.rowconfigure(0, weight=1)
+
+    general_tab = ctk.CTkScrollableFrame(
+        general_tab_root,
+        fg_color=bg,
+        corner_radius=0,
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
+    )
+    general_tab.grid(row=0, column=0, sticky="nsew")
+    kills_tab = ctk.CTkFrame(
+        kills_tab_root,
+        fg_color=bg,
+        corner_radius=0,
+    )
+    kills_tab.grid(row=0, column=0, sticky="nsew")
+    ff_queue_tab = ctk.CTkFrame(
+        ff_queue_tab_root,
+        fg_color=bg,
+        corner_radius=0,
+    )
+    ff_queue_tab.grid(row=0, column=0, sticky="nsew")
+    ff_overlay_tab = ctk.CTkFrame(
+        ff_overlay_tab_root,
+        fg_color=bg,
+        corner_radius=0,
+    )
+    ff_overlay_tab.grid(row=0, column=0, sticky="nsew")
+    livepix_tab = ctk.CTkFrame(
+        livepix_tab_root,
+        fg_color=bg,
+        corner_radius=0,
+    )
+    livepix_tab.grid(row=0, column=0, sticky="nsew")
+    live_chat_tab = ctk.CTkScrollableFrame(
+        live_chat_tab_root,
+        fg_color=bg,
+        corner_radius=0,
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
+    )
+    live_chat_tab.grid(row=0, column=0, sticky="nsew")
+    commands_tab = ctk.CTkFrame(
+        commands_tab_root,
+        fg_color=bg,
+        corner_radius=0,
+    )
+    commands_tab.grid(row=0, column=0, sticky="nsew")
+    timers_tab = ctk.CTkFrame(
+        timers_tab_root,
+        fg_color=bg,
+        corner_radius=0,
+    )
+    timers_tab.grid(row=0, column=0, sticky="nsew")
+    events_tab = ctk.CTkFrame(
+        events_tab_root,
+        fg_color=bg,
+        corner_radius=0,
+    )
+    events_tab.grid(row=0, column=0, sticky="nsew")
+
+    general_tab.columnconfigure(0, weight=1)
+    general_tab.columnconfigure(1, weight=1)
+    general_tab.rowconfigure(0, weight=0)
+    general_tab.rowconfigure(1, weight=1)
+    kills_tab.columnconfigure(0, weight=3, minsize=560)
+    kills_tab.columnconfigure(1, weight=2, minsize=420)
+    kills_tab.rowconfigure(0, weight=1)
+    ff_queue_tab.columnconfigure(0, weight=1, minsize=280)
+    ff_queue_tab.columnconfigure(1, weight=3, minsize=360)
+    ff_queue_tab.rowconfigure(0, weight=1)
+    ff_overlay_tab.columnconfigure(0, weight=1, minsize=360)
+    ff_overlay_tab.columnconfigure(1, weight=2, minsize=520)
+    ff_overlay_tab.rowconfigure(0, weight=1)
+    livepix_tab.columnconfigure(0, weight=1, minsize=380)
+    livepix_tab.columnconfigure(1, weight=2, minsize=560)
+    livepix_tab.rowconfigure(0, weight=1)
+    live_chat_tab.columnconfigure(0, weight=1)
+    live_chat_tab.rowconfigure(0, weight=0)
+    live_chat_tab.rowconfigure(1, weight=0)
+    live_chat_tab.rowconfigure(2, weight=0)
+    live_chat_tab.rowconfigure(3, weight=1)
+    commands_tab.columnconfigure(0, weight=1, minsize=360)
+    commands_tab.columnconfigure(1, weight=2, minsize=520)
+    commands_tab.rowconfigure(0, weight=1)
+    timers_tab.columnconfigure(0, weight=1, minsize=360)
+    timers_tab.columnconfigure(1, weight=2, minsize=520)
+    timers_tab.rowconfigure(0, weight=1)
+    raffle_tab.columnconfigure(0, weight=1)
+    raffle_tab.rowconfigure(0, weight=1)
+    events_tab.columnconfigure(0, weight=1)
+    events_tab.rowconfigure(0, weight=1)
+    appearance_tab.columnconfigure(0, weight=1)
+    appearance_tab.rowconfigure(0, weight=1)
+
+    raffle_body = ctk.CTkFrame(
+        raffle_tab,
+        fg_color=bg,
+        corner_radius=0,
+    )
+    raffle_body.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+    raffle_body.columnconfigure(0, weight=1, minsize=500)
+    raffle_body.columnconfigure(1, weight=2, minsize=520)
+    raffle_body.rowconfigure(0, weight=1)
+
+    kills_left = ctk.CTkScrollableFrame(
+        kills_tab,
+        fg_color=bg,
+        corner_radius=0,
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
+    )
+    kills_left.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+    kills_left.columnconfigure(0, weight=1)
+    kills_left.columnconfigure(1, weight=1)
+    kills_left.rowconfigure(0, weight=0)
+    kills_left.rowconfigure(1, weight=0)
+    kills_left.rowconfigure(2, weight=0)
+
+    kills_right = ctk.CTkFrame(kills_tab, fg_color=bg, corner_radius=0)
+    kills_right.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=0)
+    kills_right.columnconfigure(0, weight=1)
+    kills_right.rowconfigure(0, weight=1)
+
+    general_card = card(
+        general_tab,
+        "Opções gerais",
+        "Configurações que valem para o app inteiro: identificação deste PC e atualização automática.",
+    )
+    general_card.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 8))
+    section_label(general_card, "Nome deste PC", 2)
+    entry(general_card, device_name_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    section_label(general_card, "Token Jarvis", 3)
+    entry(general_card, jarvis_token_var, show="*").grid(row=3, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    section_label(general_card, "Manifesto de atualização", 4)
+    general_update_row = ctk.CTkFrame(general_card, fg_color=panel, corner_radius=0)
+    general_update_row.grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    general_update_row.columnconfigure(0, weight=1)
+    entry(general_update_row, updates_manifest_url_var).grid(row=0, column=0, sticky="ew")
+    ctk.CTkCheckBox(
+        general_update_row,
+        text="Atualizar ao abrir",
+        variable=auto_update_var,
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=0, column=1, sticky="e", padx=(14, 0))
+
+    jarvis_connection_card = card(
+        general_tab,
+        "Jarvis FF",
+        "Configure uma URL base e preencha os endpoints usados por Kills FF, Fila FF e Overlay FF.",
+    )
+    jarvis_connection_card.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    jarvis_connection_card.columnconfigure(1, weight=1)
+    section_label(jarvis_connection_card, "URL base do Jarvis", 2)
+    entry(jarvis_connection_card, jarvis_base_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    jarvis_connection_actions = ctk.CTkFrame(jarvis_connection_card, fg_color=panel, corner_radius=0)
+    jarvis_connection_actions.grid(row=3, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 18))
+    button(jarvis_connection_actions, "Preencher endpoints", lambda: apply_jarvis_base_url(), "accent", width=150).pack(
+        side=tk.LEFT, padx=(0, 8)
+    )
+    button(jarvis_connection_actions, "Testar Jarvis", lambda: test_jarvis_connection(), "default", width=120).pack(
+        side=tk.LEFT, padx=(0, 8)
+    )
+    button(jarvis_connection_actions, "Abrir Overlay FF", lambda: tabview.set("Overlay FF"), "ghost", width=130).pack(
+        side=tk.LEFT, padx=(0, 8)
+    )
+
+    ff_dashboard_card = ctk.CTkFrame(
+        general_tab,
+        fg_color=panel_alt,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+    )
+    ff_dashboard_card.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    for column in range(3):
+        ff_dashboard_card.columnconfigure(column, weight=1)
+    ctk.CTkLabel(
+        ff_dashboard_card,
+        text="Painel FF",
+        text_color=fg,
+        font=("Segoe UI Semibold", 18),
+        anchor="w",
+    ).grid(row=0, column=0, columnspan=3, sticky="ew", padx=18, pady=(16, 2))
+    ctk.CTkLabel(
+        ff_dashboard_card,
+        text="Atalhos e status dos paineis sincronizados com o Jarvis.",
+        text_color=muted,
+        font=("Segoe UI", 11),
+        anchor="w",
+    ).grid(row=1, column=0, columnspan=3, sticky="ew", padx=18, pady=(0, 12))
+    for column, (title_text, metric_var, source_var, status_var, target_tab) in enumerate(
+        (
+            ("Kills FF", manual_total_var, manual_source_var, manual_status_var, "Kills FF"),
+            ("Fila FF", ff_queue_count_var, ff_queue_source_var, ff_queue_status_var, "Fila FF"),
+            ("Overlay FF", ff_overlay_size_text, manual_source_var, ff_overlay_status_var, "Overlay FF"),
+        )
+    ):
+        panel_frame = ctk.CTkFrame(ff_dashboard_card, fg_color=field, corner_radius=12, border_width=1, border_color=border)
+        panel_frame.grid(row=2, column=column, sticky="nsew", padx=(18 if column == 0 else 6, 18 if column == 2 else 6), pady=(0, 18))
+        panel_frame.columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            panel_frame,
+            text=title_text,
+            text_color=accent,
+            font=("Segoe UI Semibold", 13),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 0))
+        ctk.CTkLabel(
+            panel_frame,
+            textvariable=metric_var,
+            text_color=teal,
+            font=("Segoe UI Semibold", 24),
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 2))
+        ctk.CTkLabel(
+            panel_frame,
+            textvariable=source_var,
+            text_color=muted,
+            font=("Segoe UI", 10),
+            anchor="w",
+        ).grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 2))
+        ctk.CTkLabel(
+            panel_frame,
+            textvariable=status_var,
+            text_color=fg,
+            font=("Segoe UI Semibold", 11),
+            anchor="w",
+        ).grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 10))
+        button(panel_frame, "Abrir", lambda tab_name=target_tab: tabview.set(tab_name), "ghost", width=84).grid(
+            row=4, column=0, sticky="ew", padx=14, pady=(0, 14)
+        )
+
+    general_info_card = ctk.CTkFrame(general_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+    general_info_card.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    for column in range(3):
+        general_info_card.columnconfigure(column, weight=1)
+    for col, label in enumerate(("Versão", "Pasta do app", "Atualização")):
+        ctk.CTkLabel(general_info_card, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=col, sticky="w", padx=18, pady=(14, 0)
+        )
+    ctk.CTkLabel(general_info_card, text=f"v{APP_VERSION}", text_color=teal, font=("Segoe UI Semibold", 24)).grid(
+        row=1, column=0, sticky="w", padx=18, pady=(0, 14)
+    )
+    ctk.CTkLabel(
+        general_info_card,
+        text=str(APP_DIR),
+        text_color=fg,
+        font=("Segoe UI Semibold", 12),
+        wraplength=520,
+        justify="left",
+    ).grid(row=1, column=1, sticky="w", padx=18, pady=(4, 14))
+    ctk.CTkLabel(
+        general_info_card,
+        textvariable=general_update_state_var,
+        text_color=accent,
+        font=("Segoe UI Semibold", 14),
+    ).grid(row=1, column=2, sticky="w", padx=18, pady=(4, 14))
+
+    general_actions = ctk.CTkFrame(general_tab, fg_color=bg, corner_radius=0)
+    general_actions.grid(row=4, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
+
+    sync_card = card(kills_left, "Kills FF em tempo real", "Edite as kills e mantenha o painel Jarvis sincronizado em tempo real.")
+    sync_card.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 8))
+    sync_card.columnconfigure(1, weight=1)
+    sync_card.columnconfigure(3, weight=1)
+    section_label(sync_card, "URL do painel/Jarvis", 2)
+    entry(sync_card, sync_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    section_label(sync_card, "Titulo", 3)
+    entry(sync_card, title_var).grid(row=3, column=1, sticky="ew", padx=18, pady=5)
+    section_label(sync_card, "Sala", 3, column=2)
+    entry(sync_card, sync_room_var, width=140).grid(row=3, column=3, sticky="ew", padx=18, pady=5)
+    section_label(sync_card, "Ler painel a cada", 4)
+    poll_row = ctk.CTkFrame(sync_card, fg_color=panel, corner_radius=0)
+    poll_row.grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=(5, 18))
+    entry(poll_row, poll_seconds_var, width=80).pack(side=tk.LEFT)
+    ctk.CTkLabel(poll_row, text="segundos", text_color=muted, font=("Segoe UI", 12)).pack(side=tk.LEFT, padx=(8, 18))
+    ctk.CTkCheckBox(
+        poll_row,
+        text="Sincronizar automaticamente",
+        variable=sync_enabled_var,
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).pack(side=tk.LEFT)
+
+    kill_metrics = ctk.CTkFrame(kills_left, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+    kill_metrics.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    for column in range(4):
+        kill_metrics.columnconfigure(column, weight=1)
+    for col, label in enumerate(("Jogadores", "Total de kills", "Origem", "Status")):
+        ctk.CTkLabel(kill_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=col, sticky="w", padx=18, pady=(14, 0)
+        )
+    ctk.CTkLabel(kill_metrics, textvariable=manual_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+        row=1, column=0, sticky="w", padx=18, pady=(0, 14)
+    )
+    ctk.CTkLabel(kill_metrics, textvariable=manual_total_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+        row=1, column=1, sticky="w", padx=18, pady=(0, 14)
+    )
+    ctk.CTkLabel(
+        kill_metrics,
+        textvariable=manual_source_var,
+        text_color=accent,
+        font=("Segoe UI Semibold", 14),
+    ).grid(row=1, column=2, sticky="w", padx=18, pady=(4, 14))
+    ctk.CTkLabel(
+        kill_metrics,
+        textvariable=manual_status_var,
+        text_color=accent,
+        font=("Segoe UI Semibold", 14),
+    ).grid(row=1, column=3, sticky="w", padx=18, pady=(4, 14))
+
+    manual_card = card(kills_left, "Kills FF", "Digite ou edite as kills. Cada alteração pode atualizar o painel Jarvis em tempo real.")
+    manual_card.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=12, pady=(8, 12))
+    manual_card.columnconfigure(0, weight=1)
+    manual_card.rowconfigure(3, weight=1)
+    table_header = ctk.CTkFrame(manual_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
+    table_header.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 0))
+    table_header.columnconfigure(0, weight=1)
+    ctk.CTkLabel(table_header, text="Nick do jogador", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=0, sticky="w", padx=14, pady=(0, 6)
+    )
+    ctk.CTkLabel(table_header, text="Kills", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=1, sticky="w", padx=12, pady=(0, 6)
+    )
+    manual_table_frame = ctk.CTkScrollableFrame(
+        manual_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        scrollbar_button_color="#3a1518",
+        scrollbar_button_hover_color="#5a1d22",
+    )
+    manual_table_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=18, pady=(0, 12))
+    manual_table_frame.columnconfigure(0, weight=1)
+    manual_actions = ctk.CTkFrame(manual_card, fg_color=panel, corner_radius=0)
+    manual_actions.grid(row=4, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
+
+    kills_rank_card = card(
+        kills_right,
+        "Rank Kills FF",
+        "Visualize o ranking vindo do Jarvis sem alterar a tabela manual.",
+    )
+    kills_rank_card.grid(row=0, column=0, sticky="nsew", padx=12, pady=(12, 12))
+    kills_rank_card.columnconfigure(0, weight=1)
+    kills_rank_card.rowconfigure(5, weight=1)
+    kills_rank_controls = ctk.CTkFrame(kills_rank_card, fg_color=panel, corner_radius=0)
+    kills_rank_controls.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 10))
+    kills_rank_controls.columnconfigure(0, weight=1)
+    kills_rank_segmented = ctk.CTkSegmentedButton(
+        kills_rank_controls,
+        values=["Diario", "Geral"],
+        variable=kills_rank_mode_var,
+        command=lambda _value: refresh_kills_rank_table(),
+        height=34,
+        corner_radius=10,
+        fg_color=field,
+        selected_color=accent,
+        selected_hover_color=accent_hover,
+        unselected_color=field,
+        unselected_hover_color=chip_bg,
+        text_color=fg,
+        font=("Segoe UI Semibold", 12),
+    )
+    kills_rank_segmented.grid(row=0, column=0, sticky="ew")
+    kills_rank_metrics = ctk.CTkFrame(kills_rank_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+    kills_rank_metrics.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
+    for column in range(3):
+        kills_rank_metrics.columnconfigure(column, weight=1)
+    for col, label in enumerate(("Modo", "Jogadores", "Kills")):
+        ctk.CTkLabel(kills_rank_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=col, sticky="w", padx=14, pady=(12, 0)
+        )
+    ctk.CTkLabel(kills_rank_metrics, textvariable=kills_rank_title_var, text_color=accent, font=("Segoe UI Semibold", 13)).grid(
+        row=1, column=0, sticky="w", padx=14, pady=(0, 12)
+    )
+    ctk.CTkLabel(kills_rank_metrics, textvariable=kills_rank_count_var, text_color=teal, font=("Segoe UI Semibold", 22)).grid(
+        row=1, column=1, sticky="w", padx=14, pady=(0, 12)
+    )
+    ctk.CTkLabel(kills_rank_metrics, textvariable=kills_rank_total_var, text_color=teal, font=("Segoe UI Semibold", 22)).grid(
+        row=1, column=2, sticky="w", padx=14, pady=(0, 12)
+    )
+    kills_rank_header = ctk.CTkFrame(kills_rank_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
+    kills_rank_header.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 0))
+    kills_rank_header.columnconfigure(1, weight=1)
+    ctk.CTkLabel(kills_rank_header, text="#", text_color=muted, font=("Segoe UI Semibold", 11), width=44).grid(
+        row=0, column=0, sticky="w", padx=(12, 4), pady=(0, 6)
+    )
+    ctk.CTkLabel(kills_rank_header, text="Jogador", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=1, sticky="w", padx=8, pady=(0, 6)
+    )
+    ctk.CTkLabel(kills_rank_header, text="Kills", text_color=muted, font=("Segoe UI Semibold", 11), width=72).grid(
+        row=0, column=2, sticky="e", padx=(8, 12), pady=(0, 6)
+    )
+    kills_rank_table_frame = ctk.CTkScrollableFrame(
+        kills_rank_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        scrollbar_button_color="#3a1518",
+        scrollbar_button_hover_color="#5a1d22",
+    )
+    kills_rank_table_frame.grid(row=5, column=0, sticky="nsew", padx=18, pady=(0, 18))
+    kills_rank_table_frame.columnconfigure(0, weight=1)
+
+    ff_queue_left = ctk.CTkScrollableFrame(
+        ff_queue_tab,
+        fg_color=bg,
+        corner_radius=0,
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
+    )
+    ff_queue_left.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+    ff_queue_left.columnconfigure(0, weight=1)
+    ff_queue_left.rowconfigure(2, weight=1)
+
+    ff_queue_sync_card = card(
+        ff_queue_left,
+        "Fila Free Fire em tempo real",
+        "Controle a fila de jogadores e mantenha tudo sincronizado com o painel Jarvis.",
+    )
+    ff_queue_sync_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+    ff_queue_sync_card.columnconfigure(1, weight=1)
+    ff_queue_sync_card.columnconfigure(3, weight=1)
+    section_label(ff_queue_sync_card, "URL da fila/Jarvis", 2)
+    entry(ff_queue_sync_card, ff_queue_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    section_label(ff_queue_sync_card, "Sala", 3)
+    entry(ff_queue_sync_card, ff_queue_room_var, width=180).grid(row=3, column=1, sticky="w", padx=18, pady=5)
+    section_label(ff_queue_sync_card, "Ler fila a cada", 3, column=2)
+    ff_poll_row = ctk.CTkFrame(ff_queue_sync_card, fg_color=panel, corner_radius=0)
+    ff_poll_row.grid(row=3, column=3, sticky="ew", padx=18, pady=5)
+    entry(ff_poll_row, ff_queue_poll_seconds_var, width=80).pack(side=tk.LEFT)
+    ctk.CTkLabel(ff_poll_row, text="segundos", text_color=muted, font=("Segoe UI", 12)).pack(side=tk.LEFT, padx=(8, 18))
+    ctk.CTkCheckBox(
+        ff_poll_row,
+        text="Sincronizar automaticamente",
+        variable=ff_queue_enabled_var,
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).pack(side=tk.LEFT)
+
+    ff_queue_metrics = ctk.CTkFrame(ff_queue_left, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+    ff_queue_metrics.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+    for column in range(4):
+        ff_queue_metrics.columnconfigure(column, weight=1)
+    for col, label in enumerate(("Na fila", "Jogando", "Origem", "Status")):
+        ctk.CTkLabel(ff_queue_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=col, sticky="w", padx=18, pady=(14, 0)
+        )
+    ctk.CTkLabel(ff_queue_metrics, textvariable=ff_queue_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+        row=1, column=0, sticky="w", padx=18, pady=(0, 14)
+    )
+    ctk.CTkLabel(ff_queue_metrics, textvariable=ff_queue_playing_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+        row=1, column=1, sticky="w", padx=18, pady=(0, 14)
+    )
+    ctk.CTkLabel(
+        ff_queue_metrics,
+        textvariable=ff_queue_source_var,
+        text_color=accent,
+        font=("Segoe UI Semibold", 14),
+    ).grid(row=1, column=2, sticky="w", padx=18, pady=(4, 14))
+    ctk.CTkLabel(
+        ff_queue_metrics,
+        textvariable=ff_queue_status_var,
+        text_color=accent,
+        font=("Segoe UI Semibold", 14),
+    ).grid(row=1, column=3, sticky="w", padx=18, pady=(4, 14))
+
+    ff_queue_card = card(
+        ff_queue_tab,
+        "Fila FF",
+        "Organize jogadores por ordem, status e observações. As alterações podem ir para o Jarvis em tempo real.",
+    )
+    ff_queue_card.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=(12, 12))
+    ff_queue_card.columnconfigure(0, weight=1)
+    ff_queue_card.rowconfigure(3, weight=1)
+    ff_queue_header = ctk.CTkFrame(ff_queue_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
+    ff_queue_header.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 0))
+    ff_queue_header.columnconfigure(0, weight=1)
+    ctk.CTkLabel(ff_queue_header, text="Nick", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=0, sticky="w", padx=14, pady=(0, 6)
+    )
+    ctk.CTkLabel(ff_queue_header, text="Observação", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=1, sticky="w", padx=12, pady=(0, 6)
+    )
+    ctk.CTkLabel(ff_queue_header, text="Salas", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=2, sticky="w", padx=12, pady=(0, 6)
+    )
+    ctk.CTkLabel(ff_queue_header, text="Status", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=3, sticky="w", padx=12, pady=(0, 6)
+    )
+    ff_queue_table_frame = ctk.CTkScrollableFrame(
+        ff_queue_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        scrollbar_button_color=border,
+        scrollbar_button_hover_color=accent,
+    )
+    ff_queue_table_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=18, pady=(0, 12))
+    ff_queue_table_frame.columnconfigure(0, weight=1)
+    ff_queue_actions = ctk.CTkFrame(ff_queue_card, fg_color=panel, corner_radius=0)
+    ff_queue_actions.grid(row=4, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
+
+    ff_overlay_controls = ctk.CTkScrollableFrame(
+        ff_overlay_tab,
+        fg_color=bg,
+        corner_radius=0,
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
+    )
+    ff_overlay_controls.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+    ff_overlay_controls.columnconfigure(0, weight=1)
+
+    ff_overlay_sync_card = card(
+        ff_overlay_controls,
+        "Overlay FF sincronizado",
+        "Mostra Kills FF e Fila FF usando os mesmos dados em tempo real do painel Jarvis.",
+    )
+    ff_overlay_sync_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+    ff_overlay_sync_card.columnconfigure(1, weight=1)
+    ctk.CTkLabel(
+        ff_overlay_sync_card,
+        text="Usa as URLs configuradas em Kills FF e Fila FF. O overlay atualiza quando o app lê ou envia dados para o Jarvis.",
+        text_color=muted,
+        font=("Segoe UI", 11),
+        wraplength=340,
+        justify="left",
+    ).grid(row=2, column=0, columnspan=2, sticky="ew", padx=18, pady=(10, 6))
+    section_label(ff_overlay_sync_card, "URL Overlay/Jarvis", 3)
+    entry(ff_overlay_sync_card, ff_overlay_url_var).grid(row=3, column=1, sticky="ew", padx=18, pady=5)
+    ff_overlay_realtime_row = ctk.CTkFrame(ff_overlay_sync_card, fg_color=panel, corner_radius=0)
+    ff_overlay_realtime_row.grid(row=4, column=0, columnspan=2, sticky="ew", padx=18, pady=(4, 2))
+    ff_overlay_realtime_row.columnconfigure(0, weight=1)
+    ctk.CTkCheckBox(
+        ff_overlay_realtime_row,
+        text="Sincronizar Kills FF automaticamente",
+        variable=sync_enabled_var,
+        command=lambda: schedule_manual_poll(),
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
+    ctk.CTkCheckBox(
+        ff_overlay_realtime_row,
+        text="Sincronizar Fila FF automaticamente",
+        variable=ff_queue_enabled_var,
+        command=lambda: schedule_ff_queue_poll(),
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=1, column=0, sticky="w", padx=(0, 12), pady=4)
+    ctk.CTkCheckBox(
+        ff_overlay_realtime_row,
+        text="Sincronizar Overlay FF automaticamente",
+        variable=ff_overlay_enabled_var,
+        command=lambda: schedule_ff_overlay_sync(100),
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=2, column=0, sticky="w", padx=(0, 12), pady=4)
+    ff_overlay_actions = ctk.CTkFrame(ff_overlay_sync_card, fg_color=panel, corner_radius=0)
+    ff_overlay_actions.grid(row=5, column=0, columnspan=2, sticky="ew", padx=18, pady=(8, 18))
+
+    ff_overlay_metrics = ctk.CTkFrame(
+        ff_overlay_controls,
+        fg_color=panel_alt,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+    )
+    ff_overlay_metrics.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+    for column in range(3):
+        ff_overlay_metrics.columnconfigure(column, weight=1)
+    for col, (label, value_var) in enumerate(
+        (
+            ("Jogadores", manual_count_var),
+            ("Kills", manual_total_var),
+            ("Fila ativa", ff_queue_count_var),
+        )
+    ):
+        ctk.CTkLabel(ff_overlay_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=col, sticky="w", padx=16, pady=(12, 0)
+        )
+        ctk.CTkLabel(ff_overlay_metrics, textvariable=value_var, text_color=teal, font=("Segoe UI Semibold", 24)).grid(
+            row=1, column=col, sticky="w", padx=16, pady=(0, 12)
+        )
+    ff_overlay_status_card = ctk.CTkFrame(
+        ff_overlay_controls,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+    )
+    ff_overlay_status_card.grid(row=2, column=0, sticky="ew", padx=12, pady=8)
+    ff_overlay_status_card.columnconfigure(1, weight=1)
+    ff_overlay_status_card.columnconfigure(3, weight=1)
+    for row_index, (label, source_var, status_var) in enumerate(
+        (
+            ("Kills FF", manual_source_var, manual_status_var),
+            ("Fila FF", ff_queue_source_var, ff_queue_status_var),
+            ("Overlay FF", manual_source_var, ff_overlay_status_var),
+        )
+    ):
+        ctk.CTkLabel(ff_overlay_status_card, text=label, text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+            row=row_index, column=0, sticky="w", padx=14, pady=(12 if row_index == 0 else 4, 10)
+        )
+        ctk.CTkLabel(ff_overlay_status_card, textvariable=source_var, text_color=fg, font=("Segoe UI Semibold", 12)).grid(
+            row=row_index, column=1, sticky="ew", padx=8, pady=(12 if row_index == 0 else 4, 10)
+        )
+        ctk.CTkLabel(ff_overlay_status_card, text="Status", text_color=muted, font=("Segoe UI", 11)).grid(
+            row=row_index, column=2, sticky="w", padx=(8, 4), pady=(12 if row_index == 0 else 4, 10)
+        )
+        ctk.CTkLabel(ff_overlay_status_card, textvariable=status_var, text_color=accent, font=("Segoe UI Semibold", 12)).grid(
+            row=row_index, column=3, sticky="ew", padx=(4, 14), pady=(12 if row_index == 0 else 4, 10)
+        )
+
+    ff_overlay_options = card(ff_overlay_controls, "Aparencia do overlay", "Controle a janela que fica sobre o jogo ou OBS.")
+    ff_overlay_options.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
+    ff_overlay_options.columnconfigure(1, weight=1)
+    ctk.CTkLabel(ff_overlay_options, text="Opacidade", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=2, column=0, sticky="w", padx=18, pady=(10, 4)
+    )
+    ff_overlay_opacity_slider = ctk.CTkSlider(
+        ff_overlay_options,
+        from_=35,
+        to=100,
+        number_of_steps=65,
+        variable=ff_overlay_opacity_var,
+        command=lambda _value: apply_ff_overlay_settings(refresh=True),
+    )
+    ff_overlay_opacity_slider.grid(row=2, column=1, sticky="ew", padx=8, pady=(10, 4))
+    ctk.CTkLabel(ff_overlay_options, textvariable=ff_overlay_opacity_text, text_color=muted, font=("Segoe UI", 11)).grid(
+        row=2, column=2, sticky="e", padx=(8, 18), pady=(10, 4)
+    )
+    ctk.CTkLabel(ff_overlay_options, text="Largura", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=3, column=0, sticky="w", padx=18, pady=4
+    )
+    ff_overlay_width_slider = ctk.CTkSlider(
+        ff_overlay_options,
+        from_=420,
+        to=1400,
+        number_of_steps=98,
+        variable=ff_overlay_width_var,
+        command=lambda _value: apply_ff_overlay_settings(refresh=True),
+    )
+    ff_overlay_width_slider.grid(row=3, column=1, sticky="ew", padx=8, pady=4)
+    ctk.CTkLabel(ff_overlay_options, textvariable=ff_overlay_size_text, text_color=fg, font=("Segoe UI Semibold", 11)).grid(
+        row=3, column=2, sticky="e", padx=(8, 18), pady=4
+    )
+    ctk.CTkLabel(ff_overlay_options, text="Altura", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=4, column=0, sticky="w", padx=18, pady=4
+    )
+    ff_overlay_height_slider = ctk.CTkSlider(
+        ff_overlay_options,
+        from_=240,
+        to=900,
+        number_of_steps=66,
+        variable=ff_overlay_height_var,
+        command=lambda _value: apply_ff_overlay_settings(refresh=True),
+    )
+    ff_overlay_height_slider.grid(row=4, column=1, sticky="ew", padx=8, pady=4)
+    ff_overlay_toggle_row = ctk.CTkFrame(ff_overlay_options, fg_color=panel, corner_radius=0)
+    ff_overlay_toggle_row.grid(row=5, column=0, columnspan=3, sticky="ew", padx=18, pady=(8, 18))
+    for col in range(3):
+        ff_overlay_toggle_row.columnconfigure(col, weight=1)
+    ctk.CTkCheckBox(
+        ff_overlay_toggle_row,
+        text="Mostrar Kills FF",
+        variable=ff_overlay_show_kills_var,
+        command=lambda: refresh_ff_overlay(force=True),
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
+    ctk.CTkCheckBox(
+        ff_overlay_toggle_row,
+        text="Mostrar Fila FF",
+        variable=ff_overlay_show_queue_var,
+        command=lambda: refresh_ff_overlay(force=True),
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=0, column=1, sticky="w", padx=(0, 12), pady=4)
+    ctk.CTkCheckBox(
+        ff_overlay_toggle_row,
+        text="Compacto",
+        variable=ff_overlay_compact_var,
+        command=lambda: refresh_ff_overlay(force=True),
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=0, column=2, sticky="w", padx=(0, 12), pady=4)
+
+    ff_overlay_preview_card = card(ff_overlay_tab, "Preview Overlay FF", "Visual que sera usado na janela de overlay.")
+    ff_overlay_preview_card.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=(12, 12))
+    ff_overlay_preview_card.columnconfigure(0, weight=1)
+    ff_overlay_preview_card.rowconfigure(2, weight=1)
+    ff_overlay_preview_frame = ctk.CTkFrame(
+        ff_overlay_preview_card,
+        fg_color="#050609",
+        corner_radius=14,
+        border_width=1,
+        border_color=accent,
+    )
+    ff_overlay_preview_frame.grid(row=2, column=0, sticky="nsew", padx=18, pady=(8, 18))
+    ff_overlay_preview_frame.columnconfigure(0, weight=1)
+
+    chat_connection_card = card(
+        live_chat_tab,
+        "Chat ao vivo por eventos",
+        "Receba mensagens do TikFinity sem depender de navegador aberto ou raspagem de tela.",
+    )
+    chat_connection_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+    chat_connection_card.columnconfigure(1, weight=1)
+    chat_connection_card.columnconfigure(3, weight=1)
+    section_label(chat_connection_card, "Fonte", 2)
+    chat_source_combo = combo(chat_connection_card, chat_source_var, ["Webhook local", "TikFinity WebSocket"], width=190)
+    chat_source_combo.grid(row=2, column=1, sticky="w", padx=18, pady=5)
+    chat_source_combo.configure(command=lambda _value: update_chat_endpoint_text())
+    section_label(chat_connection_card, "Host", 2, column=2)
+    entry(chat_connection_card, chat_webhook_host_var, width=140).grid(row=2, column=3, sticky="w", padx=18, pady=5)
+    section_label(chat_connection_card, "Porta", 3)
+    entry(chat_connection_card, chat_webhook_port_var, width=100).grid(row=3, column=1, sticky="w", padx=18, pady=5)
+    section_label(chat_connection_card, "Token secreto", 3, column=2)
+    entry(chat_connection_card, chat_webhook_token_var).grid(row=3, column=3, sticky="ew", padx=18, pady=5)
+    section_label(chat_connection_card, "URL WebSocket", 4)
+    entry(chat_connection_card, chat_websocket_url_var).grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+
+    endpoint_box = ctk.CTkFrame(chat_connection_card, fg_color=field, corner_radius=10, border_width=1, border_color=border)
+    endpoint_box.grid(row=5, column=0, columnspan=4, sticky="ew", padx=18, pady=(10, 8))
+    endpoint_box.columnconfigure(0, weight=1)
+    ctk.CTkLabel(
+        endpoint_box,
+        textvariable=chat_endpoint_var,
+        text_color=muted,
+        font=("Consolas", 10),
+        anchor="w",
+    ).grid(row=0, column=0, sticky="ew", padx=12, pady=10)
+    chat_actions = ctk.CTkFrame(chat_connection_card, fg_color=panel, corner_radius=0)
+    chat_actions.grid(row=6, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 18))
+
+    chat_metrics = ctk.CTkFrame(live_chat_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+    chat_metrics.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+    for column in range(4):
+        chat_metrics.columnconfigure(column, weight=1)
+    for col, label in enumerate(("Mensagens", "Usuários", "Plataforma", "Status")):
+        ctk.CTkLabel(chat_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=col, sticky="w", padx=18, pady=(14, 0)
+        )
+    ctk.CTkLabel(chat_metrics, textvariable=chat_message_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+        row=1, column=0, sticky="w", padx=18, pady=(0, 14)
+    )
+    ctk.CTkLabel(chat_metrics, textvariable=chat_user_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+        row=1, column=1, sticky="w", padx=18, pady=(0, 14)
+    )
+    ctk.CTkLabel(chat_metrics, textvariable=chat_platform_var, text_color=accent, font=("Segoe UI Semibold", 14)).grid(
+        row=1, column=2, sticky="w", padx=18, pady=(4, 14)
+    )
+    ctk.CTkLabel(chat_metrics, textvariable=chat_status_var, text_color=accent, font=("Segoe UI Semibold", 14)).grid(
+        row=1, column=3, sticky="w", padx=18, pady=(4, 14)
+    )
+
+    chat_overlay_card = card(
+        live_chat_tab,
+        "Overlay para jogo",
+        "Janela transparente, sempre no topo, para acompanhar o chat usando apenas um monitor.",
+    )
+    chat_overlay_card.grid(row=2, column=0, sticky="ew", padx=12, pady=(8, 8))
+    chat_overlay_card.columnconfigure(1, weight=1)
+    chat_overlay_card.columnconfigure(4, weight=1)
+
+    ctk.CTkLabel(chat_overlay_card, text="Opacidade", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=2, column=0, sticky="w", padx=18, pady=(8, 4)
+    )
+    chat_overlay_opacity_slider = ctk.CTkSlider(
+        chat_overlay_card,
+        from_=35,
+        to=100,
+        number_of_steps=65,
+        variable=chat_overlay_opacity_var,
+        command=lambda _value: apply_chat_overlay_settings(),
+    )
+    chat_overlay_opacity_slider.grid(row=2, column=1, sticky="ew", padx=8, pady=(8, 4))
+    ctk.CTkLabel(
+        chat_overlay_card,
+        textvariable=chat_overlay_opacity_text,
+        text_color=fg,
+        font=("Segoe UI Semibold", 11),
+        width=52,
+    ).grid(row=2, column=2, sticky="e", padx=(0, 18), pady=(8, 4))
+
+    ctk.CTkLabel(chat_overlay_card, text="Fonte", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=2, column=3, sticky="w", padx=18, pady=(8, 4)
+    )
+    chat_overlay_font_slider = ctk.CTkSlider(
+        chat_overlay_card,
+        from_=10,
+        to=24,
+        number_of_steps=14,
+        variable=chat_overlay_font_size_var,
+        command=lambda _value: apply_chat_overlay_settings(refresh=True),
+    )
+    chat_overlay_font_slider.grid(row=2, column=4, sticky="ew", padx=8, pady=(8, 4))
+    ctk.CTkLabel(
+        chat_overlay_card,
+        textvariable=chat_overlay_font_size_text,
+        text_color=fg,
+        font=("Segoe UI Semibold", 11),
+        width=52,
+    ).grid(row=2, column=5, sticky="e", padx=(0, 18), pady=(8, 4))
+
+    overlay_option_row = ctk.CTkFrame(chat_overlay_card, fg_color=panel, corner_radius=0)
+    overlay_option_row.grid(row=3, column=0, columnspan=6, sticky="ew", padx=18, pady=(8, 4))
+    for col in range(3):
+        overlay_option_row.columnconfigure(col, weight=1)
+    ctk.CTkCheckBox(
+        overlay_option_row,
+        text="Modo compacto",
+        variable=chat_overlay_compact_var,
+        command=lambda: apply_chat_overlay_settings(refresh=True),
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
+    ctk.CTkCheckBox(
+        overlay_option_row,
+        text="Mostrar controles",
+        variable=chat_overlay_controls_var,
+        command=lambda: apply_chat_overlay_settings(),
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=0, column=1, sticky="w", padx=(0, 12), pady=4)
+    ctk.CTkCheckBox(
+        overlay_option_row,
+        text="Click-through",
+        variable=chat_overlay_clickthrough_var,
+        command=lambda: apply_chat_overlay_settings(),
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=0, column=2, sticky="w", pady=4)
+
+    overlay_actions = ctk.CTkFrame(chat_overlay_card, fg_color=panel, corner_radius=0)
+    overlay_actions.grid(row=4, column=0, columnspan=6, sticky="ew", padx=18, pady=(6, 18))
+    button(overlay_actions, "Abrir overlay", lambda: open_chat_overlay_window(), "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
+    button(overlay_actions, "Aplicar ajustes", lambda: apply_chat_overlay_settings(refresh=True), "default", width=120).pack(side=tk.LEFT, padx=(0, 8))
+    button(overlay_actions, "Mensagem teste", lambda: add_chat_test_message(), "default", width=128).pack(side=tk.LEFT, padx=(0, 8))
+    button(overlay_actions, "Fechar overlay", lambda: close_chat_overlay(), "danger", width=112).pack(side=tk.LEFT, padx=(0, 8))
+    ctk.CTkLabel(
+        overlay_actions,
+        text="Use click-through só depois de posicionar o overlay.",
+        text_color=muted,
+        font=("Segoe UI", 10),
+    ).pack(side=tk.LEFT, padx=(8, 0))
+
+    chat_list_card = card(live_chat_tab, "Tela de chat", "Acompanhe as mensagens da live em tempo real com avatar, plataforma e filtro.")
+    chat_list_card.grid(row=3, column=0, sticky="nsew", padx=12, pady=(8, 12))
+    chat_list_card.columnconfigure(0, weight=1)
+    chat_list_card.rowconfigure(3, weight=1)
+    chat_filter_row = ctk.CTkFrame(chat_list_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
+    chat_filter_row.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 8))
+    chat_filter_row.columnconfigure(1, weight=1)
+    ctk.CTkLabel(chat_filter_row, text="Filtro", text_color=muted, font=("Segoe UI", 12)).grid(
+        row=0, column=0, sticky="w", padx=(0, 10), pady=4
+    )
+    entry(chat_filter_row, chat_filter_var).grid(row=0, column=1, sticky="ew", pady=4)
+    chat_messages_frame = ctk.CTkScrollableFrame(
+        chat_list_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        scrollbar_button_color=border,
+        scrollbar_button_hover_color=accent,
+    )
+    chat_messages_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=18, pady=(0, 18))
+    chat_messages_frame.columnconfigure(0, weight=1)
+
+    commands_settings_col = ctk.CTkFrame(commands_tab, fg_color=bg, corner_radius=0)
+    commands_settings_col.grid(row=0, column=0, sticky="nsew", padx=(12, 8), pady=12)
+    commands_settings_col.columnconfigure(0, weight=1)
+    commands_settings_col.rowconfigure(2, weight=1)
+    commands_list_col = ctk.CTkFrame(commands_tab, fg_color=bg, corner_radius=0)
+    commands_list_col.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=12)
+    commands_list_col.columnconfigure(0, weight=1)
+    commands_list_col.rowconfigure(0, weight=1)
+
+    command_bot_card = card(
+        commands_settings_col,
+        "Bot de comandos",
+        "Detecta comandos no chat lido pelo TikFinity e responde com delay seguro.",
+    )
+    command_bot_card.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+    command_bot_card.columnconfigure(1, weight=1)
+    command_bot_card.columnconfigure(3, weight=1)
+    ctk.CTkCheckBox(
+        command_bot_card,
+        text="Ativar respostas automaticas",
+        variable=chat_commands_enabled_var,
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=2, column=0, columnspan=4, sticky="w", padx=18, pady=(6, 8))
+    section_label(command_bot_card, "Metodo", 3)
+    combo(command_bot_card, bot_delivery_method_var, ["Streamer.bot WebSocket", "Streamer.bot HTTP"], width=210).grid(
+        row=3, column=1, sticky="w", padx=18, pady=5
+    )
+    section_label(command_bot_card, "Delay seguro", 3, column=2)
+    entry(command_bot_card, bot_safe_delay_var, width=90).grid(row=3, column=3, sticky="w", padx=18, pady=5)
+    section_label(command_bot_card, "Cooldown padrao", 4)
+    entry(command_bot_card, bot_default_cooldown_var, width=90).grid(row=4, column=1, sticky="w", padx=18, pady=5)
+    section_label(command_bot_card, "Ignorar usuarios", 4, column=2)
+    entry(command_bot_card, bot_ignore_usernames_var).grid(row=4, column=3, sticky="ew", padx=18, pady=5)
+
+    streamerbot_card = card(
+        commands_settings_col,
+        "Envio para TikFinity",
+        "Configure uma action no Streamer.bot para enviar o argumento {message} ao chatbot do TikFinity.",
+    )
+    streamerbot_card.grid(row=1, column=0, sticky="ew", pady=8)
+    streamerbot_card.columnconfigure(1, weight=1)
+    section_label(streamerbot_card, "WebSocket", 2)
+    entry(streamerbot_card, bot_streamerbot_ws_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    section_label(streamerbot_card, "HTTP", 3)
+    entry(streamerbot_card, bot_streamerbot_http_url_var).grid(row=3, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    section_label(streamerbot_card, "Senha WS", 4)
+    entry(streamerbot_card, bot_streamerbot_password_var, show="*").grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    section_label(streamerbot_card, "Action nome", 5)
+    entry(streamerbot_card, bot_streamerbot_action_name_var).grid(row=5, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    section_label(streamerbot_card, "Action ID", 6)
+    entry(streamerbot_card, bot_streamerbot_action_id_var).grid(row=6, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    streamerbot_actions = ctk.CTkFrame(streamerbot_card, fg_color=panel, corner_radius=0)
+    streamerbot_actions.grid(row=7, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 18))
+    button(streamerbot_actions, "Testar envio", lambda: test_bot_send(), "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
+    button(streamerbot_actions, "Salvar", lambda: save_form(), "ghost", width=86).pack(side=tk.LEFT, padx=(0, 8))
+
+    bot_status_card = ctk.CTkFrame(
+        commands_settings_col,
+        fg_color=panel_alt,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+    )
+    bot_status_card.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
+    for column in range(3):
+        bot_status_card.columnconfigure(column, weight=1)
+    for col, label in enumerate(("Fila", "Ultimo envio", "Status")):
+        ctk.CTkLabel(bot_status_card, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=col, sticky="w", padx=18, pady=(16, 0)
+        )
+    ctk.CTkLabel(bot_status_card, textvariable=bot_queue_count_var, text_color=teal, font=("Segoe UI Semibold", 24)).grid(
+        row=1, column=0, sticky="w", padx=18, pady=(0, 16)
+    )
+    ctk.CTkLabel(bot_status_card, textvariable=bot_last_sent_var, text_color=fg, font=("Segoe UI Semibold", 12)).grid(
+        row=1, column=1, sticky="w", padx=18, pady=(4, 16)
+    )
+    ctk.CTkLabel(bot_status_card, textvariable=bot_status_var, text_color=accent, font=("Segoe UI Semibold", 12)).grid(
+        row=1, column=2, sticky="w", padx=18, pady=(4, 16)
+    )
+
+    commands_card = card(
+        commands_list_col,
+        "Comandos personalizados",
+        "Use variaveis como {user}, {args}, {command}, {platform} e {time}.",
+    )
+    commands_card.grid(row=0, column=0, sticky="nsew")
+    commands_card.columnconfigure(0, weight=1)
+    commands_card.rowconfigure(3, weight=1)
+    commands_header = ctk.CTkFrame(commands_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
+    commands_header.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 0))
+    commands_header.columnconfigure(1, weight=1)
+    commands_header.columnconfigure(2, weight=4)
+    ctk.CTkLabel(commands_header, text="On", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=0, sticky="w", padx=10, pady=9
+    )
+    ctk.CTkLabel(commands_header, text="Comando", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=1, sticky="w", padx=10, pady=9
+    )
+    ctk.CTkLabel(commands_header, text="Resposta", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=2, sticky="w", padx=10, pady=9
+    )
+    ctk.CTkLabel(commands_header, text="Cooldown", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=3, sticky="w", padx=10, pady=9
+    )
+    commands_table_frame = ctk.CTkScrollableFrame(
+        commands_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        scrollbar_button_color=border,
+        scrollbar_button_hover_color=accent,
+    )
+    commands_table_frame.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 12))
+    commands_table_frame.columnconfigure(0, weight=1)
+    commands_actions = ctk.CTkFrame(commands_card, fg_color=panel, corner_radius=0)
+    commands_actions.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 18))
+    button(commands_actions, "Adicionar comando", lambda: add_custom_command_row(), "accent", width=150).pack(side=tk.LEFT, padx=(0, 8))
+    button(commands_actions, "Exemplo", lambda: add_custom_command_row("!pix", "Pix do Aizen: coloque sua chave aqui, {user}.", 45, True), "default", width=96).pack(side=tk.LEFT, padx=(0, 8))
+    button(commands_actions, "Salvar", lambda: save_form(), "ghost", width=86).pack(side=tk.LEFT, padx=(0, 8))
+
+    timers_settings_col = ctk.CTkFrame(timers_tab, fg_color=bg, corner_radius=0)
+    timers_settings_col.grid(row=0, column=0, sticky="nsew", padx=(12, 8), pady=12)
+    timers_settings_col.columnconfigure(0, weight=1)
+    timers_settings_col.rowconfigure(2, weight=1)
+    timers_list_col = ctk.CTkFrame(timers_tab, fg_color=bg, corner_radius=0)
+    timers_list_col.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=12)
+    timers_list_col.columnconfigure(0, weight=1)
+    timers_list_col.rowconfigure(0, weight=1)
+
+    timer_bot_card = card(
+        timers_settings_col,
+        "Temporizador do bot",
+        "Envia mensagens automaticas em intervalos, usando a mesma action configurada na aba Comandos.",
+    )
+    timer_bot_card.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+    timer_bot_card.columnconfigure(1, weight=1)
+    ctk.CTkCheckBox(
+        timer_bot_card,
+        text="Ativar temporizadores",
+        variable=chat_timers_enabled_var,
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=2, column=0, columnspan=2, sticky="w", padx=18, pady=(6, 8))
+    section_label(timer_bot_card, "Intervalo padrao", 3)
+    entry(timer_bot_card, bot_default_timer_interval_var, width=100).grid(row=3, column=1, sticky="w", padx=18, pady=5)
+    section_label(timer_bot_card, "Min. mensagens", 4)
+    entry(timer_bot_card, bot_default_timer_min_messages_var, width=100).grid(row=4, column=1, sticky="w", padx=18, pady=5)
+    ctk.CTkLabel(
+        timer_bot_card,
+        text="Use 300 a 600 segundos para mensagens recorrentes. O delay seguro global continua valendo.",
+        text_color=muted,
+        font=("Segoe UI", 11),
+        wraplength=320,
+        justify="left",
+    ).grid(row=5, column=0, columnspan=2, sticky="w", padx=18, pady=(6, 18))
+
+    timer_status_card = ctk.CTkFrame(
+        timers_settings_col,
+        fg_color=panel_alt,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+    )
+    timer_status_card.grid(row=1, column=0, sticky="ew", pady=8)
+    for column in range(3):
+        timer_status_card.columnconfigure(column, weight=1)
+    for col, label in enumerate(("Ativos", "Proximo", "Status")):
+        ctk.CTkLabel(timer_status_card, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=col, sticky="w", padx=18, pady=(16, 0)
+        )
+    ctk.CTkLabel(timer_status_card, textvariable=timer_active_count_var, text_color=teal, font=("Segoe UI Semibold", 24)).grid(
+        row=1, column=0, sticky="w", padx=18, pady=(0, 16)
+    )
+    ctk.CTkLabel(timer_status_card, textvariable=timer_next_send_var, text_color=fg, font=("Segoe UI Semibold", 12)).grid(
+        row=1, column=1, sticky="w", padx=18, pady=(4, 16)
+    )
+    ctk.CTkLabel(timer_status_card, textvariable=timer_status_var, text_color=accent, font=("Segoe UI Semibold", 12)).grid(
+        row=1, column=2, sticky="w", padx=18, pady=(4, 16)
+    )
+
+    timer_help_card = card(
+        timers_settings_col,
+        "Boas praticas",
+        "Crie mensagens curtas para Discord, LivePix, regras e redes sociais. Evite intervalos agressivos.",
+    )
+    timer_help_card.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
+    ctk.CTkLabel(
+        timer_help_card,
+        text=(
+            "O campo Min. mensagens define quantas mensagens novas precisam aparecer no chat desde o ultimo disparo. "
+            "Com 0, o timer dispara mesmo sem movimento no chat."
+        ),
+        text_color=muted,
+        font=("Segoe UI", 12),
+        wraplength=340,
+        justify="left",
+    ).grid(row=2, column=0, columnspan=4, sticky="new", padx=18, pady=(0, 18))
+
+    timers_card = card(
+        timers_list_col,
+        "Mensagens automaticas",
+        "Configure uma ou mais mensagens recorrentes, com intervalo e regra de atividade independentes.",
+    )
+    timers_card.grid(row=0, column=0, sticky="nsew")
+    timers_card.columnconfigure(0, weight=1)
+    timers_card.rowconfigure(3, weight=1)
+    timers_header = ctk.CTkFrame(timers_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
+    timers_header.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 0))
+    timers_header.columnconfigure(1, weight=1)
+    timers_header.columnconfigure(2, weight=4)
+    ctk.CTkLabel(timers_header, text="On", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=0, sticky="w", padx=10, pady=9
+    )
+    ctk.CTkLabel(timers_header, text="Nome", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=1, sticky="w", padx=10, pady=9
+    )
+    ctk.CTkLabel(timers_header, text="Mensagem", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=2, sticky="w", padx=10, pady=9
+    )
+    ctk.CTkLabel(timers_header, text="Intervalo", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=3, sticky="w", padx=10, pady=9
+    )
+    ctk.CTkLabel(timers_header, text="Min. chat", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+        row=0, column=4, sticky="w", padx=10, pady=9
+    )
+    timers_table_frame = ctk.CTkScrollableFrame(
+        timers_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        scrollbar_button_color=border,
+        scrollbar_button_hover_color=accent,
+    )
+    timers_table_frame.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 12))
+    timers_table_frame.columnconfigure(0, weight=1)
+    timers_actions = ctk.CTkFrame(timers_card, fg_color=panel, corner_radius=0)
+    timers_actions.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 18))
+    button(timers_actions, "Adicionar timer", lambda: add_chat_timer_row(), "accent", width=140).pack(side=tk.LEFT, padx=(0, 8))
+    button(
+        timers_actions,
+        "Exemplo",
+        lambda: add_chat_timer_row("Discord", "Entre no Discord do Aizen: coloque seu convite aqui.", 600, 6, True),
+        "default",
+        width=96,
+    ).pack(side=tk.LEFT, padx=(0, 8))
+    button(timers_actions, "Salvar", lambda: save_form(), "ghost", width=86).pack(side=tk.LEFT, padx=(0, 8))
+
+    raffle_left = ctk.CTkScrollableFrame(
+        raffle_body,
+        fg_color=bg,
+        corner_radius=0,
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
+    )
+    raffle_left.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+    raffle_left.columnconfigure(0, weight=1)
+    raffle_left.rowconfigure(1, weight=1)
+
+    raffle_controls = card(raffle_left, "Configurar sorteio", "Use eventos do app para entrar participantes automaticamente pelo comando ativo.")
+    raffle_controls.grid(row=0, column=0, sticky="new", padx=12, pady=(12, 8))
+    section_label(raffle_controls, "Fonte do sorteio", 2)
+    combo(raffle_controls, raffle_source_mode_var, ["Eventos do app", "URL do chat (legado)"], width=210).grid(
+        row=2, column=1, sticky="w", padx=18, pady=5
+    )
+    section_label(raffle_controls, "URL do chat legado", 3)
+    entry(raffle_controls, tikfinity_url_var).grid(row=3, column=1, sticky="ew", padx=18, pady=5)
+    section_label(raffle_controls, "Comando", 4)
+    entry(raffle_controls, raffle_command_var, width=160).grid(row=4, column=1, sticky="w", padx=18, pady=5)
+    section_label(raffle_controls, "Minutos", 5)
+    entry(raffle_controls, raffle_minutes_var, width=92).grid(row=5, column=1, sticky="w", padx=18, pady=5)
+    section_label(raffle_controls, "Entradas por tipo", 6)
+    raffle_entries_row = ctk.CTkFrame(raffle_controls, fg_color=panel, corner_radius=0)
+    raffle_entries_row.grid(row=6, column=1, sticky="ew", padx=18, pady=5)
+    for column in range(10):
+        raffle_entries_row.columnconfigure(column, weight=1 if column in {1, 3, 5, 7, 9} else 0)
+    ctk.CTkLabel(raffle_entries_row, text="Normal", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=0, column=0, sticky="w", padx=(0, 6)
+    )
+    entry(raffle_entries_row, raffle_entries_normal_var, width=54).grid(row=0, column=1, sticky="w", padx=(0, 12))
+    ctk.CTkLabel(raffle_entries_row, text="Fã", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=0, column=2, sticky="w", padx=(0, 6)
+    )
+    entry(raffle_entries_row, raffle_entries_fan_var, width=54).grid(row=0, column=3, sticky="w", padx=(0, 12))
+    ctk.CTkLabel(raffle_entries_row, text="Super fã", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=0, column=4, sticky="w", padx=(0, 6)
+    )
+    entry(raffle_entries_row, raffle_entries_super_fan_var, width=54).grid(row=0, column=5, sticky="w", padx=(0, 12))
+    ctk.CTkLabel(raffle_entries_row, text="Gift", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=0, column=6, sticky="w", padx=(0, 6)
+    )
+    entry(raffle_entries_row, raffle_entries_gift_var, width=54).grid(row=0, column=7, sticky="w", padx=(0, 12))
+    ctk.CTkLabel(raffle_entries_row, text="Sub", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=0, column=8, sticky="w", padx=(0, 6)
+    )
+    entry(raffle_entries_row, raffle_entries_sub_var, width=54).grid(row=0, column=9, sticky="w")
+
+    section_label(raffle_controls, "Anti-fraude", 7)
+    anti_fraud_row = ctk.CTkFrame(raffle_controls, fg_color=panel, corner_radius=0)
+    anti_fraud_row.grid(row=7, column=1, sticky="ew", padx=18, pady=5)
+    anti_fraud_row.columnconfigure(1, weight=1)
+    ctk.CTkLabel(anti_fraud_row, text="Cooldown", text_color=muted, font=("Segoe UI", 11)).grid(
+        row=0, column=0, sticky="w", padx=(0, 6)
+    )
+    entry(anti_fraud_row, raffle_cooldown_var, width=64).grid(row=0, column=1, sticky="w", padx=(0, 14))
+    ctk.CTkCheckBox(
+        anti_fraud_row,
+        text="Incluir moderador",
+        variable=raffle_include_moderators_var,
+        fg_color=accent,
+        hover_color=accent_hover,
+        text_color=fg,
+    ).grid(row=0, column=2, sticky="w")
+
+    metrics = ctk.CTkFrame(raffle_controls, fg_color=field, corner_radius=12, border_width=1, border_color=border)
+    metrics.grid(row=8, column=0, columnspan=2, sticky="ew", padx=18, pady=(14, 8))
+    metrics.columnconfigure(0, weight=1)
+    metrics.columnconfigure(1, weight=1)
+    metrics.columnconfigure(2, weight=1)
+    metrics.columnconfigure(3, weight=1)
+    for col, label in enumerate(("Tempo", "Participantes", "Entradas", "Estado")):
+        ctk.CTkLabel(metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(row=0, column=col, sticky="w", padx=14, pady=(12, 0))
+    ctk.CTkLabel(metrics, textvariable=raffle_timer_var, text_color=teal, font=("Segoe UI Semibold", 25)).grid(row=1, column=0, sticky="w", padx=14, pady=(0, 14))
+    ctk.CTkLabel(metrics, textvariable=raffle_count_var, text_color=teal, font=("Segoe UI Semibold", 25)).grid(row=1, column=1, sticky="w", padx=14, pady=(0, 14))
+    ctk.CTkLabel(metrics, textvariable=raffle_entries_var, text_color=teal, font=("Segoe UI Semibold", 25)).grid(row=1, column=2, sticky="w", padx=14, pady=(0, 14))
+    ctk.CTkLabel(metrics, textvariable=raffle_state_var, text_color=accent, font=("Segoe UI Semibold", 14)).grid(row=1, column=3, sticky="w", padx=14, pady=(4, 14))
+
+    raffle_buttons = ctk.CTkFrame(raffle_controls, fg_color=panel, corner_radius=0)
+    raffle_buttons.grid(row=9, column=0, columnspan=2, sticky="ew", padx=18, pady=(10, 18))
+
+    layout_controls = ctk.CTkFrame(raffle_controls, fg_color=field, corner_radius=12, border_width=1, border_color=border)
+    layout_controls.grid(row=10, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 18))
+    layout_controls.columnconfigure(1, weight=1)
+    layout_controls.columnconfigure(3, weight=1)
+    ctk.CTkLabel(
+        layout_controls,
+        text="Personalizar janelas",
+        text_color=fg,
+        font=("Segoe UI Semibold", 13),
+    ).grid(row=0, column=0, columnspan=4, sticky="w", padx=14, pady=(12, 4))
+
+    queue_size_label = ctk.CTkLabel(layout_controls, textvariable=queue_size_text, text_color=muted, font=("Segoe UI", 11))
+    event_size_label = ctk.CTkLabel(layout_controls, textvariable=event_size_text, text_color=muted, font=("Segoe UI", 11))
+    winner_size_label = ctk.CTkLabel(layout_controls, textvariable=winner_size_text, text_color=muted, font=("Segoe UI", 11))
+    font_size_label = ctk.CTkLabel(layout_controls, textvariable=font_size_text, text_color=muted, font=("Segoe UI", 11))
+
+    ctk.CTkLabel(layout_controls, text="Fila", text_color=muted, font=("Segoe UI", 11)).grid(row=1, column=0, sticky="w", padx=14, pady=4)
+    ctk.CTkLabel(layout_controls, text="Eventos", text_color=muted, font=("Segoe UI", 11)).grid(row=2, column=0, sticky="w", padx=14, pady=4)
+    ctk.CTkLabel(layout_controls, text="Vencedor", text_color=muted, font=("Segoe UI", 11)).grid(row=1, column=2, sticky="w", padx=(14, 8), pady=4)
+    ctk.CTkLabel(layout_controls, text="Fonte", text_color=muted, font=("Segoe UI", 11)).grid(row=2, column=2, sticky="w", padx=(14, 8), pady=4)
+
+    queue_slider = ctk.CTkSlider(layout_controls, from_=240, to=900, number_of_steps=66, variable=participants_height_var)
+    event_slider = ctk.CTkSlider(layout_controls, from_=90, to=360, number_of_steps=27, variable=events_height_var)
+    winner_slider = ctk.CTkSlider(layout_controls, from_=260, to=520, number_of_steps=26, variable=winner_width_var)
+    font_slider = ctk.CTkSlider(layout_controls, from_=10, to=20, number_of_steps=10, variable=raffle_font_size_var)
+    queue_slider.grid(row=1, column=1, sticky="ew", padx=8, pady=4)
+    event_slider.grid(row=2, column=1, sticky="ew", padx=8, pady=(4, 14))
+    winner_slider.grid(row=1, column=3, sticky="ew", padx=8, pady=4)
+    font_slider.grid(row=2, column=3, sticky="ew", padx=8, pady=(4, 14))
+    queue_size_label.grid(row=1, column=4, sticky="e", padx=(4, 14), pady=4)
+    event_size_label.grid(row=2, column=4, sticky="e", padx=(4, 14), pady=(4, 14))
+    winner_size_label.grid(row=1, column=5, sticky="e", padx=(4, 14), pady=4)
+    font_size_label.grid(row=2, column=5, sticky="e", padx=(4, 14), pady=(4, 14))
+    layout_controls.grid_remove()
+
+    winner_card = ctk.CTkFrame(
+        raffle_left,
+        fg_color=panel_alt,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+    )
+    winner_card.grid(row=1, column=0, sticky="nsew", padx=12, pady=(8, 12))
+    winner_card.columnconfigure(0, weight=1)
+    winner_card.rowconfigure(5, weight=1)
+    ctk.CTkLabel(winner_card, text="VENCEDOR", text_color=muted, font=("Segoe UI Semibold", 12)).grid(row=0, column=0, sticky="w", padx=24, pady=(24, 0))
+    wheel_canvas = tk.Canvas(
+        winner_card,
+        height=138,
+        bg=panel_alt,
+        highlightthickness=0,
+        bd=0,
+    )
+    wheel_canvas.grid(row=1, column=0, sticky="ew", padx=18, pady=(14, 0))
+    winner_avatar_label = make_avatar_label(winner_card, "-", "", size=92)
+    winner_avatar_label.grid(row=2, column=0, sticky="n", padx=24, pady=(18, 8))
+    winner_label = ctk.CTkLabel(
+        winner_card,
+        textvariable=raffle_winner_var,
+        text_color=accent,
+        font=("Segoe UI Semibold", 34),
+        wraplength=430,
+        justify="center",
+    )
+    winner_label.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 12))
+    ctk.CTkLabel(
+        winner_card,
+        text="Após o sorteio, só as mensagens do vencedor aparecem abaixo.",
+        text_color=muted,
+        font=("Segoe UI", 11),
+        wraplength=430,
+    ).grid(row=4, column=0, sticky="ew", padx=24, pady=(0, 12))
+    winner_messages_text = ctk.CTkTextbox(
+        winner_card,
+        height=130,
+        wrap="word",
+        fg_color=field,
+        text_color=fg,
+        border_width=1,
+        border_color=border,
+        corner_radius=10,
+        font=("Segoe UI", 11),
+    )
+    winner_messages_text.grid(row=5, column=0, sticky="nsew", padx=24, pady=(0, 24))
+    winner_messages_text.insert("end", "As mensagens do vencedor aparecerão aqui.\n")
+    winner_messages_text.configure(state="disabled")
+
+    participant_card = card(raffle_body, "Fila do sorteio", "Participantes únicos capturados pelo comando ativo.")
+    participant_card.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=(12, 12))
+    participant_card.rowconfigure(2, weight=1)
+    participant_card.columnconfigure(0, weight=1)
+    participants_frame = ctk.CTkScrollableFrame(
+        participant_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        scrollbar_button_color="#3a1518",
+        scrollbar_button_hover_color="#5a1d22",
+    )
+    participants_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=18, pady=(8, 18))
+    participants_frame.columnconfigure(0, weight=1)
+
+    log_card = ctk.CTkFrame(events_tab, fg_color=panel, corner_radius=12, border_width=1, border_color=border)
+    log_card.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+    log_card.columnconfigure(0, weight=1)
+    log_card.rowconfigure(1, weight=1)
+    ctk.CTkLabel(
+        log_card,
+        text="Eventos",
+        text_color=fg,
+        font=("Segoe UI Semibold", 16),
+    ).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 6))
+    log_text = ctk.CTkTextbox(
+        log_card,
+        height=280,
+        wrap="word",
+        fg_color=field,
+        text_color=fg,
+        border_width=1,
+        border_color=border,
+        corner_radius=10,
+        font=("Consolas", 9),
+    )
+    log_text.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 18))
+    log_text.configure(state="disabled")
+
+    def layout_value(var: tk.IntVar, min_value: int, max_value: int) -> int:
+        return max(min_value, min(max_value, int(float(var.get()))))
+
+    def apply_layout_settings(_value: float | None = None) -> None:
+        participants_height = layout_value(participants_height_var, 240, 900)
+        events_height = layout_value(events_height_var, 90, 360)
+        winner_width = layout_value(winner_width_var, 260, 520)
+        font_size = layout_value(raffle_font_size_var, 10, 20)
+
+        queue_size_text.set(f"{participants_height}px")
+        event_size_text.set(f"{events_height}px")
+        winner_size_text.set(f"{winner_width}px")
+        font_size_text.set(f"{font_size}px")
+
+        winner_card.configure(width=winner_width)
+        winner_label.configure(font=("Segoe UI Semibold", max(24, font_size + 18)), wraplength=max(220, winner_width - 60))
+        winner_messages_text.configure(height=max(110, int(participants_height * 0.45)), font=("Segoe UI", font_size))
+        log_text.configure(height=events_height, font=("Consolas", max(9, font_size - 2)))
+
+        participant_card.grid_propagate(True)
+        ff_queue_card.grid_propagate(True)
+        winner_card.grid_propagate(False)
+        log_card.grid_propagate(True)
+
+        try:
+            if hasattr(refresh_participant_list, "_items"):
+                delattr(refresh_participant_list, "_items")
+            refresh_participant_list(raffle_worker.participant_items() if raffle_worker else [])
+        except NameError:
+            pass
+
+    queue_slider.configure(command=apply_layout_settings)
+    event_slider.configure(command=apply_layout_settings)
+    winner_slider.configure(command=apply_layout_settings)
+    font_slider.configure(command=apply_layout_settings)
+    apply_layout_settings()
+
+    def sorted_rank_players(players: list[PlayerKill]) -> list[PlayerKill]:
+        merged: dict[str, PlayerKill] = {}
+        order: list[str] = []
+        for player in players:
+            name = player.name.strip()
+            if not name:
+                continue
+            key = normalize_player_key(name)
+            if key not in merged:
+                merged[key] = PlayerKill(name=name, kills=max(0, normalize_kill_value(player.kills)))
+                order.append(key)
+            else:
+                merged[key].kills = max(merged[key].kills, normalize_kill_value(player.kills))
+        return sorted((merged[key] for key in order), key=lambda item: (-item.kills, normalize_player_key(item.name)))
+
+    def current_kills_rank_players() -> list[PlayerKill]:
+        if kills_rank_mode_var.get() == "Geral":
+            return kills_global_ranking
+        return kills_daily_ranking
+
+    def refresh_kills_rank_table() -> None:
+        for widget in kills_rank_rows:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        kills_rank_rows.clear()
+
+        players = current_kills_rank_players()
+        mode = "geral" if kills_rank_mode_var.get() == "Geral" else "diario"
+        kills_rank_title_var.set(f"Ranking {mode}")
+        kills_rank_count_var.set(str(len(players)))
+        kills_rank_total_var.set(str(sum(player.kills for player in players)))
+
+        if not players:
+            empty = ctk.CTkLabel(
+                kills_rank_table_frame,
+                text="Busque o painel Jarvis para carregar o ranking.",
+                text_color=muted,
+                font=("Segoe UI", 12),
+                anchor="w",
+            )
+            empty.grid(row=0, column=0, sticky="ew", padx=14, pady=14)
+            kills_rank_rows.append(empty)
+            return
+
+        for index, player in enumerate(players[:150], start=1):
+            row_frame = ctk.CTkFrame(
+                kills_rank_table_frame,
+                fg_color="#171014" if index % 2 else "#0f0b0e",
+                corner_radius=10,
+            )
+            row_frame.grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
+            row_frame.columnconfigure(1, weight=1)
+            medal_color = accent if index <= 3 else muted
+            ctk.CTkLabel(
+                row_frame,
+                text=f"{index:02d}",
+                text_color=medal_color,
+                font=("Segoe UI Semibold", 12),
+                width=42,
+            ).grid(row=0, column=0, sticky="w", padx=(12, 6), pady=8)
+            ctk.CTkLabel(
+                row_frame,
+                text=player.name,
+                text_color=fg,
+                font=("Segoe UI Semibold", 12),
+                anchor="w",
+            ).grid(row=0, column=1, sticky="ew", padx=6, pady=8)
+            ctk.CTkLabel(
+                row_frame,
+                text=str(player.kills),
+                text_color=teal,
+                font=("Segoe UI Semibold", 14),
+                width=72,
+            ).grid(row=0, column=2, sticky="e", padx=(6, 12), pady=8)
+            kills_rank_rows.append(row_frame)
+
+    def apply_kills_rankings(state: RealtimeState) -> None:
+        nonlocal kills_daily_ranking, kills_global_ranking
+        kills_daily_ranking = sorted_rank_players(state.daily_ranking or [])
+        kills_global_ranking = sorted_rank_players(state.global_ranking or state.players or [])
+        refresh_kills_rank_table()
+
+    def manual_signature(players: list[PlayerKill]) -> str:
+        return json.dumps(player_payload(players), ensure_ascii=False, sort_keys=True)
+
+    def poll_interval_seconds() -> int:
+        try:
+            value = int(float(poll_seconds_var.get().replace(",", ".")))
+        except ValueError:
+            value = 2
+        return max(1, min(60, value))
+
+    def collect_manual_players() -> list[PlayerKill]:
+        players: list[PlayerKill] = []
+        seen: set[str] = set()
+        for row in manual_rows:
+            name = row["name_var"].get().strip()
+            if not name:
+                continue
+            key = normalize_player_key(name)
+            if key in seen:
+                continue
+            seen.add(key)
+            players.append(PlayerKill(name=name, kills=normalize_kill_value(row["kills_var"].get())))
+        return players
+
+    def update_manual_metrics() -> None:
+        players = collect_manual_players()
+        count_value = manual_remote_count_override if manual_remote_count_override is not None else len(players)
+        total_value = manual_remote_total_override if manual_remote_total_override is not None else sum(player.kills for player in players)
+        manual_count_var.set(str(count_value))
+        manual_total_var.set(str(total_value))
+        try:
+            refresh_ff_overlay()
+        except NameError:
+            pass
+
+    def clear_manual_metric_overrides() -> None:
+        nonlocal manual_remote_count_override, manual_remote_total_override
+        manual_remote_count_override = None
+        manual_remote_total_override = None
+
+    def update_manual_row_numbers() -> None:
+        for index, row in enumerate(manual_rows, start=1):
+            row["frame"].grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
+            row["index_label"].configure(text=f"{index:02d}")
+
+    def schedule_manual_sync(delay_ms: int = 700) -> None:
+        nonlocal manual_sync_after_id
+        if app_closing:
+            return
+        if manual_applying_remote or not sync_enabled_var.get():
+            return
+        if manual_sync_after_id is not None:
+            try:
+                root.after_cancel(manual_sync_after_id)
+            except tk.TclError:
+                pass
+        manual_sync_after_id = root.after(delay_ms, lambda: send_manual_kills(force=False))
+
+    def on_manual_change(*_args: Any) -> None:
+        nonlocal manual_last_local_edit_at
+        if manual_applying_remote:
+            return
+        clear_manual_metric_overrides()
+        manual_last_local_edit_at = time.monotonic()
+        update_manual_metrics()
+        manual_status_var.set("Editando")
+        schedule_manual_sync()
+
+    def manual_autocomplete_key(value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", str(value or "").casefold())
+        ascii_text = "".join(character for character in normalized if not unicodedata.combining(character))
+        return re.sub(r"[^a-z0-9]+", " ", ascii_text).strip()
+
+    def manual_name_match_score(query: str, candidate: str) -> float:
+        query_key = manual_autocomplete_key(query)
+        candidate_key = manual_autocomplete_key(candidate)
+        if not query_key or not candidate_key:
+            return 0.0
+        if query_key == candidate_key:
+            return 120.0
+        if candidate_key.startswith(query_key):
+            return 110.0 - min(len(candidate_key) / 100.0, 8.0)
+        candidate_words = candidate_key.split()
+        if any(word.startswith(query_key) for word in candidate_words):
+            return 100.0
+        if query_key in candidate_key:
+            return 90.0
+        query_words = query_key.split()
+        if query_words and all(any(word in candidate_word for candidate_word in candidate_words) for word in query_words):
+            return 78.0
+        similarity = SequenceMatcher(None, query_key, candidate_key).ratio()
+        if similarity >= 0.48:
+            return 55.0 + similarity * 30.0
+        return 0.0
+
+    def manual_name_suggestions(row: dict[str, Any], query: str, limit: int = 5) -> list[tuple[str, int, float]]:
+        seen: set[str] = set()
+        ranked: list[tuple[str, int, float]] = []
+        for candidate_row in manual_rows:
+            if candidate_row is row:
+                continue
+            candidate_name = candidate_row["name_var"].get().strip()
+            if not candidate_name:
+                continue
+            key = normalize_player_key(candidate_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            score = manual_name_match_score(query, candidate_name)
+            if score <= 0:
+                continue
+            ranked.append((candidate_name, normalize_kill_value(candidate_row["kills_var"].get()), score))
+        ranked.sort(key=lambda item: (-item[2], manual_autocomplete_key(item[0])))
+        return ranked[:limit]
+
+    def hide_manual_name_suggestions(row: dict[str, Any]) -> None:
+        suggestion_frame = row.get("suggestion_frame")
+        if not suggestion_frame:
+            return
+        for widget in suggestion_frame.winfo_children():
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        try:
+            suggestion_frame.grid_remove()
+        except tk.TclError:
+            pass
+
+    def apply_manual_name_suggestion(row: dict[str, Any], selected_name: str) -> None:
+        row["name_var"].set(selected_name)
+        hide_manual_name_suggestions(row)
+        try:
+            row["name_entry"].focus_set()
+            row["name_entry"].icursor(tk.END)
+        except tk.TclError:
+            pass
+
+    def refresh_manual_name_suggestions(row: dict[str, Any]) -> None:
+        if manual_applying_remote:
+            hide_manual_name_suggestions(row)
+            return
+        query = row["name_var"].get().strip()
+        if len(manual_autocomplete_key(query)) < 1:
+            hide_manual_name_suggestions(row)
+            return
+        suggestions = manual_name_suggestions(row, query)
+        suggestion_frame = row.get("suggestion_frame")
+        if suggestion_frame is None:
+            return
+        for widget in suggestion_frame.winfo_children():
+            widget.destroy()
+        if not suggestions:
+            hide_manual_name_suggestions(row)
+            return
+        suggestion_frame.grid()
+        ctk.CTkLabel(
+            suggestion_frame,
+            text="Sugestões da tabela - clique ou pressione Enter",
+            text_color=muted,
+            font=("Segoe UI", 10),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(7, 2))
+        for index, (candidate_name, candidate_kills, score) in enumerate(suggestions):
+            item = ctk.CTkFrame(
+                suggestion_frame,
+                fg_color="#211116" if index == 0 else "#151015",
+                corner_radius=8,
+                border_width=1 if index == 0 else 0,
+                border_color=accent,
+            )
+            item.grid(row=index + 1, column=0, sticky="ew", padx=4, pady=(4 if index == 0 else 2, 2))
+            item.columnconfigure(0, weight=1)
+            button_text = f"{candidate_name}   {candidate_kills} kill{'s' if candidate_kills != 1 else ''}"
+            suggestion_button = ctk.CTkButton(
+                item,
+                text=button_text,
+                command=lambda name=candidate_name, target_row=row: apply_manual_name_suggestion(target_row, name),
+                height=30,
+                fg_color="transparent",
+                hover_color="#30151b",
+                text_color=fg,
+                anchor="w",
+                corner_radius=7,
+                font=("Segoe UI Semibold", 12),
+            )
+            suggestion_button.grid(row=0, column=0, sticky="ew", padx=3, pady=3)
+            ctk.CTkLabel(
+                item,
+                text="exato" if score >= 120 else "parecido",
+                text_color=teal if score >= 100 else muted,
+                font=("Segoe UI", 10),
+            ).grid(row=0, column=1, sticky="e", padx=(4, 10), pady=3)
+
+    def select_first_manual_name_suggestion(row: dict[str, Any]) -> str | None:
+        suggestions = manual_name_suggestions(row, row["name_var"].get().strip(), limit=1)
+        if not suggestions:
+            return None
+        apply_manual_name_suggestion(row, suggestions[0][0])
+        return "break"
+
+    def add_manual_row(name: str = "", kills: int = 0, notify: bool = True) -> None:
+        row_index = len(manual_rows)
+        row_frame = ctk.CTkFrame(
+            manual_table_frame,
+            fg_color="#171014" if row_index % 2 == 0 else "#0f0b0e",
+            corner_radius=10,
+        )
+        row_frame.columnconfigure(1, weight=1)
+
+        index_label = ctk.CTkLabel(
+            row_frame,
+            text=f"{row_index + 1:02d}",
+            text_color=muted,
+            font=("Segoe UI Semibold", 12),
+            width=38,
+        )
+        index_label.grid(row=0, column=0, sticky="w", padx=(12, 6), pady=8)
+
+        name_var = tk.StringVar(value=name)
+        kills_var = tk.StringVar(value=str(normalize_kill_value(kills)))
+        name_cell = ctk.CTkFrame(row_frame, fg_color="transparent", corner_radius=0)
+        name_cell.grid(row=0, column=1, sticky="ew", padx=6, pady=8)
+        name_cell.columnconfigure(0, weight=1)
+        name_entry = entry(name_cell, name_var)
+        name_entry.grid(row=0, column=0, sticky="ew")
+        suggestion_frame = ctk.CTkFrame(
+            name_cell,
+            fg_color="#0a080b",
+            corner_radius=10,
+            border_width=1,
+            border_color=border,
+        )
+        suggestion_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        suggestion_frame.columnconfigure(0, weight=1)
+        suggestion_frame.grid_remove()
+        entry(row_frame, kills_var, width=78).grid(row=0, column=2, sticky="w", padx=6, pady=8)
+
+        row: dict[str, Any] = {}
+
+        def adjust(delta: int) -> None:
+            kills_var.set(str(max(0, normalize_kill_value(kills_var.get()) + delta)))
+
+        def remove() -> None:
+            remove_manual_row(row)
+
+        button(row_frame, "-", lambda: adjust(-1), "ghost", width=42).grid(row=0, column=3, padx=(6, 2), pady=8)
+        button(row_frame, "+", lambda: adjust(1), "accent", width=42).grid(row=0, column=4, padx=2, pady=8)
+        button(row_frame, "Remover", remove, "danger", width=92).grid(row=0, column=5, padx=(6, 12), pady=8)
+
+        row.update(
+            {
+                "frame": row_frame,
+                "index_label": index_label,
+                "name_var": name_var,
+                "name_entry": name_entry,
+                "suggestion_frame": suggestion_frame,
+                "kills_var": kills_var,
+            }
+        )
+        manual_rows.append(row)
+        name_var.trace_add(
+            "write",
+            lambda *_args, target_row=row: (on_manual_change(), refresh_manual_name_suggestions(target_row)),
+        )
+        kills_var.trace_add("write", on_manual_change)
+        name_entry.bind("<FocusIn>", lambda _event, target_row=row: refresh_manual_name_suggestions(target_row))
+        name_entry.bind("<FocusOut>", lambda _event, target_row=row: root.after(140, lambda: hide_manual_name_suggestions(target_row)))
+        name_entry.bind("<Return>", lambda _event, target_row=row: select_first_manual_name_suggestion(target_row))
+        update_manual_row_numbers()
+        update_manual_metrics()
+        if notify:
+            on_manual_change()
+
+    def remove_manual_row(row: dict[str, Any]) -> None:
+        if row not in manual_rows:
+            return
+        manual_rows.remove(row)
+        row["frame"].destroy()
+        if not manual_rows:
+            add_manual_row(notify=False)
+        update_manual_row_numbers()
+        update_manual_metrics()
+        on_manual_change()
+
+    def set_manual_players(
+        players: list[PlayerKill],
+        minimum_rows: int = 8,
+        total_players: int | None = None,
+        total_kills: int | None = None,
+    ) -> None:
+        nonlocal manual_applying_remote, manual_remote_count_override, manual_remote_total_override
+        manual_applying_remote = True
+        manual_remote_count_override = total_players
+        manual_remote_total_override = total_kills
+        try:
+            for row in manual_rows:
+                row["frame"].destroy()
+            manual_rows.clear()
+            for player in players:
+                add_manual_row(player.name, player.kills, notify=False)
+            while len(manual_rows) < minimum_rows:
+                add_manual_row(notify=False)
+            update_manual_row_numbers()
+            update_manual_metrics()
+        finally:
+            manual_applying_remote = False
+
+    def clear_manual_table() -> None:
+        set_manual_players([])
+        manual_status_var.set("Tabela limpa")
+        on_manual_change()
+
+    def reset_manual_kills() -> None:
+        clear_manual_metric_overrides()
+        for row in manual_rows:
+            row["kills_var"].set("0")
+        update_manual_metrics()
+        manual_status_var.set("Kills zeradas")
+
+    def queue_summary_items(entries: list[FFQueueEntry]) -> list[dict[str, Any]]:
+        grouped: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for entry_item in entries:
+            name = entry_item.name.strip()
+            status = normalize_queue_status(entry_item.status)
+            if not name or status == "Concluido":
+                continue
+            key = normalize_player_key(name)
+            if key not in grouped:
+                grouped[key] = {
+                    "name": name,
+                    "rooms": 0,
+                    "waiting": 0,
+                    "called": 0,
+                    "playing": 0,
+                }
+                order.append(key)
+            rooms = max(1, normalize_kill_value(entry_item.rooms))
+            grouped[key]["rooms"] += rooms
+            if status == "Jogando":
+                grouped[key]["playing"] += rooms
+            elif status == "Chamado":
+                grouped[key]["called"] += rooms
+            else:
+                grouped[key]["waiting"] += rooms
+        return [grouped[key] for key in order]
+
+    def refresh_ff_queue_summary(entries: list[FFQueueEntry] | None = None) -> None:
+        items = queue_summary_items(entries if entries is not None else collect_ff_queue_entries())
+        signature = [
+            (
+                item["name"],
+                item["rooms"],
+                item["waiting"],
+                item["called"],
+                item["playing"],
+            )
+            for item in items
+        ]
+        if getattr(refresh_ff_queue_summary, "_signature", None) == signature:
+            return
+        refresh_ff_queue_summary._signature = signature  # type: ignore[attr-defined]
+
+        for widget in ff_queue_summary_widgets:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        ff_queue_summary_widgets.clear()
+
+        ff_queue_summary_count_var.set(str(len(items)))
+        ff_queue_summary_rooms_var.set(str(sum(int(item["rooms"]) for item in items)))
+
+    def ff_queue_signature(entries: list[FFQueueEntry]) -> str:
+        return json.dumps(ff_queue_payload(entries), ensure_ascii=False, sort_keys=True)
+
+    def ff_queue_poll_interval_seconds() -> int:
+        try:
+            value = int(float(ff_queue_poll_seconds_var.get().replace(",", ".")))
+        except ValueError:
+            value = 2
+        return max(1, min(60, value))
+
+    def collect_ff_queue_entries() -> list[FFQueueEntry]:
+        entries: list[FFQueueEntry] = []
+        for row in ff_queue_rows:
+            name = row["name_var"].get().strip()
+            if not name:
+                continue
+            entries.append(
+                FFQueueEntry(
+                    name=name,
+                    note=row["note_var"].get().strip(),
+                    status=normalize_queue_status(row["status_var"].get()),
+                    rooms=max(1, normalize_kill_value(row["rooms_var"].get())),
+                    user_id=str(row.get("user_id", "") or "").strip(),
+                    panel_user_id=str(row.get("panel_user_id", "") or "").strip(),
+                    ff_player_id=str(row.get("ff_player_id", "") or "").strip(),
+                )
+            )
+        return merge_ff_queue_entries(entries)
+
+    def update_ff_queue_metrics() -> None:
+        entries = collect_ff_queue_entries()
+        ff_queue_count_var.set(str(sum(1 for entry in entries if entry.status != "Concluido")))
+        ff_queue_playing_var.set(str(sum(1 for entry in entries if entry.status == "Jogando")))
+        refresh_ff_queue_summary(entries)
+        try:
+            refresh_ff_overlay()
+        except NameError:
+            pass
+
+    def update_ff_queue_row_numbers() -> None:
+        for index, row in enumerate(ff_queue_rows, start=1):
+            row["frame"].grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
+            row["index_label"].configure(text=f"{index:02d}")
+
+    def schedule_ff_queue_sync(delay_ms: int = 700) -> None:
+        nonlocal ff_queue_sync_after_id
+        if app_closing:
+            return
+        if ff_queue_applying_remote or not ff_queue_enabled_var.get():
+            return
+        if ff_queue_sync_after_id is not None:
+            try:
+                root.after_cancel(ff_queue_sync_after_id)
+            except tk.TclError:
+                pass
+        ff_queue_sync_after_id = root.after(delay_ms, lambda: send_ff_queue(force=False))
+
+    def on_ff_queue_change(*_args: Any) -> None:
+        nonlocal ff_queue_last_local_edit_at
+        if ff_queue_applying_remote:
+            return
+        ff_queue_last_local_edit_at = time.monotonic()
+        update_ff_queue_metrics()
+        ff_queue_status_var.set("Editando")
+        schedule_ff_queue_sync()
+
+    def move_ff_queue_row(row: dict[str, Any], delta: int) -> None:
+        if row not in ff_queue_rows:
+            return
+        index = ff_queue_rows.index(row)
+        new_index = max(0, min(len(ff_queue_rows) - 1, index + delta))
+        if index == new_index:
+            return
+        ff_queue_rows[index], ff_queue_rows[new_index] = ff_queue_rows[new_index], ff_queue_rows[index]
+        update_ff_queue_row_numbers()
+        on_ff_queue_change()
+
+    def add_ff_queue_row(
+        name: str = "",
+        note: str = "",
+        status: str = "Na fila",
+        rooms: int = 1,
+        notify: bool = True,
+        user_id: str = "",
+        panel_user_id: str = "",
+        ff_player_id: str = "",
+    ) -> None:
+        row_index = len(ff_queue_rows)
+        row_frame = ctk.CTkFrame(
+            ff_queue_table_frame,
+            fg_color="#171014" if row_index % 2 == 0 else "#0f0b0e",
+            corner_radius=12,
+        )
+        row_frame.columnconfigure(1, weight=2)
+        row_frame.columnconfigure(2, weight=1)
+
+        index_label = ctk.CTkLabel(
+            row_frame,
+            text=f"{row_index + 1:02d}",
+            text_color=muted,
+            font=("Segoe UI Semibold", 12),
+            width=38,
+        )
+        index_label.grid(row=0, column=0, sticky="w", padx=(12, 6), pady=8)
+
+        name_var = tk.StringVar(value=name)
+        note_var = tk.StringVar(value=note)
+        status_var = tk.StringVar(value=normalize_queue_status(status))
+        rooms_var = tk.StringVar(value=str(max(1, normalize_kill_value(rooms))))
+        entry(row_frame, name_var).grid(row=0, column=1, sticky="ew", padx=6, pady=8)
+        entry(row_frame, note_var).grid(row=0, column=2, sticky="ew", padx=6, pady=8)
+        entry(row_frame, rooms_var, width=72).grid(row=0, column=3, sticky="w", padx=6, pady=8)
+        combo(row_frame, status_var, FF_QUEUE_STATUSES, width=130).grid(row=0, column=4, sticky="w", padx=6, pady=8)
+
+        row: dict[str, Any] = {}
+
+        def remove() -> None:
+            remove_ff_queue_row(row)
+
+        button(row_frame, "↑", lambda: move_ff_queue_row(row, -1), "ghost", width=38).grid(row=0, column=5, padx=(6, 2), pady=8)
+        button(row_frame, "↓", lambda: move_ff_queue_row(row, 1), "ghost", width=38).grid(row=0, column=6, padx=2, pady=8)
+        button(row_frame, "Remover", remove, "danger", width=92).grid(row=0, column=7, padx=(6, 12), pady=8)
+
+        row.update(
+            {
+                "frame": row_frame,
+                "index_label": index_label,
+                "name_var": name_var,
+                "note_var": note_var,
+                "rooms_var": rooms_var,
+                "status_var": status_var,
+                "user_id": str(user_id or "").strip(),
+                "panel_user_id": str(panel_user_id or "").strip(),
+                "ff_player_id": str(ff_player_id or "").strip(),
+            }
+        )
+        ff_queue_rows.append(row)
+        name_var.trace_add("write", on_ff_queue_change)
+        note_var.trace_add("write", on_ff_queue_change)
+        rooms_var.trace_add("write", on_ff_queue_change)
+        status_var.trace_add("write", on_ff_queue_change)
+        update_ff_queue_row_numbers()
+        update_ff_queue_metrics()
+        if notify:
+            on_ff_queue_change()
+
+    def remove_ff_queue_row(row: dict[str, Any]) -> None:
+        if row not in ff_queue_rows:
+            return
+        ff_queue_rows.remove(row)
+        row["frame"].destroy()
+        update_ff_queue_row_numbers()
+        update_ff_queue_metrics()
+        on_ff_queue_change()
+
+    def set_ff_queue_entries(entries: list[FFQueueEntry], minimum_rows: int = 0) -> None:
+        nonlocal ff_queue_applying_remote
+        ff_queue_applying_remote = True
+        try:
+            for row in ff_queue_rows:
+                row["frame"].destroy()
+            ff_queue_rows.clear()
+            for entry_item in entries:
+                add_ff_queue_row(
+                    entry_item.name,
+                    entry_item.note,
+                    entry_item.status,
+                    entry_item.rooms,
+                    notify=False,
+                    user_id=entry_item.user_id,
+                    panel_user_id=entry_item.panel_user_id,
+                    ff_player_id=entry_item.ff_player_id,
+                )
+            while len(ff_queue_rows) < minimum_rows:
+                add_ff_queue_row(notify=False)
+            update_ff_queue_row_numbers()
+            update_ff_queue_metrics()
+        finally:
+            ff_queue_applying_remote = False
+
+    def clear_ff_queue() -> None:
+        set_ff_queue_entries([])
+        ff_queue_status_var.set("Fila limpa")
+        on_ff_queue_change()
+
+    def call_next_ff_queue() -> None:
+        for row in ff_queue_rows:
+            if row["name_var"].get().strip() and normalize_queue_status(row["status_var"].get()) == "Na fila":
+                row["status_var"].set("Chamado")
+                ff_queue_status_var.set("Próximo chamado")
+                return
+        messagebox.showinfo("Fila FF", "Nao ha jogadores aguardando na fila.")
+
+    def mark_called_playing() -> None:
+        for row in ff_queue_rows:
+            if row["name_var"].get().strip() and normalize_queue_status(row["status_var"].get()) == "Chamado":
+                row["status_var"].set("Jogando")
+                ff_queue_status_var.set("Jogador em partida")
+                return
+        messagebox.showinfo("Fila FF", "Nao ha jogador chamado para marcar como jogando.")
+
+    def finish_playing_ff_queue() -> None:
+        changed = False
+        for row in ff_queue_rows:
+            if row["name_var"].get().strip() and normalize_queue_status(row["status_var"].get()) == "Jogando":
+                row["status_var"].set("Concluido")
+                changed = True
+        if changed:
+            ff_queue_status_var.set("Partida finalizada")
+        else:
+            messagebox.showinfo("Fila FF", "Nao ha jogador marcado como jogando.")
+
+    def apply_jarvis_base_url() -> None:
+        base_url = jarvis_base_url_var.get().strip()
+        kills_url = derive_jarvis_endpoint(base_url, "kills")
+        queue_url = derive_jarvis_endpoint(base_url, "queue")
+        overlay_url = derive_jarvis_endpoint(base_url, "overlay")
+        if not kills_url or not queue_url:
+            messagebox.showinfo("Jarvis FF", "Informe a URL base do Jarvis ou um endpoint /api/freefire-kills.")
+            return
+        jarvis_base_url_var.set(normalize_endpoint_url(base_url).rstrip("/"))
+        sync_url_var.set(kills_url)
+        ff_queue_url_var.set(queue_url)
+        ff_overlay_url_var.set(overlay_url)
+        manual_status_var.set("Endpoint configurado")
+        ff_queue_status_var.set("Endpoint configurado")
+        ff_overlay_status_var.set("Endpoint configurado")
+        refresh_ff_overlay(force=True)
+        log("Endpoints Jarvis FF preenchidos para Kills FF, Fila FF e Overlay FF.")
+
+    def test_jarvis_connection() -> None:
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+        except Exception as exc:
+            messagebox.showerror("Jarvis FF", str(exc))
+            return
+
+        kills_url = str(local_config.get("kills_realtime_url", "")).strip()
+        queue_url = str(local_config.get("ff_queue_realtime_url", "")).strip()
+        overlay_url = str(local_config.get("ff_overlay_realtime_url", "")).strip()
+        if not kills_url or not queue_url:
+            messagebox.showinfo("Jarvis FF", "Configure os endpoints de Kills FF e Fila FF antes de testar.")
+            return
+        manual_status_var.set("Testando Jarvis")
+        ff_queue_status_var.set("Testando Jarvis")
+        ff_overlay_status_var.set("Testando Jarvis")
+
+        def run() -> None:
+            results: dict[str, str] = {}
+            try:
+                fetch_kills_realtime(
+                    kills_url,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room="",
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                results["kills"] = ""
+            except Exception as exc:
+                results["kills"] = str(exc)
+            try:
+                fetch_ff_queue_realtime(
+                    queue_url,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room=str(local_config.get("ff_queue_room", "principal")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                results["queue"] = ""
+            except Exception as exc:
+                results["queue"] = str(exc)
+            if overlay_url:
+                try:
+                    fetch_ff_overlay_realtime(
+                        overlay_url,
+                        device_id=str(local_config.get("device_id", "")),
+                        device_name=str(local_config.get("device_name", "")),
+                        room=str(local_config.get("kills_sync_room", "principal")),
+                        token=str(local_config.get("jarvis_api_token", "")),
+                    )
+                    results["overlay"] = ""
+                except Exception as exc:
+                    results["overlay"] = str(exc)
+            else:
+                results["overlay"] = "Endpoint opcional nao configurado"
+            sync_queue.put(("jarvis_test", results))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def ff_overlay_snapshot() -> tuple[list[PlayerKill], list[dict[str, Any]], int, int]:
+        players = sorted(collect_manual_players(), key=lambda item: (-item.kills, normalize_player_key(item.name)))
+        queue_items = queue_summary_items(collect_ff_queue_entries())
+        total_kills = sum(player.kills for player in players)
+        active_rooms = sum(int(item["rooms"]) for item in queue_items)
+        return players, queue_items, total_kills, active_rooms
+
+    def ff_overlay_options_payload() -> dict[str, Any]:
+        return {
+            "show_kills": bool(ff_overlay_show_kills_var.get()),
+            "show_queue": bool(ff_overlay_show_queue_var.get()),
+            "compact": bool(ff_overlay_compact_var.get()),
+            "opacity": layout_value(ff_overlay_opacity_var, 35, 100),
+            "width": layout_value(ff_overlay_width_var, 420, 1400),
+            "height": layout_value(ff_overlay_height_var, 240, 900),
+            "kills_room": sync_room_var.get().strip() or "principal",
+            "queue_room": ff_queue_room_var.get().strip() or "principal",
+        }
+
+    def ff_overlay_signature() -> str:
+        return json.dumps(
+            overlay_payload(collect_manual_players(), collect_ff_queue_entries(), ff_overlay_options_payload()),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    def render_ff_overlay_panel(target: Any, widget_store: list[Any], preview: bool = False) -> None:
+        for widget in widget_store:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        widget_store.clear()
+
+        players, queue_items, total_kills, active_rooms = ff_overlay_snapshot()
+        compact = bool(ff_overlay_compact_var.get())
+        show_kills = bool(ff_overlay_show_kills_var.get())
+        show_queue = bool(ff_overlay_show_queue_var.get())
+
+        shell = ctk.CTkFrame(target, fg_color="#050609", corner_radius=14, border_width=1, border_color=accent)
+        shell.grid(row=0, column=0, sticky="nsew", padx=10 if preview else 8, pady=10 if preview else 8)
+        shell.columnconfigure(0, weight=1)
+        shell.columnconfigure(1, weight=1)
+        widget_store.append(shell)
+
+        header = ctk.CTkFrame(shell, fg_color="#101116", corner_radius=12)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 8))
+        header.columnconfigure(0, weight=1)
+        widget_store.append(header)
+        ctk.CTkLabel(
+            header,
+            text="FREE FIRE",
+            text_color=fg,
+            font=("Segoe UI Semibold", 18 if compact else 24),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 0))
+        ctk.CTkLabel(
+            header,
+            text=f"{len(players)} jogadores  |  {total_kills} kills  |  {active_rooms} salas na fila",
+            text_color=muted,
+            font=("Segoe UI", 10 if compact else 12),
+            anchor="w",
+        ).grid(row=1, column=0, sticky="w", padx=14, pady=(0, 12))
+        ctk.CTkLabel(
+            header,
+            text=(
+                f"Kills: {manual_status_var.get()} ({manual_source_var.get() or '-'})  |  "
+                f"Fila: {ff_queue_status_var.get()} ({ff_queue_source_var.get() or '-'})  |  "
+                f"Overlay: {ff_overlay_status_var.get()}"
+            ),
+            text_color=muted,
+            font=("Segoe UI", 9 if compact else 10),
+            anchor="w",
+        ).grid(row=2, column=0, sticky="w", padx=14, pady=(0, 12))
+        ctk.CTkLabel(
+            header,
+            text="LIVE",
+            text_color="#07100d",
+            fg_color=teal,
+            corner_radius=999,
+            font=("Segoe UI Semibold", 11),
+            padx=12,
+            pady=5,
+        ).grid(row=0, column=1, rowspan=3, sticky="e", padx=14, pady=12)
+
+        if show_kills:
+            kills_panel = ctk.CTkFrame(shell, fg_color="#0b0d12", corner_radius=12, border_width=1, border_color=border)
+            kills_panel.grid(row=1, column=0, sticky="nsew", padx=(12, 6 if show_queue else 12), pady=(0, 12))
+            kills_panel.columnconfigure(0, weight=1)
+            widget_store.append(kills_panel)
+            ctk.CTkLabel(
+                kills_panel,
+                text="KILLS FF",
+                text_color=accent,
+                font=("Segoe UI Semibold", 12),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 4))
+            display_players = players[:4 if compact else 6]
+            if not display_players:
+                ctk.CTkLabel(
+                    kills_panel,
+                    text="Aguardando painel Jarvis",
+                    text_color=muted,
+                    font=("Segoe UI", 12),
+                ).grid(row=1, column=0, sticky="ew", padx=14, pady=18)
+            for index, player in enumerate(display_players, start=1):
+                row = ctk.CTkFrame(kills_panel, fg_color="#151820" if index % 2 else "#0f1118", corner_radius=9)
+                row.grid(row=index, column=0, sticky="ew", padx=10, pady=3)
+                row.columnconfigure(1, weight=1)
+                ctk.CTkLabel(row, text=f"{index:02d}", text_color=muted, font=("Segoe UI Semibold", 11), width=34).grid(
+                    row=0, column=0, sticky="w", padx=(10, 6), pady=8
+                )
+                ctk.CTkLabel(row, text=player.name, text_color=fg, font=("Segoe UI Semibold", 12), anchor="w").grid(
+                    row=0, column=1, sticky="ew", padx=4, pady=8
+                )
+                ctk.CTkLabel(
+                    row,
+                    text=str(player.kills),
+                    text_color="#07100d",
+                    fg_color=teal,
+                    corner_radius=999,
+                    font=("Segoe UI Semibold", 12),
+                    padx=10,
+                    pady=4,
+                ).grid(row=0, column=2, sticky="e", padx=(6, 10), pady=8)
+
+        if show_queue:
+            queue_column = 1 if show_kills else 0
+            queue_colspan = 1 if show_kills else 2
+            queue_panel = ctk.CTkFrame(shell, fg_color="#0b0d12", corner_radius=12, border_width=1, border_color=border)
+            queue_panel.grid(row=1, column=queue_column, columnspan=queue_colspan, sticky="nsew", padx=(6 if show_kills else 12, 12), pady=(0, 12))
+            queue_panel.columnconfigure(0, weight=1)
+            widget_store.append(queue_panel)
+            ctk.CTkLabel(
+                queue_panel,
+                text="FILA FF",
+                text_color=accent,
+                font=("Segoe UI Semibold", 12),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 4))
+            display_queue = queue_items[:4 if compact else 6]
+            if not display_queue:
+                ctk.CTkLabel(
+                    queue_panel,
+                    text="Fila vazia ou sem leitura",
+                    text_color=muted,
+                    font=("Segoe UI", 12),
+                ).grid(row=1, column=0, sticky="ew", padx=14, pady=18)
+            for index, item in enumerate(display_queue, start=1):
+                status_parts = []
+                if item["playing"]:
+                    status_parts.append(f"{item['playing']} jogando")
+                if item["called"]:
+                    status_parts.append(f"{item['called']} chamado")
+                if item["waiting"]:
+                    status_parts.append(f"{item['waiting']} fila")
+                status_text = " | ".join(status_parts) or "ativo"
+                row = ctk.CTkFrame(queue_panel, fg_color="#151820" if index % 2 else "#0f1118", corner_radius=9)
+                row.grid(row=index, column=0, sticky="ew", padx=10, pady=3)
+                row.columnconfigure(0, weight=1)
+                ctk.CTkLabel(row, text=item["name"], text_color=fg, font=("Segoe UI Semibold", 12), anchor="w").grid(
+                    row=0, column=0, sticky="ew", padx=10, pady=(8, 0)
+                )
+                ctk.CTkLabel(row, text=status_text, text_color=muted, font=("Segoe UI", 10), anchor="w").grid(
+                    row=1, column=0, sticky="ew", padx=10, pady=(0, 8)
+                )
+                ctk.CTkLabel(
+                    row,
+                    text=f"{int(item['rooms'])}x",
+                    text_color="#fff7f7",
+                    fg_color=accent,
+                    corner_radius=999,
+                    font=("Segoe UI Semibold", 11),
+                    padx=9,
+                    pady=4,
+                ).grid(row=0, column=1, rowspan=2, sticky="e", padx=(6, 10), pady=8)
+
+        if not show_kills and not show_queue:
+            ctk.CTkLabel(
+                shell,
+                text="Ative Kills FF ou Fila FF para exibir dados no overlay.",
+                text_color=muted,
+                font=("Segoe UI Semibold", 14),
+            ).grid(row=1, column=0, columnspan=2, sticky="nsew", padx=18, pady=30)
+
+    def refresh_ff_overlay(force: bool = False) -> None:
+        players, queue_items, total_kills, active_rooms = ff_overlay_snapshot()
+        signature = json.dumps(
+            {
+                "players": player_payload(players),
+                "queue": queue_items,
+                "total": total_kills,
+                "rooms": active_rooms,
+                "compact": bool(ff_overlay_compact_var.get()),
+                "show_kills": bool(ff_overlay_show_kills_var.get()),
+                "show_queue": bool(ff_overlay_show_queue_var.get()),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if not force and getattr(refresh_ff_overlay, "_signature", None) == signature:
+            return
+        refresh_ff_overlay._signature = signature  # type: ignore[attr-defined]
+        try:
+            render_ff_overlay_panel(ff_overlay_preview_frame, ff_overlay_widgets, preview=True)
+            if ff_overlay_content_frame is not None:
+                render_ff_overlay_panel(ff_overlay_content_frame, getattr(refresh_ff_overlay, "_window_widgets", []), preview=False)
+        except NameError:
+            pass
+        if not ff_overlay_applying_remote:
+            schedule_ff_overlay_sync()
+
+    def schedule_ff_overlay_sync(delay_ms: int = 900) -> None:
+        nonlocal ff_overlay_sync_after_id
+        if ff_overlay_applying_remote or not ff_overlay_enabled_var.get():
+            return
+        if ff_overlay_sync_after_id is not None:
+            try:
+                root.after_cancel(ff_overlay_sync_after_id)
+            except tk.TclError:
+                pass
+        ff_overlay_sync_after_id = root.after(delay_ms, lambda: send_ff_overlay(force=False))
+
+    def send_ff_overlay(force: bool = True) -> None:
+        nonlocal ff_overlay_sending, ff_overlay_last_signature, ff_overlay_sync_after_id
+        ff_overlay_sync_after_id = None
+        try:
+            local_config = update_config_from_form()
+            if force:
+                save_config(config_path, local_config)
+        except Exception as exc:
+            if force:
+                messagebox.showerror("Overlay FF", str(exc))
+            return
+
+        endpoint_url = str(local_config.get("ff_overlay_realtime_url", "")).strip()
+        if not endpoint_url:
+            if force:
+                log("Informe a URL Overlay/Jarvis para enviar o Overlay FF.")
+            return
+        signature = ff_overlay_signature()
+        if not force and signature == ff_overlay_last_signature:
+            return
+        if ff_overlay_sending:
+            return
+        ff_overlay_sending = True
+        ff_overlay_status_var.set("Enviando")
+
+        def run() -> None:
+            try:
+                response_text = send_ff_overlay_realtime_update(
+                    endpoint_url,
+                    collect_manual_players(),
+                    collect_ff_queue_entries(),
+                    options=ff_overlay_options_payload(),
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room=str(local_config.get("kills_sync_room", "principal")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                sync_queue.put(("overlay_sent", {"signature": signature, "response": response_text}))
+            except Exception as exc:
+                sync_queue.put(("overlay_send_error", str(exc)))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def fetch_ff_overlay(force: bool = True) -> None:
+        nonlocal ff_overlay_fetching
+        try:
+            local_config = update_config_from_form()
+            if force:
+                save_config(config_path, local_config)
+        except Exception as exc:
+            if force:
+                messagebox.showerror("Overlay FF", str(exc))
+            return
+
+        endpoint_url = str(local_config.get("ff_overlay_realtime_url", "")).strip()
+        if not endpoint_url:
+            if force:
+                log("Informe a URL Overlay/Jarvis para buscar o Overlay FF.")
+            return
+        if ff_overlay_fetching:
+            return
+        ff_overlay_fetching = True
+        if force:
+            ff_overlay_status_var.set("Lendo Jarvis")
+
+        def run() -> None:
+            try:
+                kills_state, queue_state = fetch_ff_overlay_realtime(
+                    endpoint_url,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room=str(local_config.get("kills_sync_room", "principal")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                sync_queue.put(
+                    (
+                        "overlay_fetched",
+                        {
+                            "kills_state": kills_state,
+                            "queue_state": queue_state,
+                            "force": force,
+                        },
+                    )
+                )
+            except Exception as exc:
+                sync_queue.put(("overlay_fetch_error", {"error": str(exc), "force": force}))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def apply_ff_overlay_settings(refresh: bool = False) -> None:
+        opacity = layout_value(ff_overlay_opacity_var, 35, 100)
+        width = layout_value(ff_overlay_width_var, 420, 1400)
+        height = layout_value(ff_overlay_height_var, 240, 900)
+        ff_overlay_opacity_text.set(f"{opacity}%")
+        ff_overlay_size_text.set(f"{width} x {height}px")
+        if ff_overlay_window is not None:
+            try:
+                ff_overlay_window.geometry(f"{width}x{height}")
+                ff_overlay_window.attributes("-topmost", True)
+                ff_overlay_window.attributes("-alpha", max(0.35, min(1.0, opacity / 100)))
+            except tk.TclError:
+                pass
+        if refresh:
+            refresh_ff_overlay(force=True)
+
+    def close_ff_overlay_window() -> None:
+        nonlocal ff_overlay_window, ff_overlay_content_frame, ff_overlay_controls_frame
+        if ff_overlay_window is not None:
+            try:
+                ff_overlay_width_var.set(max(420, int(ff_overlay_window.winfo_width())))
+                ff_overlay_height_var.set(max(240, int(ff_overlay_window.winfo_height())))
+                ff_overlay_window.destroy()
+            except tk.TclError:
+                pass
+        ff_overlay_window = None
+        ff_overlay_content_frame = None
+        ff_overlay_controls_frame = None
+
+    def open_ff_overlay_window() -> None:
+        nonlocal ff_overlay_window, ff_overlay_content_frame, ff_overlay_controls_frame
+        if ff_overlay_window is not None:
+            try:
+                if ff_overlay_window.winfo_exists():
+                    ff_overlay_window.lift()
+                    refresh_ff_overlay(force=True)
+                    return
+            except tk.TclError:
+                pass
+
+        width = layout_value(ff_overlay_width_var, 420, 1400)
+        height = layout_value(ff_overlay_height_var, 240, 900)
+        window = ctk.CTkToplevel(root)
+        ff_overlay_window = window
+        window.title("Overlay FF - Aizen Stream Control")
+        window.geometry(f"{width}x{height}+80+90")
+        window.minsize(420, 240)
+        window.resizable(True, True)
+        window.overrideredirect(True)
+        window.configure(fg_color="#050506")
+        window.attributes("-topmost", True)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(1, weight=1)
+        if APP_ICON.exists():
+            try:
+                window.iconbitmap(str(APP_ICON))
+            except tk.TclError:
+                pass
+
+        controls = ctk.CTkFrame(window, fg_color="#101116", corner_radius=12, border_width=1, border_color=border)
+        ff_overlay_controls_frame = controls
+        controls.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        controls.columnconfigure(0, weight=1)
+        title_label = ctk.CTkLabel(controls, text="Overlay FF", text_color=fg, font=("Segoe UI Semibold", 13), anchor="w")
+        title_label.grid(row=0, column=0, sticky="ew", padx=12, pady=7)
+        button(controls, "Atualizar", lambda: refresh_overlay_from_jarvis(), "accent", width=78).grid(row=0, column=1, padx=(0, 6), pady=5)
+        button(controls, "Ocultar", lambda: controls.grid_remove(), "ghost", width=72).grid(row=0, column=2, padx=(0, 6), pady=5)
+        button(controls, "X", close_ff_overlay_window, "danger", width=42).grid(row=0, column=3, padx=(0, 8), pady=5)
+
+        content = ctk.CTkFrame(window, fg_color="#050506", corner_radius=0)
+        ff_overlay_content_frame = content
+        content.grid(row=1, column=0, sticky="nsew")
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=1)
+
+        drag_state = {"x": 0, "y": 0}
+
+        def start_drag(event: Any) -> None:
+            drag_state["x"] = event.x_root - window.winfo_x()
+            drag_state["y"] = event.y_root - window.winfo_y()
+
+        def drag_window(event: Any) -> None:
+            window.geometry(f"+{event.x_root - drag_state['x']}+{event.y_root - drag_state['y']}")
+
+        for drag_widget in (controls, title_label):
+            drag_widget.bind("<ButtonPress-1>", start_drag)
+            drag_widget.bind("<B1-Motion>", drag_window)
+
+        refresh_ff_overlay._window_widgets = []  # type: ignore[attr-defined]
+        apply_ff_overlay_settings(refresh=True)
+        log("Overlay FF aberto e sincronizado com Kills FF/Fila FF.")
+
+    def refresh_overlay_from_jarvis() -> None:
+        fetch_panel_kills(force=True)
+        fetch_ff_queue(force=True)
+        fetch_ff_overlay(force=True)
+        refresh_ff_overlay(force=True)
+
+    def chat_source_key() -> str:
+        return "websocket" if chat_source_var.get() == "TikFinity WebSocket" else "webhook"
+
+    def raffle_source_key() -> str:
+        return "browser" if raffle_source_mode_var.get() == "URL do chat (legado)" else "events"
+
+    def raffle_entries_value(var: tk.StringVar, fallback: int) -> int:
+        try:
+            value = int(float(var.get().replace(",", ".")))
+        except ValueError:
+            value = fallback
+        return max(1, min(50, value))
+
+    def raffle_cooldown_seconds() -> int:
+        try:
+            value = int(float(raffle_cooldown_var.get().replace(",", ".")))
+        except ValueError:
+            value = 8
+        return max(0, min(300, value))
+
+    def chat_webhook_port() -> int:
+        try:
+            value = int(float(chat_webhook_port_var.get().replace(",", ".")))
+        except ValueError:
+            value = 8765
+        return max(1024, min(65535, value))
+
+    def chat_max_messages() -> int:
+        try:
+            value = int(config.get("chat_max_messages", 250))
+        except (TypeError, ValueError):
+            value = 250
+        return max(50, min(1000, value))
+
+    def chat_endpoint_url(include_token: bool = True) -> str:
+        host = chat_webhook_host_var.get().strip() or "127.0.0.1"
+        port = chat_webhook_port()
+        token = chat_webhook_token_var.get().strip()
+        url = f"http://{host}:{port}/api/chat-event"
+        if include_token and token:
+            url = f"{url}?token={token}"
+        return url
+
+    def update_chat_endpoint_text() -> None:
+        if chat_source_key() == "websocket":
+            url = chat_websocket_url_var.get().strip() or DEFAULT_TIKFINITY_WEBSOCKET_URL
+            chat_endpoint_var.set(f"WebSocket: {url}")
+        else:
+            chat_endpoint_var.set(f"POST JSON: {chat_endpoint_url(include_token=True)}")
+
+    def receive_chat_payload(payload: dict[str, Any], source: str) -> None:
+        chat_event_queue.put(("message", {"payload": payload, "source": source}))
+
+    def stop_chat_listener(silent: bool = False) -> None:
+        nonlocal chat_webhook_server, chat_websocket_worker
+        if chat_webhook_server is not None:
+            chat_webhook_server.stop()
+            chat_webhook_server = None
+        if chat_websocket_worker is not None:
+            chat_websocket_worker.stop()
+            chat_websocket_worker = None
+        chat_status_var.set("Desligado")
+        if not silent:
+            log("Leitor de chat parado.")
+
+    def start_chat_listener() -> None:
+        nonlocal chat_webhook_server, chat_websocket_worker
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+            stop_chat_listener(silent=True)
+            if chat_source_key() == "websocket":
+                websocket_url = normalize_tikfinity_websocket_url(chat_websocket_url_var.get())
+                chat_websocket_url_var.set(websocket_url)
+                local_config["chat_websocket_url"] = websocket_url
+                save_config(config_path, local_config)
+                worker = ChatWebSocketWorker(websocket_url, receive_chat_payload, log)
+                worker.start()
+                chat_websocket_worker = worker
+                chat_status_var.set("WebSocket ativo")
+                log("Leitor de chat iniciado por WebSocket.")
+            else:
+                server = LocalChatWebhookServer(
+                    chat_webhook_host_var.get().strip() or "127.0.0.1",
+                    chat_webhook_port(),
+                    chat_webhook_token_var.get().strip(),
+                    receive_chat_payload,
+                    log,
+                )
+                server.start()
+                chat_webhook_server = server
+                chat_status_var.set("Webhook ativo")
+            update_chat_endpoint_text()
+            open_chat_monitor_window()
+        except Exception as exc:
+            chat_status_var.set("Erro")
+            messagebox.showerror("Chat ao vivo", str(exc))
+
+    def copy_chat_endpoint() -> None:
+        update_chat_endpoint_text()
+        root.clipboard_clear()
+        root.clipboard_append(
+            chat_endpoint_url(include_token=True)
+            if chat_source_key() == "webhook"
+            else normalize_tikfinity_websocket_url(chat_websocket_url_var.get())
+        )
+        log("Endpoint do chat copiado.")
+
+    def clear_chat_messages() -> None:
+        chat_messages.clear()
+        chat_users.clear()
+        chat_seen_messages.clear()
+        refresh_chat_messages(force=True)
+        chat_message_count_var.set("0")
+        chat_user_count_var.set("0")
+        chat_platform_var.set("-")
+        log("Tela de chat limpa.")
+
+    def live_chat_key(message: LiveChatMessage) -> str:
+        if message.message_id:
+            return f"{message.platform}|{message.user_id}|{message.message_id}"
+        return f"{message.platform}|{message.user_id}|{message.username}|{message.comment}|{message.received_at}"
+
+    def apply_window_clickthrough(window: Any, enabled: bool) -> None:
+        if os.name != "nt":
+            return
+        try:
+            window.update_idletasks()
+            hwnd = int(window.winfo_id())
+            user32 = ctypes.windll.user32
+            get_window_long = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
+            set_window_long = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+            gwl_exstyle = -20
+            ws_ex_transparent = 0x00000020
+            ws_ex_layered = 0x00080000
+            ws_ex_toolwindow = 0x00000080
+            style = int(get_window_long(hwnd, gwl_exstyle))
+            style |= ws_ex_layered | ws_ex_toolwindow
+            if enabled:
+                style |= ws_ex_transparent
+            else:
+                style &= ~ws_ex_transparent
+            set_window_long(hwnd, gwl_exstyle, style)
+        except Exception:
+            pass
+
+    def apply_chat_overlay_settings(refresh: bool = False) -> None:
+        opacity = layout_value(chat_overlay_opacity_var, 35, 100)
+        font_size = layout_value(chat_overlay_font_size_var, 10, 24)
+        chat_overlay_opacity_text.set(f"{opacity}%")
+        chat_overlay_font_size_text.set(f"{font_size}px")
+        if chat_overlay_window is None:
+            return
+        try:
+            chat_overlay_window.attributes("-topmost", True)
+            chat_overlay_window.attributes("-alpha", max(0.35, min(1.0, opacity / 100)))
+            if chat_overlay_controls_frame is not None:
+                if chat_overlay_controls_var.get():
+                    chat_overlay_controls_frame.grid()
+                else:
+                    chat_overlay_controls_frame.grid_remove()
+            apply_window_clickthrough(chat_overlay_window, chat_overlay_clickthrough_var.get())
+            if refresh:
+                refresh_chat_messages(force=True)
+        except tk.TclError:
+            pass
+
+    def close_chat_overlay() -> None:
+        nonlocal chat_overlay_window, chat_overlay_messages_frame, chat_overlay_controls_frame
+        if chat_overlay_window is not None:
+            try:
+                chat_overlay_width_var.set(max(300, int(chat_overlay_window.winfo_width())))
+                chat_overlay_height_var.set(max(220, int(chat_overlay_window.winfo_height())))
+                chat_overlay_window.destroy()
+            except tk.TclError:
+                pass
+        chat_overlay_window = None
+        chat_overlay_messages_frame = None
+        chat_overlay_controls_frame = None
+        for widget in chat_overlay_widgets:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        chat_overlay_widgets.clear()
+
+    def open_chat_overlay_window() -> None:
+        nonlocal chat_overlay_window, chat_overlay_messages_frame, chat_overlay_controls_frame
+        chat_overlay_controls_var.set(True)
+        chat_overlay_clickthrough_var.set(False)
+        if chat_overlay_window is not None:
+            try:
+                if chat_overlay_window.winfo_exists():
+                    chat_overlay_window.lift()
+                    apply_chat_overlay_settings(refresh=True)
+                    return
+            except tk.TclError:
+                pass
+
+        width = layout_value(chat_overlay_width_var, 300, 900)
+        height = layout_value(chat_overlay_height_var, 220, 1000)
+        window = ctk.CTkToplevel(root)
+        chat_overlay_window = window
+        window.title("Chat Overlay - Aizen Stream Control")
+        window.geometry(f"{width}x{height}+60+80")
+        window.minsize(300, 220)
+        window.resizable(True, True)
+        window.overrideredirect(True)
+        window.configure(fg_color="#050506")
+        window.attributes("-topmost", True)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(0, weight=1)
+        if APP_ICON.exists():
+            try:
+                window.iconbitmap(str(APP_ICON))
+            except tk.TclError:
+                pass
+
+        shell = ctk.CTkFrame(
+            window,
+            fg_color="#09090d",
+            corner_radius=16,
+            border_width=1,
+            border_color=accent,
+        )
+        shell.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(1, weight=1)
+
+        controls = ctk.CTkFrame(shell, fg_color="#111016", corner_radius=12)
+        chat_overlay_controls_frame = controls
+        controls.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
+        controls.columnconfigure(0, weight=1)
+        title_label = ctk.CTkLabel(
+            controls,
+            text="Chat Overlay",
+            text_color=fg,
+            font=("Segoe UI Semibold", 13),
+            anchor="w",
+        )
+        title_label.grid(row=0, column=0, sticky="ew", padx=12, pady=8)
+        ctk.CTkLabel(
+            controls,
+            text="arraste para mover",
+            text_color=muted,
+            font=("Segoe UI", 10),
+        ).grid(row=0, column=1, sticky="e", padx=(0, 8), pady=8)
+
+        def toggle_controls() -> None:
+            chat_overlay_controls_var.set(False)
+            apply_chat_overlay_settings()
+
+        def enable_clickthrough() -> None:
+            chat_overlay_clickthrough_var.set(True)
+            apply_chat_overlay_settings()
+            log("Overlay em modo click-through. Desative pela aba Chat Ao Vivo para mover ou fechar pelo mouse.")
+
+        button(controls, "Ocultar", toggle_controls, "ghost", width=78).grid(row=0, column=2, sticky="e", padx=(0, 6), pady=6)
+        button(controls, "Fixar", enable_clickthrough, "accent", width=70).grid(row=0, column=3, sticky="e", padx=(0, 6), pady=6)
+        button(controls, "Teste", lambda: add_chat_test_message(), "default", width=70).grid(
+            row=0, column=4, sticky="e", padx=(0, 6), pady=6
+        )
+        button(controls, "X", close_chat_overlay, "danger", width=42).grid(row=0, column=5, sticky="e", padx=(0, 8), pady=6)
+
+        drag_state = {"x": 0, "y": 0}
+
+        def start_drag(event: Any) -> None:
+            if chat_overlay_clickthrough_var.get():
+                return
+            drag_state["x"] = event.x_root - window.winfo_x()
+            drag_state["y"] = event.y_root - window.winfo_y()
+
+        def drag_window(event: Any) -> None:
+            if chat_overlay_clickthrough_var.get():
+                return
+            window.geometry(f"+{event.x_root - drag_state['x']}+{event.y_root - drag_state['y']}")
+
+        for drag_widget in (controls, title_label):
+            drag_widget.bind("<ButtonPress-1>", start_drag)
+            drag_widget.bind("<B1-Motion>", drag_window)
+
+        chat_overlay_messages_frame = ctk.CTkScrollableFrame(
+            shell,
+            fg_color="#050609",
+            corner_radius=12,
+            border_width=1,
+            border_color="#2a161a",
+            scrollbar_button_color=border,
+            scrollbar_button_hover_color=accent,
+        )
+        chat_overlay_messages_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 8))
+        chat_overlay_messages_frame.columnconfigure(0, weight=1)
+
+        grip = ctk.CTkLabel(
+            shell,
+            text="resize",
+            text_color=muted,
+            font=("Segoe UI", 9),
+            anchor="e",
+        )
+        grip.grid(row=2, column=0, sticky="e", padx=12, pady=(0, 8))
+        resize_state = {"x": 0, "y": 0, "w": width, "h": height}
+
+        def start_resize(event: Any) -> None:
+            if chat_overlay_clickthrough_var.get():
+                return
+            resize_state["x"] = event.x_root
+            resize_state["y"] = event.y_root
+            resize_state["w"] = window.winfo_width()
+            resize_state["h"] = window.winfo_height()
+
+        def resize_window(event: Any) -> None:
+            if chat_overlay_clickthrough_var.get():
+                return
+            new_width = max(300, resize_state["w"] + event.x_root - resize_state["x"])
+            new_height = max(220, resize_state["h"] + event.y_root - resize_state["y"])
+            chat_overlay_width_var.set(int(new_width))
+            chat_overlay_height_var.set(int(new_height))
+            window.geometry(f"{int(new_width)}x{int(new_height)}")
+            refresh_chat_messages(force=True)
+
+        grip.bind("<ButtonPress-1>", start_resize)
+        grip.bind("<B1-Motion>", resize_window)
+
+        def close_overlay_window() -> None:
+            close_chat_overlay()
+
+        window.protocol("WM_DELETE_WINDOW", close_overlay_window)
+        try:
+            delattr(refresh_chat_messages, "_signature")
+        except AttributeError:
+            pass
+        apply_chat_overlay_settings(refresh=True)
+        log("Overlay do chat aberto. Ajuste a posicao e depois use Fixar/click-through se quiser jogar por baixo.")
+
+    def close_chat_monitor_window() -> None:
+        nonlocal chat_monitor_window, chat_monitor_messages_frame, chat_monitor_always_on_top_var
+        window = chat_monitor_window
+        chat_monitor_window = None
+        chat_monitor_messages_frame = None
+        chat_monitor_always_on_top_var = None
+        for widget in chat_monitor_widgets:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        chat_monitor_widgets.clear()
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
+    def open_chat_monitor_window() -> None:
+        nonlocal chat_monitor_window, chat_monitor_messages_frame, chat_monitor_always_on_top_var
+        if chat_monitor_window is not None:
+            try:
+                if chat_monitor_window.winfo_exists():
+                    chat_monitor_window.lift()
+                    chat_monitor_window.focus_force()
+                    refresh_chat_messages(force=True)
+                    return
+            except tk.TclError:
+                pass
+
+        window = ctk.CTkToplevel(root)
+        chat_monitor_window = window
+        chat_monitor_always_on_top_var = tk.BooleanVar(value=False)
+        window.title("Chat Ao Vivo - Aizen Stream Control")
+        window.geometry("760x900")
+        window.minsize(520, 560)
+        window.resizable(True, True)
+        window.configure(fg_color=canvas_bg)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(3, weight=1)
+        if APP_ICON.exists():
+            try:
+                window.iconbitmap(str(APP_ICON))
+            except tk.TclError:
+                pass
+
+        top = ctk.CTkFrame(window, fg_color=canvas_bg, corner_radius=0)
+        top.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 10))
+        top.columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            top,
+            text="Chat Ao Vivo",
+            text_color=fg,
+            font=("Segoe UI Semibold", 26),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew")
+        ctk.CTkLabel(
+            top,
+            text="Monitor dedicado para acompanhar a live em tela cheia ou em outro monitor.",
+            text_color=muted,
+            font=("Segoe UI", 12),
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew", pady=(2, 0))
+
+        def maximize_monitor() -> None:
+            try:
+                window.state("zoomed")
+            except tk.TclError:
+                window.geometry(f"{window.winfo_screenwidth()}x{window.winfo_screenheight()}+0+0")
+
+        def toggle_topmost() -> None:
+            if chat_monitor_always_on_top_var is not None:
+                window.attributes("-topmost", bool(chat_monitor_always_on_top_var.get()))
+
+        monitor_actions = ctk.CTkFrame(top, fg_color=canvas_bg, corner_radius=0)
+        monitor_actions.grid(row=0, column=1, rowspan=2, sticky="e")
+        ctk.CTkCheckBox(
+            monitor_actions,
+            text="Sempre visível",
+            variable=chat_monitor_always_on_top_var,
+            command=toggle_topmost,
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        button(monitor_actions, "Maximizar", maximize_monitor, "accent", width=100).pack(side=tk.LEFT, padx=(0, 8))
+        button(monitor_actions, "Limpar", clear_chat_messages, "ghost", width=82).pack(side=tk.LEFT)
+
+        monitor_metrics = ctk.CTkFrame(window, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+        monitor_metrics.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 10))
+        for column in range(4):
+            monitor_metrics.columnconfigure(column, weight=1)
+        for col, label in enumerate(("Mensagens", "Usuários", "Plataforma", "Status")):
+            ctk.CTkLabel(monitor_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+                row=0, column=col, sticky="w", padx=18, pady=(14, 0)
+            )
+        ctk.CTkLabel(monitor_metrics, textvariable=chat_message_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+            row=1, column=0, sticky="w", padx=18, pady=(0, 14)
+        )
+        ctk.CTkLabel(monitor_metrics, textvariable=chat_user_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+            row=1, column=1, sticky="w", padx=18, pady=(0, 14)
+        )
+        ctk.CTkLabel(monitor_metrics, textvariable=chat_platform_var, text_color=accent, font=("Segoe UI Semibold", 14)).grid(
+            row=1, column=2, sticky="w", padx=18, pady=(4, 14)
+        )
+        ctk.CTkLabel(monitor_metrics, textvariable=chat_status_var, text_color=accent, font=("Segoe UI Semibold", 14)).grid(
+            row=1, column=3, sticky="w", padx=18, pady=(4, 14)
+        )
+
+        filter_bar = ctk.CTkFrame(window, fg_color=panel, corner_radius=12, border_width=1, border_color=border)
+        filter_bar.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 10))
+        filter_bar.columnconfigure(1, weight=1)
+        ctk.CTkLabel(filter_bar, text="Filtro", text_color=muted, font=("Segoe UI", 12)).grid(
+            row=0, column=0, sticky="w", padx=(14, 10), pady=12
+        )
+        entry(filter_bar, chat_filter_var).grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=12)
+
+        chat_monitor_messages_frame = ctk.CTkScrollableFrame(
+            window,
+            fg_color=field,
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
+            scrollbar_button_color=border,
+            scrollbar_button_hover_color=accent,
+        )
+        chat_monitor_messages_frame.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        chat_monitor_messages_frame.columnconfigure(0, weight=1)
+
+        window.protocol("WM_DELETE_WINDOW", close_chat_monitor_window)
+        refresh_chat_messages(force=True)
+
+    def add_live_chat_message(message: LiveChatMessage) -> None:
+        key = live_chat_key(message)
+        if key in chat_seen_messages:
+            return
+        chat_seen_messages.add(key)
+        chat_messages.append(message)
+        user_key = message.user_id or normalize_player_key(message.username)
+        chat_users[user_key] = message
+        limit = chat_max_messages()
+        if len(chat_messages) > limit:
+            removed = chat_messages[: len(chat_messages) - limit]
+            del chat_messages[: len(chat_messages) - limit]
+            for old_message in removed:
+                chat_seen_messages.discard(live_chat_key(old_message))
+        chat_message_count_var.set(str(len(chat_messages)))
+        chat_user_count_var.set(str(len(chat_users)))
+        chat_platform_var.set(message.platform or "-")
+        chat_status_var.set("Recebendo chat")
+
+        if raffle_worker is not None and getattr(raffle_worker, "source_mode", "browser") == "events":
+            raffle_worker.handle_live_chat_event(message)
+        handle_custom_chat_commands(message)
+
+    def add_chat_test_message() -> None:
+        now = datetime.now().strftime("%H:%M:%S")
+        add_live_chat_message(
+            LiveChatMessage(
+                username="Teste Overlay",
+                comment="Mensagem de teste do overlay. Se isto aparecer, a janela esta renderizando corretamente.",
+                platform="Aizen",
+                received_at=now,
+                message_id=f"overlay-test-{time.time()}",
+                source="local",
+            )
+        )
+        refresh_chat_messages(force=True)
+        log("Mensagem de teste enviada para o chat ao vivo.")
+
+    def visible_chat_messages() -> list[LiveChatMessage]:
+        filter_text = chat_filter_var.get().strip().casefold()
+        return [
+            message
+            for message in chat_messages
+            if not filter_text
+            or filter_text in message.username.casefold()
+            or filter_text in message.comment.casefold()
+            or filter_text in message.platform.casefold()
+        ][-140:]
+
+    CHAT_EMPTY_KEY = "__empty_chat__"
+
+    def chat_row_color(row_index: int) -> str:
+        return "#171014" if row_index % 2 == 0 else "#0f0b0e"
+
+    def chat_widget_key(widget: Any) -> str:
+        return str(getattr(widget, "_chat_key", ""))
+
+    def destroy_chat_widgets(widget_store: list[Any]) -> None:
+        for widget in widget_store:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        widget_store.clear()
+
+    def scroll_chat_to_bottom(target_frame: Any) -> None:
+        def do_scroll() -> None:
+            try:
+                target_frame._parent_canvas.yview_moveto(1.0)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+        try:
+            target_frame.after_idle(do_scroll)
+        except tk.TclError:
+            pass
+
+    def render_empty_chat(target_frame: Any, widget_store: list[Any], large: bool, overlay: bool = False) -> None:
+        if len(widget_store) == 1 and chat_widget_key(widget_store[0]) == CHAT_EMPTY_KEY:
+            return
+        destroy_chat_widgets(widget_store)
+        if overlay:
+            empty = ctk.CTkFrame(
+                target_frame,
+                fg_color="#101016",
+                corner_radius=14,
+                border_width=1,
+                border_color=accent,
+            )
+            empty._chat_key = CHAT_EMPTY_KEY  # type: ignore[attr-defined]
+            empty.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+            empty.columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                empty,
+                text="Aguardando chat",
+                text_color=accent,
+                font=("Segoe UI Semibold", max(12, layout_value(chat_overlay_font_size_var, 10, 24))),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 2))
+            ctk.CTkLabel(
+                empty,
+                text="Abra o Chat Ao Vivo e envie uma mensagem. Use o botao Teste para conferir o overlay.",
+                text_color=fg,
+                font=("Segoe UI", max(10, layout_value(chat_overlay_font_size_var, 10, 24) - 2)),
+                wraplength=max(220, layout_value(chat_overlay_width_var, 300, 900) - 54),
+                justify="left",
+                anchor="w",
+            ).grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 12))
+            widget_store.append(empty)
+            return
+
+        empty = ctk.CTkLabel(
+            target_frame,
+            text="Nenhuma mensagem recebida ainda",
+            text_color=muted,
+            font=("Segoe UI", 15 if large else 13),
+        )
+        empty._chat_key = CHAT_EMPTY_KEY  # type: ignore[attr-defined]
+        empty.grid(row=0, column=0, sticky="ew", padx=14, pady=16)
+        widget_store.append(empty)
+
+    def build_chat_message_widget(
+        target_frame: Any,
+        message: LiveChatMessage,
+        row_index: int,
+        large: bool,
+        overlay: bool = False,
+    ) -> Any:
+        if overlay:
+            font_size = layout_value(chat_overlay_font_size_var, 10, 24)
+            compact = bool(chat_overlay_compact_var.get())
+            avatar_size = 30 if compact else 40
+            name_font = ("Segoe UI Semibold", max(10, font_size - 1))
+            meta_font = ("Segoe UI", max(8, font_size - 4))
+            message_font = ("Segoe UI", font_size)
+            wraplength = max(210, layout_value(chat_overlay_width_var, 300, 900) - (92 if compact else 110))
+            row_fg = "#101016" if row_index % 2 == 0 else "#090a0f"
+            corner_radius = 12
+            row_pad = 4 if compact else 6
+        else:
+            avatar_size = 54 if large else 44
+            name_font = ("Segoe UI Semibold", 16 if large else 13)
+            meta_font = ("Segoe UI", 11 if large else 10)
+            message_font = ("Segoe UI", 15 if large else 12)
+            wraplength = 1360 if large else 980
+            row_fg = chat_row_color(row_index)
+            corner_radius = 12 if large else 10
+            row_pad = 5
+
+        item = ctk.CTkFrame(
+            target_frame,
+            fg_color=row_fg,
+            corner_radius=corner_radius,
+            border_width=1 if overlay else 0,
+            border_color="#2b181d" if overlay else row_fg,
+        )
+        item._chat_key = live_chat_key(message)  # type: ignore[attr-defined]
+        item.grid(row=row_index, column=0, sticky="ew", padx=8, pady=row_pad)
+        item.columnconfigure(1, weight=1)
+        avatar = make_avatar_label(item, message.username, message.avatar_url, size=avatar_size)
+        avatar.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(10, 8), pady=8 if overlay else 10)
+        item._chat_avatar_label = avatar  # type: ignore[attr-defined]
+        meta = ctk.CTkFrame(item, fg_color="transparent", corner_radius=0)
+        meta.grid(row=0, column=1, sticky="ew", padx=(0, 10 if overlay else 12), pady=(7 if overlay else 9, 0))
+        meta.columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            meta,
+            text=message.username,
+            text_color=accent if overlay else fg,
+            font=name_font,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew")
+        if not overlay or not chat_overlay_compact_var.get():
+            ctk.CTkLabel(
+                meta,
+                text=f"{message.platform or 'Live'} • {message.received_at}",
+                text_color=muted,
+                font=meta_font,
+                anchor="e",
+            ).grid(row=0, column=1, sticky="e", padx=(8, 0))
+        ctk.CTkLabel(
+            item,
+            text=message.comment,
+            text_color=fg,
+            font=message_font,
+            wraplength=wraplength,
+            justify="left",
+            anchor="w",
+        ).grid(row=1, column=1, sticky="ew", padx=(0, 12 if overlay else 14), pady=(0, 8 if overlay else 11))
+        return item
+
+    def reindex_chat_widgets(widget_store: list[Any], overlay: bool = False) -> None:
+        for row_index, widget in enumerate(widget_store):
+            try:
+                widget.grid(row=row_index, column=0, sticky="ew", padx=8, pady=5)
+                widget.configure(fg_color=("#101016" if row_index % 2 == 0 else "#090a0f") if overlay else chat_row_color(row_index))
+            except tk.TclError:
+                pass
+
+    def update_chat_avatar_widgets(url: str, size: int) -> None:
+        clean_url = (url or "").strip()
+        if not clean_url:
+            return
+        image = avatar_image_cache.get((clean_url, size))
+        for widget_store in (chat_widgets, chat_monitor_widgets, chat_overlay_widgets):
+            for widget in widget_store:
+                label = getattr(widget, "_chat_avatar_label", None)
+                if label is None:
+                    continue
+                if getattr(label, "_avatar_url", "") != clean_url or getattr(label, "_avatar_size", 0) != size:
+                    continue
+                name = str(getattr(label, "_avatar_name", ""))
+                try:
+                    label.configure(image=image, text="" if image else avatar_initials(name))
+                    label._avatar_image = image  # type: ignore[attr-defined]
+                except tk.TclError:
+                    pass
+
+    def render_chat_messages(
+        target_frame: Any,
+        widget_store: list[Any],
+        visible: list[LiveChatMessage],
+        large: bool = False,
+        force: bool = False,
+        overlay: bool = False,
+    ) -> None:
+        if force:
+            destroy_chat_widgets(widget_store)
+
+        if not visible:
+            render_empty_chat(target_frame, widget_store, large, overlay=overlay)
+            return
+
+        if len(widget_store) == 1 and chat_widget_key(widget_store[0]) == CHAT_EMPTY_KEY:
+            destroy_chat_widgets(widget_store)
+
+        new_keys = [live_chat_key(message) for message in visible]
+        old_keys = [chat_widget_key(widget) for widget in widget_store]
+
+        if old_keys == new_keys:
+            return
+
+        if not widget_store:
+            for row_index, message in enumerate(visible):
+                widget_store.append(build_chat_message_widget(target_frame, message, row_index, large, overlay))
+            scroll_chat_to_bottom(target_frame)
+            return
+
+        if not force and old_keys:
+            max_overlap = min(len(old_keys), len(new_keys))
+            overlap = 0
+            for size in range(max_overlap, 0, -1):
+                if old_keys[-size:] == new_keys[:size]:
+                    overlap = size
+                    break
+            if overlap and overlap >= max(1, max_overlap - 20):
+                remove_count = len(old_keys) - overlap
+                for widget in widget_store[:remove_count]:
+                    try:
+                        widget.destroy()
+                    except tk.TclError:
+                        pass
+                del widget_store[:remove_count]
+                for message in visible[overlap:]:
+                    widget_store.append(build_chat_message_widget(target_frame, message, len(widget_store), large, overlay))
+                reindex_chat_widgets(widget_store, overlay=overlay)
+                scroll_chat_to_bottom(target_frame)
+                return
+
+        destroy_chat_widgets(widget_store)
+        if not visible:
+            empty = ctk.CTkLabel(
+                target_frame,
+                text="Nenhuma mensagem recebida ainda",
+                text_color=muted,
+                font=("Segoe UI", 15 if large else 13),
+            )
+            empty._chat_key = CHAT_EMPTY_KEY  # type: ignore[attr-defined]
+            empty.grid(row=0, column=0, sticky="ew", padx=14, pady=16)
+            widget_store.append(empty)
+            return
+
+        for row_index, message in enumerate(visible):
+            widget_store.append(build_chat_message_widget(target_frame, message, row_index, large, overlay))
+        scroll_chat_to_bottom(target_frame)
+
+    def refresh_chat_messages(force: bool = False) -> None:
+        visible = visible_chat_messages()
+        signature = [
+            (
+                message.received_at,
+                message.username,
+                message.comment,
+                message.avatar_url,
+                message.platform,
+            )
+            for message in visible
+        ]
+        if not force and getattr(refresh_chat_messages, "_signature", None) == signature:
+            return
+        refresh_chat_messages._signature = signature  # type: ignore[attr-defined]
+
+        render_chat_messages(chat_messages_frame, chat_widgets, visible, large=False, force=force)
+        if chat_monitor_messages_frame is not None:
+            try:
+                render_chat_messages(chat_monitor_messages_frame, chat_monitor_widgets, visible, large=True, force=force)
+            except tk.TclError:
+                pass
+        if chat_overlay_messages_frame is not None:
+            try:
+                render_chat_messages(chat_overlay_messages_frame, chat_overlay_widgets, visible, large=False, force=force, overlay=True)
+            except tk.TclError:
+                pass
+
+    def pump_chat_event_queue() -> None:
+        if app_closing:
+            return
+        updated = False
+        while True:
+            try:
+                kind, payload = chat_event_queue.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "message":
+                raw_payload = payload.get("payload") if isinstance(payload, dict) else None
+                source = str(payload.get("source") or "") if isinstance(payload, dict) else ""
+                if isinstance(raw_payload, LiveChatMessage):
+                    message = raw_payload
+                else:
+                    message = normalize_live_chat_payload(raw_payload, source=source)
+                if message is not None:
+                    add_live_chat_message(message)
+                    updated = True
+                elif is_live_chat_event_payload(raw_payload):
+                    log(f"Evento de chat recebido, mas nao exibido: {compact_json_preview(raw_payload)}")
+            elif kind == "status":
+                chat_status_var.set(str(payload))
+        if updated:
+            refresh_chat_messages()
+        if not app_closing:
+            root.after(120, pump_chat_event_queue)
+
+    def bot_safe_delay_seconds() -> int:
+        try:
+            value = int(float(bot_safe_delay_var.get().replace(",", ".")))
+        except ValueError:
+            value = 15
+        value = max(15, value)
+        bot_safe_delay_var.set(str(value))
+        return value
+
+    def bot_default_cooldown_seconds() -> int:
+        try:
+            value = int(float(bot_default_cooldown_var.get().replace(",", ".")))
+        except ValueError:
+            value = 30
+        value = max(0, value)
+        bot_default_cooldown_var.set(str(value))
+        return value
+
+    def bot_default_timer_interval_seconds() -> int:
+        try:
+            value = int(float(bot_default_timer_interval_var.get().replace(",", ".")))
+        except ValueError:
+            value = 600
+        value = max(60, value)
+        bot_default_timer_interval_var.set(str(value))
+        return value
+
+    def bot_default_timer_min_messages() -> int:
+        try:
+            value = int(float(bot_default_timer_min_messages_var.get().replace(",", ".")))
+        except ValueError:
+            value = 5
+        value = max(0, value)
+        bot_default_timer_min_messages_var.set(str(value))
+        return value
+
+    def bot_delivery_method_key() -> str:
+        return "streamerbot_http" if bot_delivery_method_var.get() == "Streamer.bot HTTP" else "streamerbot_websocket"
+
+    def bot_ignored_usernames() -> set[str]:
+        raw = bot_ignore_usernames_var.get()
+        return {item.strip().casefold() for item in re.split(r"[,;\n]+", raw) if item.strip()}
+
+    def bot_settings_from_vars() -> dict[str, Any]:
+        return {
+            "method": bot_delivery_method_key(),
+            "websocket_url": normalize_streamerbot_websocket_url(bot_streamerbot_ws_url_var.get()),
+            "http_url": normalize_streamerbot_http_url(bot_streamerbot_http_url_var.get()),
+            "password": bot_streamerbot_password_var.get(),
+            "action_name": bot_streamerbot_action_name_var.get().strip(),
+            "action_id": bot_streamerbot_action_id_var.get().strip(),
+        }
+
+    def update_bot_queue_count() -> None:
+        bot_queue_count_var.set(str(bot_reply_queue.qsize()))
+
+    def reindex_custom_command_rows() -> None:
+        for index, row in enumerate(custom_command_rows):
+            frame = row["frame"]
+            try:
+                frame.grid(row=index, column=0, sticky="ew", padx=8, pady=(8 if index == 0 else 4, 4))
+            except tk.TclError:
+                pass
+
+    def remove_custom_command_row(row: dict[str, Any]) -> None:
+        if row in custom_command_rows:
+            custom_command_rows.remove(row)
+        try:
+            row["frame"].destroy()
+        except tk.TclError:
+            pass
+        reindex_custom_command_rows()
+
+    def add_custom_command_row(
+        command: str = "",
+        response: str = "",
+        cooldown: int | None = None,
+        enabled: bool = True,
+    ) -> None:
+        if cooldown is None:
+            cooldown = bot_default_cooldown_seconds()
+        frame = ctk.CTkFrame(commands_table_frame, fg_color="#101016", corner_radius=10)
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(2, weight=4)
+        enabled_var = tk.BooleanVar(value=enabled)
+        command_var = tk.StringVar(value=command)
+        response_var = tk.StringVar(value=response)
+        cooldown_var = tk.StringVar(value=str(max(0, int(cooldown))))
+        row: dict[str, Any] = {
+            "frame": frame,
+            "enabled": enabled_var,
+            "command": command_var,
+            "response": response_var,
+            "cooldown": cooldown_var,
+        }
+        ctk.CTkCheckBox(
+            frame,
+            text="",
+            width=28,
+            variable=enabled_var,
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=0, column=0, sticky="w", padx=(10, 4), pady=10)
+        entry(frame, command_var, width=130).grid(row=0, column=1, sticky="ew", padx=6, pady=10)
+        entry(frame, response_var).grid(row=0, column=2, sticky="ew", padx=6, pady=10)
+        entry(frame, cooldown_var, width=82).grid(row=0, column=3, sticky="ew", padx=6, pady=10)
+        button(frame, "Teste", lambda command_row=row: test_custom_command_row(command_row), "default", width=66).grid(
+            row=0, column=4, sticky="e", padx=6, pady=10
+        )
+        button(frame, "X", lambda command_row=row: remove_custom_command_row(command_row), "danger", width=42).grid(
+            row=0, column=5, sticky="e", padx=(0, 10), pady=10
+        )
+        custom_command_rows.append(row)
+        reindex_custom_command_rows()
+
+    def collect_custom_commands() -> list[ChatCommand]:
+        commands: list[ChatCommand] = []
+        seen: set[str] = set()
+        for row in custom_command_rows:
+            command = normalize_chat_command(row["command"].get())
+            response = row["response"].get().strip()
+            if not command or not response or command in seen:
+                continue
+            try:
+                cooldown = int(float(row["cooldown"].get().replace(",", ".")))
+            except ValueError:
+                cooldown = bot_default_cooldown_seconds()
+            cooldown = max(0, cooldown)
+            row["command"].set(command)
+            row["cooldown"].set(str(cooldown))
+            commands.append(
+                ChatCommand(
+                    command=command,
+                    response=response,
+                    enabled=bool(row["enabled"].get()),
+                    cooldown_seconds=cooldown,
+                )
+            )
+            seen.add(command)
+        return commands
+
+    def set_custom_commands(commands: list[ChatCommand]) -> None:
+        for row in list(custom_command_rows):
+            remove_custom_command_row(row)
+        if not commands:
+            add_custom_command_row("!pix", "Pix do Aizen: coloque sua chave aqui, {user}.", 45, False)
+            add_custom_command_row("!dc", "Entre no Discord: coloque seu convite aqui.", 45, False)
+            return
+        for command in commands:
+            add_custom_command_row(command.command, command.response, command.cooldown_seconds, command.enabled)
+
+    def reindex_chat_timer_rows() -> None:
+        for index, row in enumerate(chat_timer_rows):
+            frame = row["frame"]
+            try:
+                frame.grid(row=index, column=0, sticky="ew", padx=8, pady=(8 if index == 0 else 4, 4))
+            except tk.TclError:
+                pass
+
+    def remove_chat_timer_row(row: dict[str, Any]) -> None:
+        if row in chat_timer_rows:
+            chat_timer_rows.remove(row)
+        chat_timer_runtime.pop(row.get("id", ""), None)
+        try:
+            row["frame"].destroy()
+        except tk.TclError:
+            pass
+        reindex_chat_timer_rows()
+
+    def add_chat_timer_row(
+        name: str = "",
+        message: str = "",
+        interval: int | None = None,
+        min_messages: int | None = None,
+        enabled: bool = True,
+    ) -> None:
+        if interval is None:
+            interval = bot_default_timer_interval_seconds()
+        if min_messages is None:
+            min_messages = bot_default_timer_min_messages()
+        frame = ctk.CTkFrame(timers_table_frame, fg_color="#101016", corner_radius=10)
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(2, weight=4)
+        enabled_var = tk.BooleanVar(value=enabled)
+        name_var = tk.StringVar(value=name)
+        message_var = tk.StringVar(value=message)
+        interval_var = tk.StringVar(value=str(max(60, int(interval))))
+        min_messages_var = tk.StringVar(value=str(max(0, int(min_messages))))
+        row: dict[str, Any] = {
+            "id": uuid.uuid4().hex,
+            "frame": frame,
+            "enabled": enabled_var,
+            "name": name_var,
+            "message": message_var,
+            "interval": interval_var,
+            "min_messages": min_messages_var,
+        }
+        ctk.CTkCheckBox(
+            frame,
+            text="",
+            width=28,
+            variable=enabled_var,
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=0, column=0, sticky="w", padx=(10, 4), pady=10)
+        entry(frame, name_var, width=130).grid(row=0, column=1, sticky="ew", padx=6, pady=10)
+        entry(frame, message_var).grid(row=0, column=2, sticky="ew", padx=6, pady=10)
+        entry(frame, interval_var, width=90).grid(row=0, column=3, sticky="ew", padx=6, pady=10)
+        entry(frame, min_messages_var, width=84).grid(row=0, column=4, sticky="ew", padx=6, pady=10)
+        button(frame, "Teste", lambda timer_row=row: test_chat_timer_row(timer_row), "default", width=66).grid(
+            row=0, column=5, sticky="e", padx=6, pady=10
+        )
+        button(frame, "X", lambda timer_row=row: remove_chat_timer_row(timer_row), "danger", width=42).grid(
+            row=0, column=6, sticky="e", padx=(0, 10), pady=10
+        )
+        chat_timer_rows.append(row)
+        reindex_chat_timer_rows()
+
+    def timer_row_interval_seconds(row: dict[str, Any]) -> int:
+        try:
+            value = int(float(row["interval"].get().replace(",", ".")))
+        except ValueError:
+            value = bot_default_timer_interval_seconds()
+        return max(60, value)
+
+    def timer_row_min_messages(row: dict[str, Any]) -> int:
+        try:
+            value = int(float(row["min_messages"].get().replace(",", ".")))
+        except ValueError:
+            value = bot_default_timer_min_messages()
+        return max(0, value)
+
+    def collect_chat_timers() -> list[ChatTimer]:
+        timers: list[ChatTimer] = []
+        seen: set[str] = set()
+        for row in chat_timer_rows:
+            name = re.sub(r"\s+", " ", row["name"].get().strip())[:80]
+            message = re.sub(r"\s+", " ", row["message"].get().strip())
+            key = name.casefold()
+            if not name or not message or key in seen:
+                continue
+            interval = timer_row_interval_seconds(row)
+            min_messages = timer_row_min_messages(row)
+            row["name"].set(name)
+            row["message"].set(message)
+            row["interval"].set(str(interval))
+            row["min_messages"].set(str(min_messages))
+            timers.append(
+                ChatTimer(
+                    name=name,
+                    message=message,
+                    enabled=bool(row["enabled"].get()),
+                    interval_seconds=interval,
+                    min_chat_messages=min_messages,
+                )
+            )
+            seen.add(key)
+        return timers
+
+    def set_chat_timers(timers: list[ChatTimer]) -> None:
+        for row in list(chat_timer_rows):
+            remove_chat_timer_row(row)
+        if not timers:
+            add_chat_timer_row("Discord", "Entre no Discord do Aizen: coloque seu convite aqui.", 600, 6, False)
+            add_chat_timer_row("LivePix", "Apoie a live pelo LivePix: coloque seu link ou chave aqui.", 600, 8, False)
+            return
+        for timer in timers:
+            add_chat_timer_row(
+                timer.name,
+                timer.message,
+                timer.interval_seconds,
+                timer.min_chat_messages,
+                timer.enabled,
+            )
+
+    def queue_chat_timer_row(row: dict[str, Any], test: bool = False) -> bool:
+        name = re.sub(r"\s+", " ", row["name"].get().strip())[:80] or "Timer"
+        template = row["message"].get().strip()
+        if not template:
+            return False
+        message = LiveChatMessage(
+            username="AizenTimer",
+            comment=name,
+            platform="Timer",
+            received_at=datetime.now().strftime("%H:%M:%S"),
+            message_id=f"timer-{row.get('id', uuid.uuid4().hex)}-{time.time()}",
+            source="timer",
+        )
+        response = render_chat_command_response(template, message, f"timer:{name}", "")
+        queue_bot_reply(response, message, f"timer:{name}", "", test=test)
+        return True
+
+    def test_chat_timer_row(row: dict[str, Any]) -> None:
+        if queue_chat_timer_row(row, test=True):
+            timer_status_var.set("Teste na fila")
+        else:
+            timer_status_var.set("Timer vazio")
+
+    def pump_chat_timers() -> None:
+        if app_closing:
+            return
+        now = time.time()
+        current_ids = {row["id"] for row in chat_timer_rows}
+        for timer_id in list(chat_timer_runtime):
+            if timer_id not in current_ids:
+                chat_timer_runtime.pop(timer_id, None)
+
+        active_rows = [
+            row
+            for row in chat_timer_rows
+            if bool(row["enabled"].get()) and bool(row["message"].get().strip())
+        ]
+        timer_active_count_var.set(str(len(active_rows)))
+
+        if not chat_timers_enabled_var.get():
+            timer_status_var.set("Desligado")
+            timer_next_send_var.set("-")
+            if not app_closing:
+                root.after(1000, pump_chat_timers)
+            return
+
+        if not active_rows:
+            timer_status_var.set("Sem timers ativos")
+            timer_next_send_var.set("-")
+            if not app_closing:
+                root.after(1000, pump_chat_timers)
+            return
+
+        nearest_next_at: float | None = None
+        queued = 0
+        waiting_for_chat = False
+        for row in active_rows:
+            timer_id = row["id"]
+            interval = timer_row_interval_seconds(row)
+            min_messages = timer_row_min_messages(row)
+            runtime = chat_timer_runtime.setdefault(
+                timer_id,
+                {
+                    "next_at": now + interval,
+                    "last_chat_count": len(chat_messages),
+                    "interval": interval,
+                    "min_messages": min_messages,
+                },
+            )
+            if runtime.get("interval") != interval or runtime.get("min_messages") != min_messages:
+                runtime["interval"] = interval
+                runtime["min_messages"] = min_messages
+                runtime["next_at"] = now + interval
+                runtime["last_chat_count"] = len(chat_messages)
+
+            if now >= float(runtime.get("next_at", now + interval)):
+                new_messages = len(chat_messages) - int(runtime.get("last_chat_count", len(chat_messages)))
+                if new_messages >= min_messages:
+                    if queue_chat_timer_row(row):
+                        queued += 1
+                    runtime["last_chat_count"] = len(chat_messages)
+                    runtime["next_at"] = now + interval
+                else:
+                    waiting_for_chat = True
+                    runtime["next_at"] = now + min(30, interval)
+
+            next_at = float(runtime.get("next_at", now + interval))
+            nearest_next_at = next_at if nearest_next_at is None else min(nearest_next_at, next_at)
+
+        if queued:
+            timer_status_var.set("Mensagem na fila")
+        elif waiting_for_chat:
+            timer_status_var.set("Aguardando chat")
+        else:
+            timer_status_var.set("Rodando")
+
+        if nearest_next_at is None:
+            timer_next_send_var.set("-")
+        else:
+            remaining = max(0, int(nearest_next_at - now))
+            timer_next_send_var.set(f"{remaining // 60:02d}:{remaining % 60:02d}")
+        if not app_closing:
+            root.after(1000, pump_chat_timers)
+
+    def queue_bot_reply(text: str, message: LiveChatMessage, command: str, args: str, test: bool = False) -> None:
+        response_text = re.sub(r"\s+", " ", text).strip()
+        if not response_text:
+            return
+        payload = {
+            "message": response_text,
+            "username": message.username,
+            "user": message.username,
+            "nick": message.username,
+            "command": command,
+            "args": args,
+            "sourceMessage": message.comment,
+            "platform": message.platform or "Live",
+            "fromAizen": True,
+            "test": bool(test),
+        }
+        bot_reply_queue.put(payload)
+        update_bot_queue_count()
+        bot_status_var.set("Na fila")
+        log(f"Resposta do bot enfileirada: {response_text[:120]}")
+
+    def should_ignore_bot_user(message: LiveChatMessage) -> bool:
+        ignored = bot_ignored_usernames()
+        return bool(ignored and message.username.strip().casefold() in ignored)
+
+    def handle_custom_chat_commands(message: LiveChatMessage) -> None:
+        if not chat_commands_enabled_var.get():
+            return
+        if not message.comment.strip().startswith("!"):
+            return
+        if message.platform == "Aizen" or should_ignore_bot_user(message):
+            return
+        token, args = chat_command_token(message.comment)
+        if not token:
+            return
+        now = time.time()
+        default_cooldown = bot_default_cooldown_seconds()
+        for command in collect_custom_commands():
+            if not command.enabled or command.command != token:
+                continue
+            cooldown = command.cooldown_seconds if command.cooldown_seconds > 0 else default_cooldown
+            last_sent = bot_command_last_sent.get(command.command, 0.0)
+            if cooldown and now - last_sent < cooldown:
+                remaining = int(cooldown - (now - last_sent))
+                bot_status_var.set(f"Cooldown {remaining}s")
+                return
+            response = render_chat_command_response(command.response, message, command.command, args)
+            bot_command_last_sent[command.command] = now
+            queue_bot_reply(response, message, command.command, args)
+            return
+
+    def test_custom_command_row(row: dict[str, Any]) -> None:
+        command = normalize_chat_command(row["command"].get()) or "!teste"
+        message = LiveChatMessage(
+            username="AizenTeste",
+            comment=f"{command} teste",
+            platform="Teste",
+            received_at=datetime.now().strftime("%H:%M:%S"),
+            message_id=f"command-test-{time.time()}",
+            source="local",
+        )
+        response = render_chat_command_response(row["response"].get(), message, command, "teste")
+        queue_bot_reply(response, message, command, "teste", test=True)
+
+    def test_bot_send() -> None:
+        message = LiveChatMessage(
+            username="AizenTeste",
+            comment="!teste",
+            platform="Teste",
+            received_at=datetime.now().strftime("%H:%M:%S"),
+            message_id=f"bot-send-test-{time.time()}",
+            source="local",
+        )
+        queue_bot_reply(
+            "Mensagem de teste do Aizen Stream Control via Streamer.bot/TikFinity.",
+            message,
+            "!teste",
+            "",
+            test=True,
+        )
+
+    def pump_bot_send_results() -> None:
+        nonlocal bot_sending, bot_next_allowed_at
+        if app_closing:
+            return
+        while True:
+            try:
+                ok, detail, payload = bot_send_result_queue.get_nowait()
+            except queue.Empty:
+                break
+            bot_sending = False
+            bot_next_allowed_at = time.time() + bot_safe_delay_seconds()
+            update_bot_queue_count()
+            if ok:
+                bot_last_sent_var.set(datetime.now().strftime("%H:%M:%S"))
+                bot_status_var.set("Enviado")
+                log(f"Bot respondeu na live: {payload.get('message', '')[:140]}")
+            else:
+                bot_status_var.set("Erro")
+                log(f"Erro ao enviar resposta do bot: {detail}")
+
+        if bot_sending:
+            if not app_closing:
+                root.after(300, pump_bot_send_results)
+            return
+
+        if bot_reply_queue.empty():
+            update_bot_queue_count()
+            if (chat_commands_enabled_var.get() or chat_timers_enabled_var.get()) and bot_status_var.get() in {
+                "Desligado",
+                "Na fila",
+            }:
+                if chat_commands_enabled_var.get() and chat_timers_enabled_var.get():
+                    bot_status_var.set("Aguardando comando/timer")
+                elif chat_timers_enabled_var.get():
+                    bot_status_var.set("Aguardando timer")
+                else:
+                    bot_status_var.set("Aguardando comando")
+            if not app_closing:
+                root.after(400, pump_bot_send_results)
+            return
+
+        remaining = bot_next_allowed_at - time.time()
+        if remaining > 0:
+            bot_status_var.set(f"Delay seguro {int(remaining) + 1}s")
+            update_bot_queue_count()
+            if not app_closing:
+                root.after(500, pump_bot_send_results)
+            return
+
+        payload = bot_reply_queue.get_nowait()
+        update_bot_queue_count()
+        bot_sending = True
+        bot_status_var.set("Enviando")
+        try:
+            settings = bot_settings_from_vars()
+        except Exception as exc:
+            bot_send_result_queue.put((False, str(exc), payload))
+            if not app_closing:
+                root.after(250, pump_bot_send_results)
+            return
+
+        def send() -> None:
+            try:
+                detail = send_chatbot_message_via_streamerbot(settings, payload)
+                bot_send_result_queue.put((True, detail, payload))
+            except Exception as exc:
+                bot_send_result_queue.put((False, str(exc), payload))
+
+        threading.Thread(target=send, name="AizenBotReplySend", daemon=True).start()
+        if not app_closing:
+            root.after(250, pump_bot_send_results)
+
+    def livepix_webhook_port() -> int:
+        try:
+            value = int(float(livepix_webhook_port_var.get().replace(",", ".")))
+        except ValueError:
+            value = 8787
+        value = max(1024, min(65535, value))
+        livepix_webhook_port_var.set(str(value))
+        return value
+
+    def livepix_goal_amount_cents() -> int:
+        try:
+            value = float(livepix_goal_amount_var.get().replace(".", "").replace(",", "."))
+        except ValueError:
+            value = 500.0
+        cents = max(0, int(round(value * 100)))
+        return cents
+
+    def livepix_checkout_amount_cents() -> int:
+        try:
+            value = float(livepix_checkout_amount_var.get().replace(".", "").replace(",", "."))
+        except ValueError:
+            value = 10.0
+        cents = max(100, int(round(value * 100)))
+        livepix_checkout_amount_var.set(f"{cents / 100:.2f}".replace(".", ","))
+        return cents
+
+    def livepix_endpoint_url(include_token: bool = True) -> str:
+        host = livepix_webhook_host_var.get().strip() or "127.0.0.1"
+        port = livepix_webhook_port()
+        token = livepix_webhook_token_var.get().strip()
+        url = f"http://{host}:{port}/api/livepix"
+        if include_token and token:
+            url = f"{url}?token={token}"
+        return url
+
+    def update_livepix_endpoint_text() -> None:
+        livepix_endpoint_var.set(f"POST JSON: {livepix_endpoint_url(include_token=True)}")
+
+    def livepix_client() -> LivepixApiClient:
+        return LivepixApiClient(
+            livepix_client_id_var.get(),
+            livepix_client_secret_var.get(),
+            livepix_scopes_var.get(),
+            log,
+        )
+
+    def merge_livepix_events(new_events: list[LivepixEvent]) -> int:
+        existing = {(event.kind, event.event_id or event.reference) for event in livepix_events}
+        added = 0
+        for event in new_events:
+            key = (event.kind, event.event_id or event.reference)
+            if key in existing:
+                continue
+            livepix_events.append(event)
+            existing.add(key)
+            added += 1
+        livepix_events.sort(key=lambda item: item.created_at or "", reverse=True)
+        del livepix_events[1000:]
+        save_livepix_events(livepix_events_path(config_path), livepix_events)
+        refresh_livepix_dashboard()
+        return added
+
+    def livepix_event_title(event: LivepixEvent) -> str:
+        kind_label = {
+            "message": "mensagem",
+            "payment": "pagamento",
+            "subscription": "assinatura",
+        }.get(event.kind, "apoio")
+        name = event.username.strip() or "Apoiador"
+        amount = format_livepix_amount(event.amount, event.currency)
+        if event.message:
+            return f"{name} enviou {kind_label} de {amount}: {event.message}"
+        return f"{name} enviou {kind_label} de {amount}"
+
+    def announce_livepix_event(event: LivepixEvent) -> None:
+        if not livepix_announce_in_chat_var.get():
+            return
+        message = LiveChatMessage(
+            username=event.username or "Livepix",
+            comment=livepix_event_title(event),
+            platform="Livepix",
+            message_id=f"livepix-{event.kind}-{event.event_id or event.reference}",
+            source="livepix",
+            received_at=datetime.now().strftime("%H:%M:%S"),
+            supporter_tier="gift" if event.amount >= 5000 else "fan",
+        )
+        add_live_chat_message(message)
+        refresh_chat_messages(force=True)
+
+    def livepix_public_page_path() -> Path:
+        raw_path = livepix_public_page_file_var.get().strip() or "livepix_public.html"
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = ROOT / path
+        return path
+
+    def export_livepix_public_page() -> None:
+        refresh_livepix_dashboard()
+        path = livepix_public_page_path()
+        events = livepix_events[:30]
+        ranking = livepix_ranking_var.get().splitlines() if livepix_ranking_var.get() != "-" else []
+        event_items = "\n".join(
+            f"<li><strong>{html.escape(event.username or 'Apoiador')}</strong> "
+            f"<span>{html.escape(format_livepix_amount(event.amount, event.currency))}</span>"
+            f"<p>{html.escape(event.message or event.reference or event.created_at)}</p></li>"
+            for event in events
+        )
+        ranking_items = "\n".join(f"<li>{html.escape(line)}</li>" for line in ranking)
+        page = f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{html.escape(livepix_goal_label_var.get() or 'Livepix')}</title>
+  <style>
+    body {{ margin: 0; font-family: Segoe UI, Arial, sans-serif; background: #08090d; color: #f8f3f2; }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 32px 18px; }}
+    h1 {{ margin: 0 0 6px; font-size: 34px; }}
+    .muted {{ color: #ad9da0; }}
+    .metrics {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 22px 0; }}
+    .card {{ background: #101116; border: 1px solid #332025; border-radius: 8px; padding: 16px; }}
+    .value {{ color: #35d6a5; font-size: 26px; font-weight: 700; }}
+    ol, ul {{ padding-left: 22px; }}
+    li {{ margin: 10px 0; }}
+    li span {{ color: #35d6a5; font-weight: 700; }}
+    p {{ margin: 4px 0 0; color: #ad9da0; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{html.escape(livepix_goal_label_var.get() or 'Meta da live')}</h1>
+    <div class="muted">Atualizado em {html.escape(datetime.now().strftime('%d/%m/%Y %H:%M:%S'))}</div>
+    <section class="metrics">
+      <div class="card"><div class="muted">Total</div><div class="value">{html.escape(livepix_total_var.get())}</div></div>
+      <div class="card"><div class="muted">Meta</div><div class="value">{html.escape(livepix_goal_var.get())}</div></div>
+      <div class="card"><div class="muted">Eventos</div><div class="value">{html.escape(livepix_count_var.get())}</div></div>
+    </section>
+    <section class="card">
+      <h2>Top apoiadores</h2>
+      <ol>{ranking_items or '<li>Nenhum apoio registrado ainda</li>'}</ol>
+    </section>
+    <section class="card">
+      <h2>Últimos apoios</h2>
+      <ul>{event_items or '<li>Nenhum evento recebido ainda</li>'}</ul>
+    </section>
+  </main>
+</body>
+</html>
+"""
+        path.write_text(page, encoding="utf-8")
+        livepix_status_var.set("Página exportada")
+        log(f"Página pública Livepix exportada em {path}")
+
+    def livepix_period_events() -> list[LivepixEvent]:
+        return [event for event in livepix_events if event.currency.upper() == livepix_currency_var.get().strip().upper()]
+
+    def refresh_livepix_dashboard() -> None:
+        events = livepix_period_events()
+        total = sum(event.amount for event in events if event.kind in {"payment", "message", "subscription"})
+        goal = livepix_goal_amount_cents()
+        livepix_total_var.set(format_livepix_amount(total, livepix_currency_var.get()))
+        livepix_count_var.set(str(len(events)))
+        livepix_goal_var.set(f"{min(999, int((total / goal) * 100)) if goal else 0}%")
+        by_user: dict[str, int] = {}
+        for event in events:
+            name = event.username.strip() or event.reference or "Apoiador"
+            by_user[name] = by_user.get(name, 0) + event.amount
+        if by_user:
+            top_name, top_amount = max(by_user.items(), key=lambda item: item[1])
+            livepix_top_var.set(f"{top_name} - {format_livepix_amount(top_amount, livepix_currency_var.get())}")
+            ranking_lines = [
+                f"{index}. {name} - {format_livepix_amount(amount, livepix_currency_var.get())}"
+                for index, (name, amount) in enumerate(
+                    sorted(by_user.items(), key=lambda item: item[1], reverse=True)[:10],
+                    start=1,
+                )
+            ]
+            livepix_ranking_var.set("\n".join(ranking_lines))
+        else:
+            livepix_top_var.set("-")
+            livepix_ranking_var.set("-")
+        render_livepix_events()
+        if livepix_overlay_frame is not None:
+            render_livepix_overlay()
+
+    def render_livepix_events() -> None:
+        if "livepix_events_frame" not in globals() and not hasattr(render_livepix_events, "frame"):
+            return
+        frame = getattr(render_livepix_events, "frame", None)
+        if frame is None:
+            return
+        for widget in livepix_widgets:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        livepix_widgets.clear()
+        events = livepix_events[:80]
+        if not events:
+            empty = ctk.CTkLabel(frame, text="Nenhum evento Livepix recebido ainda", text_color=muted, font=("Segoe UI", 13))
+            empty.grid(row=0, column=0, sticky="ew", padx=12, pady=12)
+            livepix_widgets.append(empty)
+            return
+        for row_index, event in enumerate(events):
+            row = ctk.CTkFrame(frame, fg_color="#171014" if row_index % 2 == 0 else "#0f0b0e", corner_radius=10)
+            row.grid(row=row_index, column=0, sticky="ew", padx=8, pady=4)
+            row.columnconfigure(1, weight=1)
+            kind_label = {
+                "message": "Mensagem",
+                "payment": "Pagamento",
+                "subscription": "Assinatura",
+            }.get(event.kind, event.kind.title() or "Evento")
+            ctk.CTkLabel(row, text=kind_label, text_color=accent, font=("Segoe UI Semibold", 12), width=86).grid(row=0, column=0, sticky="w", padx=10, pady=(8, 0))
+            title = event.username or event.reference or "Apoiador"
+            ctk.CTkLabel(row, text=title, text_color=fg, font=("Segoe UI Semibold", 13), anchor="w").grid(row=0, column=1, sticky="ew", padx=8, pady=(8, 0))
+            ctk.CTkLabel(row, text=format_livepix_amount(event.amount, event.currency), text_color=teal, font=("Segoe UI Semibold", 13)).grid(row=0, column=2, sticky="e", padx=10, pady=(8, 0))
+            detail = event.message or event.reference or event.proof or event.created_at
+            ctk.CTkLabel(row, text=detail[:180], text_color=muted, font=("Segoe UI", 11), anchor="w", wraplength=760).grid(row=1, column=1, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
+            if event.flagged:
+                ctk.CTkLabel(row, text="MOD", text_color=danger, font=("Segoe UI Semibold", 11)).grid(row=1, column=0, sticky="w", padx=10, pady=(0, 8))
+            livepix_widgets.append(row)
+
+    def handle_livepix_webhook(payload: dict[str, Any]) -> None:
+        livepix_queue.put(("webhook", payload))
+
+    def fetch_livepix_webhook_details(payload: dict[str, Any]) -> None:
+        try:
+            client = livepix_client()
+            data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+            resource = data.get("resource") if isinstance(data.get("resource"), dict) else {}
+            resource_id = _first_text(resource.get("id"), data.get("id"))
+            resource_type = _first_text(resource.get("type"), data.get("type")).lower()
+            event: LivepixEvent | None = None
+            if resource_id and resource_type == "payment":
+                event = client.payment(resource_id)
+            elif resource_id and resource_type == "message":
+                event = client.message(resource_id)
+            elif resource_id and resource_type == "subscription":
+                event = client.subscription(resource_id)
+            if event is None:
+                event = parse_livepix_event(payload, source="webhook")
+            livepix_queue.put(("webhook_detail", event))
+        except Exception as exc:
+            fallback = parse_livepix_event(payload, source="webhook")
+            livepix_queue.put(("webhook_detail", fallback))
+            livepix_queue.put(("status", f"Webhook recebido; detalhe API falhou: {exc}"))
+
+    def start_livepix_webhook() -> None:
+        nonlocal livepix_webhook_server
+        try:
+            save_config(config_path, update_config_from_form())
+            stop_livepix_webhook(silent=True)
+            server = LocalLivepixWebhookServer(
+                livepix_webhook_host_var.get().strip() or "127.0.0.1",
+                livepix_webhook_port(),
+                livepix_webhook_token_var.get().strip(),
+                handle_livepix_webhook,
+                log,
+            )
+            server.start()
+            livepix_webhook_server = server
+            livepix_status_var.set("Webhook ativo")
+            update_livepix_endpoint_text()
+        except Exception as exc:
+            livepix_status_var.set("Erro")
+            messagebox.showerror("Livepix", str(exc))
+
+    def stop_livepix_webhook(silent: bool = False) -> None:
+        nonlocal livepix_webhook_server
+        if livepix_webhook_server is not None:
+            livepix_webhook_server.stop()
+            livepix_webhook_server = None
+        if not silent:
+            livepix_status_var.set("Desligado")
+            log("Webhook Livepix parado.")
+
+    def sync_livepix_from_api() -> None:
+        try:
+            save_config(config_path, update_config_from_form())
+            client = livepix_client()
+        except Exception as exc:
+            messagebox.showerror("Livepix", str(exc))
+            return
+        livepix_status_var.set("Sincronizando")
+
+        def run() -> None:
+            try:
+                account = client.account()
+                payments = client.payments(limit=80)
+                messages = client.messages(limit=80)
+                wallet = client.wallet()
+                selected_currency = livepix_currency_var.get().strip().upper() or "BRL"
+                extras: dict[str, Any] = {}
+                for name, getter in (
+                    ("currencies", client.currencies),
+                    ("plans", client.plans),
+                    ("subscriptions", client.subscriptions),
+                    ("rewards", client.rewards),
+                    ("webhooks", client.webhooks),
+                    ("transactions", lambda: client.wallet_transactions(selected_currency)),
+                    ("receivables", lambda: client.wallet_receivables(selected_currency)),
+                ):
+                    try:
+                        extras[name] = getter()
+                    except Exception as exc:
+                        extras[name] = f"erro: {exc}"
+                reward_grants: list[dict[str, Any]] = []
+                if isinstance(extras.get("rewards"), list):
+                    for reward in extras["rewards"]:
+                        reward_id = str(reward.get("id", "")).strip() if isinstance(reward, dict) else ""
+                        if not reward_id:
+                            continue
+                        try:
+                            reward_grants.extend(client.reward_grants(reward_id))
+                        except Exception as exc:
+                            reward_grants.append({"rewardId": reward_id, "error": str(exc)})
+                extras["reward_grants"] = reward_grants
+                subscription_events = [
+                    event
+                    for item in extras.get("subscriptions", [])
+                    if isinstance(item, dict) and (event := parse_livepix_event(item, "subscription", "api"))
+                ] if isinstance(extras.get("subscriptions"), list) else []
+                livepix_queue.put(
+                    (
+                        "api_synced",
+                        {
+                            "account": account,
+                            "events": payments + messages + subscription_events,
+                            "wallet": wallet,
+                            "extras": extras,
+                        },
+                    )
+                )
+            except Exception as exc:
+                livepix_queue.put(("error", str(exc)))
+
+        threading.Thread(target=run, name="AizenLivepixSync", daemon=True).start()
+
+    def test_livepix_account() -> None:
+        sync_livepix_from_api()
+
+    def create_livepix_checkout(kind: str) -> None:
+        try:
+            save_config(config_path, update_config_from_form())
+            client = livepix_client()
+            amount = livepix_checkout_amount_cents()
+            currency = livepix_currency_var.get().strip().upper() or "BRL"
+            redirect_url = livepix_redirect_url_var.get().strip() or "https://livepix.gg"
+        except Exception as exc:
+            messagebox.showerror("Livepix", str(exc))
+            return
+        livepix_status_var.set("Criando checkout")
+
+        def run() -> None:
+            try:
+                if kind == "message":
+                    data = client.create_message(
+                        livepix_checkout_user_var.get().strip() or "Apoiador",
+                        livepix_checkout_message_var.get().strip() or "Apoio para a live!",
+                        amount,
+                        currency,
+                        redirect_url,
+                    )
+                else:
+                    data = client.create_payment(amount, currency, redirect_url)
+                livepix_queue.put(("checkout", data))
+            except Exception as exc:
+                livepix_queue.put(("error", str(exc)))
+
+        threading.Thread(target=run, name="AizenLivepixCheckout", daemon=True).start()
+
+    def create_livepix_plan() -> None:
+        try:
+            save_config(config_path, update_config_from_form())
+            client = livepix_client()
+            amount = livepix_checkout_amount_cents()
+            slug = livepix_plan_slug_var.get().strip() or "vip-live"
+            name = livepix_plan_name_var.get().strip() or "VIP da live"
+            description = livepix_plan_description_var.get().strip()
+        except Exception as exc:
+            messagebox.showerror("Livepix", str(exc))
+            return
+        livepix_status_var.set("Criando plano")
+
+        def run() -> None:
+            try:
+                data = client.create_plan(slug, name, description, amount)
+                livepix_queue.put(("plan_created", data))
+            except Exception as exc:
+                livepix_queue.put(("error", str(exc)))
+
+        threading.Thread(target=run, name="AizenLivepixPlan", daemon=True).start()
+
+    def create_livepix_subscription_checkout() -> None:
+        try:
+            save_config(config_path, update_config_from_form())
+            client = livepix_client()
+            plan_id = livepix_plan_id_var.get().strip()
+            if not plan_id:
+                raise ValueError("Informe o ID do plano ou crie um plano primeiro.")
+            recurrence = livepix_subscription_recurrence_var.get().strip() or "monthly"
+            username = livepix_checkout_user_var.get().strip() or "Apoiador"
+            email = livepix_subscriber_email_var.get().strip()
+            redirect_url = livepix_redirect_url_var.get().strip() or "https://livepix.gg"
+        except Exception as exc:
+            messagebox.showerror("Livepix", str(exc))
+            return
+        livepix_status_var.set("Criando assinatura")
+
+        def run() -> None:
+            try:
+                data = client.create_subscription(plan_id, recurrence, username, email, redirect_url)
+                livepix_queue.put(("checkout", data))
+            except Exception as exc:
+                livepix_queue.put(("error", str(exc)))
+
+        threading.Thread(target=run, name="AizenLivepixSubscription", daemon=True).start()
+
+    def copy_livepix_endpoint() -> None:
+        update_livepix_endpoint_text()
+        root.clipboard_clear()
+        root.clipboard_append(livepix_endpoint_url(include_token=True))
+        log("Endpoint Livepix copiado.")
+
+    def register_livepix_webhook() -> None:
+        try:
+            save_config(config_path, update_config_from_form())
+            client = livepix_client()
+            url = livepix_endpoint_url(include_token=True)
+        except Exception as exc:
+            messagebox.showerror("Livepix", str(exc))
+            return
+        livepix_status_var.set("Cadastrando webhook")
+
+        def run() -> None:
+            try:
+                data = client.create_webhook(url)
+                livepix_queue.put(("status", f"Webhook cadastrado {data.get('id', '')}".strip()))
+            except Exception as exc:
+                livepix_queue.put(("error", str(exc)))
+
+        threading.Thread(target=run, name="AizenLivepixWebhookCreate", daemon=True).start()
+
+    def copy_livepix_checkout(url: str) -> None:
+        root.clipboard_clear()
+        root.clipboard_append(url)
+        livepix_status_var.set("Checkout copiado")
+        log(f"Checkout Livepix copiado: {url}")
+
+    def livepix_control(action: str) -> None:
+        try:
+            client = livepix_client()
+        except Exception as exc:
+            messagebox.showerror("Livepix", str(exc))
+            return
+
+        def run() -> None:
+            try:
+                if action == "skip":
+                    client.skip_alert()
+                elif action == "replay":
+                    client.replay_alert()
+                elif action == "autoplay_on":
+                    client.set_autoplay(True)
+                elif action == "autoplay_off":
+                    client.set_autoplay(False)
+                livepix_queue.put(("status", "Controle enviado"))
+            except Exception as exc:
+                livepix_queue.put(("error", str(exc)))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def clear_livepix_events() -> None:
+        livepix_events.clear()
+        save_livepix_events(livepix_events_path(config_path), livepix_events)
+        refresh_livepix_dashboard()
+        livepix_status_var.set("Histórico limpo")
+
+    def add_livepix_test_event() -> None:
+        event = LivepixEvent(
+            event_id=f"test-{time.time()}",
+            kind="message",
+            reference=uuid.uuid4().hex[:8],
+            username="AizenTeste",
+            message="Mensagem de teste Livepix para conferir dashboard e overlay.",
+            amount=livepix_checkout_amount_cents(),
+            currency=livepix_currency_var.get().strip().upper() or "BRL",
+            created_at=datetime.now().isoformat(timespec="seconds"),
+            source="test",
+        )
+        merge_livepix_events([event])
+        announce_livepix_event(event)
+        livepix_status_var.set("Teste adicionado")
+
+    def render_livepix_overlay() -> None:
+        if livepix_overlay_frame is None:
+            return
+        for child in livepix_overlay_frame.winfo_children():
+            child.destroy()
+        events = livepix_events[:5]
+        ctk.CTkLabel(livepix_overlay_frame, text=livepix_goal_label_var.get() or "Meta da live", text_color=accent, font=("Segoe UI Semibold", 18), anchor="w").grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 0))
+        ctk.CTkLabel(livepix_overlay_frame, text=f"{livepix_total_var.get()}  |  {livepix_goal_var.get()}", text_color=fg, font=("Segoe UI Semibold", 30), anchor="w").grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 10))
+        for index, event in enumerate(events, start=2):
+            text = f"{event.username or 'Apoiador'} - {format_livepix_amount(event.amount, event.currency)}"
+            if event.message:
+                text = f"{text}: {event.message[:70]}"
+            ctk.CTkLabel(livepix_overlay_frame, text=text, text_color=teal if index == 2 else fg, font=("Segoe UI", 14), anchor="w", wraplength=560).grid(row=index, column=0, sticky="ew", padx=16, pady=3)
+
+    def open_livepix_overlay() -> None:
+        nonlocal livepix_overlay_window, livepix_overlay_frame
+        if livepix_overlay_window is not None:
+            try:
+                if livepix_overlay_window.winfo_exists():
+                    livepix_overlay_window.lift()
+                    render_livepix_overlay()
+                    return
+            except tk.TclError:
+                pass
+        window = ctk.CTkToplevel(root)
+        livepix_overlay_window = window
+        window.title("Livepix Overlay - Aizen Stream Control")
+        window.geometry("640x320+120+120")
+        window.minsize(420, 220)
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+        window.attributes("-alpha", 0.92)
+        window.configure(fg_color="#050506")
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(0, weight=1)
+        shell = ctk.CTkFrame(window, fg_color="#09090d", corner_radius=16, border_width=1, border_color=accent)
+        shell.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        shell.columnconfigure(0, weight=1)
+        controls = ctk.CTkFrame(shell, fg_color="#101116", corner_radius=12)
+        controls.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
+        controls.columnconfigure(0, weight=1)
+        title_label = ctk.CTkLabel(controls, text="Livepix", text_color=fg, font=("Segoe UI Semibold", 13), anchor="w")
+        title_label.grid(row=0, column=0, sticky="ew", padx=12, pady=7)
+        button(controls, "Teste", add_livepix_test_event, "default", width=70).grid(row=0, column=1, padx=(0, 6), pady=5)
+        button(controls, "X", close_livepix_overlay, "danger", width=42).grid(row=0, column=2, padx=(0, 8), pady=5)
+        livepix_overlay_frame = ctk.CTkFrame(shell, fg_color="#050609", corner_radius=12)
+        livepix_overlay_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        livepix_overlay_frame.columnconfigure(0, weight=1)
+        shell.rowconfigure(1, weight=1)
+        drag_state = {"x": 0, "y": 0}
+
+        def start_drag(event: Any) -> None:
+            drag_state["x"] = event.x_root - window.winfo_x()
+            drag_state["y"] = event.y_root - window.winfo_y()
+
+        def drag_window(event: Any) -> None:
+            window.geometry(f"+{event.x_root - drag_state['x']}+{event.y_root - drag_state['y']}")
+
+        for drag_widget in (controls, title_label):
+            drag_widget.bind("<ButtonPress-1>", start_drag)
+            drag_widget.bind("<B1-Motion>", drag_window)
+        render_livepix_overlay()
+
+    def close_livepix_overlay() -> None:
+        nonlocal livepix_overlay_window, livepix_overlay_frame
+        if livepix_overlay_window is not None:
+            try:
+                livepix_overlay_window.destroy()
+            except tk.TclError:
+                pass
+        livepix_overlay_window = None
+        livepix_overlay_frame = None
+
+    def pump_livepix_queue() -> None:
+        if app_closing:
+            return
+        while True:
+            try:
+                kind, payload = livepix_queue.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "webhook":
+                event = parse_livepix_event(payload, source="webhook")
+                if event is not None:
+                    livepix_status_var.set("Webhook recebido")
+                    log(f"Livepix webhook: {event.kind} {event.reference}; buscando detalhes.")
+                    threading.Thread(
+                        target=fetch_livepix_webhook_details,
+                        args=(payload,),
+                        name="AizenLivepixWebhookDetail",
+                        daemon=True,
+                    ).start()
+                else:
+                    livepix_status_var.set("Webhook sem detalhes")
+                    log(f"Livepix webhook recebido. Use sincronizar para buscar detalhes: {compact_json_preview(payload)}")
+            elif kind == "webhook_detail":
+                if isinstance(payload, LivepixEvent):
+                    merge_livepix_events([payload])
+                    announce_livepix_event(payload)
+                    livepix_status_var.set("Webhook detalhado")
+            elif kind == "api_synced":
+                account = payload.get("account", {}) if isinstance(payload, dict) else {}
+                events = payload.get("events", []) if isinstance(payload, dict) else []
+                wallet = payload.get("wallet", []) if isinstance(payload, dict) else []
+                extras = payload.get("extras", {}) if isinstance(payload, dict) else {}
+                display = _first_text(account.get("displayName"), account.get("username"), account.get("email"), "-") if isinstance(account, dict) else "-"
+                livepix_account_var.set(display)
+                if isinstance(wallet, list):
+                    selected_currency = livepix_currency_var.get().strip().upper() or "BRL"
+                    selected_wallet = next(
+                        (
+                            item
+                            for item in wallet
+                            if isinstance(item, dict) and str(item.get("currency", "")).upper() == selected_currency
+                        ),
+                        wallet[0] if wallet and isinstance(wallet[0], dict) else {},
+                    )
+                    if isinstance(selected_wallet, dict) and selected_wallet:
+                        balance = int(selected_wallet.get("balance", 0) or 0)
+                        pending = int(selected_wallet.get("balancePending", 0) or 0)
+                        held = int(selected_wallet.get("balanceHeld", 0) or 0)
+                        livepix_wallet_var.set(
+                            f"{format_livepix_amount(balance, selected_wallet.get('currency', selected_currency))} "
+                            f"(pendente {format_livepix_amount(pending, selected_wallet.get('currency', selected_currency))}, "
+                            f"retido {format_livepix_amount(held, selected_wallet.get('currency', selected_currency))})"
+                        )
+                    else:
+                        livepix_wallet_var.set("-")
+                if isinstance(extras, dict):
+                    parts = []
+                    labels = {
+                        "currencies": "moedas",
+                        "plans": "planos",
+                        "subscriptions": "assinaturas",
+                        "rewards": "recompensas",
+                        "reward_grants": "concedidas",
+                        "webhooks": "webhooks",
+                        "transactions": "transações",
+                        "receivables": "recebíveis",
+                    }
+                    for key, label in labels.items():
+                        value = extras.get(key)
+                        if isinstance(value, list):
+                            parts.append(f"{len(value)} {label}")
+                    livepix_extra_var.set(" | ".join(parts) if parts else "-")
+                added = merge_livepix_events(events if isinstance(events, list) else [])
+                livepix_status_var.set(f"Sincronizado (+{added})")
+            elif kind == "checkout":
+                url = _first_text(payload.get("redirectUrl"), payload.get("url")) if isinstance(payload, dict) else ""
+                if url:
+                    copy_livepix_checkout(url)
+                    messagebox.showinfo("Livepix checkout", f"Link copiado:\n{url}")
+                else:
+                    livepix_status_var.set("Checkout criado")
+            elif kind == "plan_created":
+                plan_id = _first_text(payload.get("id")) if isinstance(payload, dict) else ""
+                if plan_id:
+                    livepix_plan_id_var.set(plan_id)
+                    livepix_status_var.set("Plano criado")
+                    save_config(config_path, update_config_from_form())
+                else:
+                    livepix_status_var.set("Plano criado")
+            elif kind == "status":
+                livepix_status_var.set(str(payload))
+            elif kind == "error":
+                livepix_status_var.set("Erro")
+                log(f"Livepix erro: {payload}")
+        if not app_closing:
+            root.after(160, pump_livepix_queue)
+
+    def appearance_config_from_vars() -> dict[str, str]:
+        preset = appearance_preset_var.get().strip() or DEFAULT_THEME_NAME
+        base = dict(THEME_PRESETS.get(preset, THEME_PRESETS[DEFAULT_THEME_NAME]))
+        base["preset"] = preset if preset in THEME_PRESETS else DEFAULT_THEME_NAME
+        base["theme_schema_version"] = THEME_SCHEMA_VERSION
+        base["logo_path"] = logo_path_var.get().strip()
+        for key in THEME_COLOR_KEYS:
+            base[key] = normalize_hex_color(theme_color_vars[key].get(), base[key])
+            theme_color_vars[key].set(base[key])
+        return base
 
     def update_config_from_form() -> dict[str, Any]:
-        config["discord_webhook_url"] = webhook_var.get().strip()
-        config["jarvis_endpoint_url"] = normalize_endpoint_url(jarvis_var.get())
-        jarvis_var.set(config["jarvis_endpoint_url"])
+        jarvis_base_url = normalize_endpoint_url(jarvis_base_url_var.get()).rstrip("/")
+        endpoint_url = normalize_endpoint_url(sync_url_var.get())
+        if jarvis_base_url and not endpoint_url:
+            endpoint_url = derive_jarvis_endpoint(jarvis_base_url, "kills")
+        sync_url_var.set(endpoint_url)
+        config["kills_realtime_url"] = endpoint_url
+        config["jarvis_endpoint_url"] = endpoint_url
+        config["jarvis_base_url"] = jarvis_base_url
+        jarvis_base_url_var.set(jarvis_base_url)
+        config["kills_realtime_auto_sync"] = bool(sync_enabled_var.get())
+        config["kills_realtime_poll_seconds"] = poll_interval_seconds()
+        config["kills_sync_room"] = sync_room_var.get().strip() or "principal"
+        queue_url = normalize_endpoint_url(ff_queue_url_var.get())
+        if jarvis_base_url and not queue_url:
+            queue_url = derive_jarvis_endpoint(jarvis_base_url, "queue")
+        config["ff_queue_realtime_url"] = queue_url
+        ff_queue_url_var.set(config["ff_queue_realtime_url"])
+        overlay_url = normalize_endpoint_url(ff_overlay_url_var.get())
+        if jarvis_base_url and not overlay_url:
+            overlay_url = derive_jarvis_endpoint(jarvis_base_url, "overlay")
+        config["ff_overlay_realtime_url"] = overlay_url
+        ff_overlay_url_var.set(config["ff_overlay_realtime_url"])
+        config["ff_queue_auto_sync"] = bool(ff_queue_enabled_var.get())
+        config["ff_overlay_auto_sync"] = bool(ff_overlay_enabled_var.get())
+        config["ff_queue_poll_seconds"] = ff_queue_poll_interval_seconds()
+        config["ff_queue_room"] = ff_queue_room_var.get().strip() or "principal"
+        config["ff_queue_items"] = ff_queue_payload(collect_ff_queue_entries())
+        config["device_name"] = device_name_var.get().strip() or default_device_name()
+        config["jarvis_api_token"] = jarvis_token_var.get().strip()
+        config["auto_update_enabled"] = bool(auto_update_var.get())
+        config["updates_manifest_url"] = updates_manifest_url_var.get().strip()
         config["message_title"] = title_var.get().strip() or "Kills da partida"
-        config["attach_screenshot"] = bool(attach_var.get())
-        config["capture_target"] = capture_options.get(capture_target_var.get(), "primary")
-        config["ignored_players"] = parse_player_list(ignored_var.get())
-        config["hotkey"] = current_hotkey()
-        parse_hotkey(config["hotkey"])
+        config["manual_kills"] = player_payload(collect_manual_players())
+        config["tikfinity_chat_url"] = tikfinity_url_var.get().strip()
+        config["chat_event_source"] = chat_source_key()
+        config["chat_webhook_host"] = chat_webhook_host_var.get().strip() or "127.0.0.1"
+        config["chat_webhook_port"] = chat_webhook_port()
+        config["chat_webhook_token"] = chat_webhook_token_var.get().strip()
+        try:
+            config["chat_websocket_url"] = normalize_tikfinity_websocket_url(chat_websocket_url_var.get())
+            chat_websocket_url_var.set(config["chat_websocket_url"])
+        except ValueError:
+            if chat_source_key() == "websocket":
+                raise
+            config["chat_websocket_url"] = DEFAULT_TIKFINITY_WEBSOCKET_URL
+            chat_websocket_url_var.set(DEFAULT_TIKFINITY_WEBSOCKET_URL)
+        config["chat_commands_enabled"] = bool(chat_commands_enabled_var.get())
+        config["chat_commands"] = chat_command_payload(collect_custom_commands())
+        config["chat_timers_enabled"] = bool(chat_timers_enabled_var.get())
+        config["chat_timers"] = chat_timer_payload(collect_chat_timers())
+        config["bot_safe_delay_seconds"] = bot_safe_delay_seconds()
+        config["bot_default_command_cooldown_seconds"] = bot_default_cooldown_seconds()
+        config["bot_default_timer_interval_seconds"] = bot_default_timer_interval_seconds()
+        config["bot_default_timer_min_messages"] = bot_default_timer_min_messages()
+        config["bot_delivery_method"] = bot_delivery_method_key()
+        config["bot_streamerbot_ws_url"] = normalize_streamerbot_websocket_url(bot_streamerbot_ws_url_var.get())
+        bot_streamerbot_ws_url_var.set(config["bot_streamerbot_ws_url"])
+        config["bot_streamerbot_http_url"] = normalize_streamerbot_http_url(bot_streamerbot_http_url_var.get())
+        bot_streamerbot_http_url_var.set(config["bot_streamerbot_http_url"])
+        config["bot_streamerbot_password"] = bot_streamerbot_password_var.get()
+        config["bot_streamerbot_action_name"] = bot_streamerbot_action_name_var.get().strip()
+        config["bot_streamerbot_action_id"] = bot_streamerbot_action_id_var.get().strip()
+        config["bot_ignore_usernames"] = bot_ignore_usernames_var.get().strip()
+        config["livepix_enabled"] = bool(livepix_enabled_var.get())
+        config["livepix_client_id"] = livepix_client_id_var.get().strip()
+        config["livepix_client_secret"] = livepix_client_secret_var.get().strip()
+        config["livepix_scopes"] = livepix_scopes_var.get().strip()
+        config["livepix_webhook_host"] = livepix_webhook_host_var.get().strip() or "127.0.0.1"
+        config["livepix_webhook_port"] = livepix_webhook_port()
+        config["livepix_webhook_token"] = livepix_webhook_token_var.get().strip()
+        config["livepix_redirect_url"] = livepix_redirect_url_var.get().strip() or "https://livepix.gg"
+        config["livepix_goal_amount"] = livepix_goal_amount_cents()
+        config["livepix_goal_label"] = livepix_goal_label_var.get().strip() or "Meta da live"
+        config["livepix_currency"] = livepix_currency_var.get().strip().upper() or "BRL"
+        config["livepix_plan_id"] = livepix_plan_id_var.get().strip()
+        config["livepix_plan_slug"] = livepix_plan_slug_var.get().strip() or "vip-live"
+        config["livepix_plan_name"] = livepix_plan_name_var.get().strip() or "VIP da live"
+        config["livepix_plan_description"] = livepix_plan_description_var.get().strip()
+        config["livepix_subscription_recurrence"] = livepix_subscription_recurrence_var.get().strip() or "monthly"
+        config["livepix_subscriber_email"] = livepix_subscriber_email_var.get().strip()
+        config["livepix_announce_in_chat"] = bool(livepix_announce_in_chat_var.get())
+        config["livepix_public_page_file"] = livepix_public_page_file_var.get().strip() or "livepix_public.html"
+        config["raffle_source_mode"] = raffle_source_key()
+        config["raffle_command"] = raffle_command_var.get().strip() or "!sorteio"
+        config["raffle_duration_seconds"] = int(float(raffle_minutes_var.get().replace(",", ".")) * 60)
+        config["raffle_entries_normal"] = raffle_entries_value(raffle_entries_normal_var, 1)
+        config["raffle_entries_fan"] = raffle_entries_value(raffle_entries_fan_var, 2)
+        config["raffle_entries_super_fan"] = raffle_entries_value(raffle_entries_super_fan_var, 3)
+        config["raffle_entries_gift"] = raffle_entries_value(raffle_entries_gift_var, 5)
+        config["raffle_entries_sub"] = raffle_entries_value(raffle_entries_sub_var, 10)
+        config["raffle_user_cooldown_seconds"] = raffle_cooldown_seconds()
+        config["raffle_include_moderators"] = bool(raffle_include_moderators_var.get())
+        raffle_entries_normal_var.set(str(config["raffle_entries_normal"]))
+        raffle_entries_fan_var.set(str(config["raffle_entries_fan"]))
+        raffle_entries_super_fan_var.set(str(config["raffle_entries_super_fan"]))
+        raffle_entries_gift_var.set(str(config["raffle_entries_gift"]))
+        raffle_entries_sub_var.set(str(config["raffle_entries_sub"]))
+        raffle_cooldown_var.set(str(config["raffle_user_cooldown_seconds"]))
+        config["ui_layout"] = {
+            "participants_height": layout_value(participants_height_var, 240, 900),
+            "events_height": layout_value(events_height_var, 90, 360),
+            "winner_width": layout_value(winner_width_var, 260, 520),
+            "raffle_font_size": layout_value(raffle_font_size_var, 10, 20),
+            "chat_overlay_opacity": layout_value(chat_overlay_opacity_var, 35, 100),
+            "chat_overlay_font_size": layout_value(chat_overlay_font_size_var, 10, 24),
+            "chat_overlay_width": layout_value(chat_overlay_width_var, 300, 900),
+            "chat_overlay_height": layout_value(chat_overlay_height_var, 220, 1000),
+            "chat_overlay_compact": bool(chat_overlay_compact_var.get()),
+            "chat_overlay_controls": bool(chat_overlay_controls_var.get()),
+            "chat_overlay_clickthrough": bool(chat_overlay_clickthrough_var.get()),
+            "ff_overlay_opacity": layout_value(ff_overlay_opacity_var, 35, 100),
+            "ff_overlay_width": layout_value(ff_overlay_width_var, 420, 1400),
+            "ff_overlay_height": layout_value(ff_overlay_height_var, 240, 900),
+            "ff_overlay_compact": bool(ff_overlay_compact_var.get()),
+            "ff_overlay_show_queue": bool(ff_overlay_show_queue_var.get()),
+            "ff_overlay_show_kills": bool(ff_overlay_show_kills_var.get()),
+        }
+        config["ui_theme"] = appearance_config_from_vars()
         return config
 
     def save_form() -> None:
@@ -777,88 +9253,1648 @@ def run_gui(config_path: Path) -> int:
         except Exception as exc:
             messagebox.showerror("Erro", str(exc))
 
-    def start_background() -> None:
-        nonlocal worker
+    def restart_app() -> None:
+        save_config(config_path, update_config_from_form())
+        if IS_FROZEN:
+            command = [sys.executable]
+            cwd = APP_DIR
+        else:
+            command = [sys.executable, str(Path(__file__).resolve()), "--config", str(config_path), "--gui"]
+            cwd = ROOT
+        creationflags = 0x08000000 if os.name == "nt" else 0
+        subprocess.Popen(command, cwd=str(cwd), creationflags=creationflags)
+        root.destroy()
+
+    def save_appearance(restart: bool = False) -> None:
         try:
-            if worker and worker.thread and worker.thread.is_alive():
-                messagebox.showinfo("Rodando", "O monitor ja esta rodando em segundo plano.")
-                return
             save_config(config_path, update_config_from_form())
-            worker = HotkeyWorker(config, dry_run=False, keep_debug=False, log=log)
-            worker.start()
-            status_var.set(f"Rodando em segundo plano: {config['hotkey']}")
-            log("Pode minimizar a janela. O atalho continua ativo enquanto o app estiver aberto.")
+            log("Aparencia salva.")
+            if restart:
+                restart_app()
+            else:
+                messagebox.showinfo("Aparencia", "Tema salvo. Use 'Salvar e reabrir' para aplicar em toda a interface.")
         except Exception as exc:
             messagebox.showerror("Erro", str(exc))
 
-    def test_sample() -> None:
-        sample = Path(r"C:\Users\Aizen\Pictures\BlueStacks\Screenshot_2026.06.14_16.58.09.454.png")
-        if not sample.exists():
-            messagebox.showerror("Erro", f"Imagem de teste nao encontrada:\n{sample}")
+    def apply_theme_preset(*_args: Any) -> None:
+        preset = appearance_preset_var.get()
+        preset_colors = THEME_PRESETS.get(preset)
+        if not preset_colors:
             return
+        for key, value in preset_colors.items():
+            if key in theme_color_vars:
+                theme_color_vars[key].set(value)
+        try:
+            update_theme_swatches()
+        except NameError:
+            pass
+
+    def send_manual_kills(force: bool = True) -> None:
+        nonlocal manual_sending, manual_sync_after_id, manual_last_signature
+        manual_sync_after_id = None
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc))
+            return
+
+        endpoint_url = local_config.get("kills_realtime_url", "").strip()
+        players = collect_manual_players()
+        signature = manual_signature(players)
+        if not endpoint_url:
+            manual_status_var.set("Sem endpoint")
+            if force:
+                log("Informe a URL do painel/Jarvis para sincronizar as kills.")
+            return
+        if not force and signature == manual_last_signature:
+            manual_status_var.set("Sincronizado")
+            return
+        if manual_sending:
+            return
+
+        manual_sending = True
+        manual_status_var.set("Enviando")
 
         def run() -> None:
             try:
-                local_config = update_config_from_form()
-                process_image(sample, local_config, dry_run=True, keep_debug=False, log=log)
+                response_text = send_kills_realtime_update(
+                    endpoint_url,
+                    local_config["message_title"],
+                    players,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room=str(local_config.get("kills_sync_room", "principal")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                sync_queue.put(("sent", {"count": len(players), "signature": signature, "response": response_text}))
             except Exception as exc:
-                log(f"Erro no teste: {exc}")
+                sync_queue.put(("send_error", str(exc)))
 
         threading.Thread(target=run, daemon=True).start()
+
+    def fetch_panel_kills(force: bool = True) -> None:
+        nonlocal manual_fetching
+        try:
+            local_config = update_config_from_form()
+            if force:
+                save_config(config_path, local_config)
+        except Exception as exc:
+            if force:
+                messagebox.showerror("Erro", str(exc))
+            return
+
+        endpoint_url = local_config.get("kills_realtime_url", "").strip()
+        if not endpoint_url:
+            manual_status_var.set("Sem endpoint")
+            if force:
+                log("Informe a URL do painel/Jarvis para buscar as kills.")
+            return
+        if manual_fetching:
+            return
+
+        manual_fetching = True
+        manual_status_var.set("Lendo painel")
+
+        def run() -> None:
+            try:
+                state = fetch_kills_realtime(
+                    endpoint_url,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room="",
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                sync_queue.put(("fetched", {"state": state, "force": force}))
+            except Exception as exc:
+                sync_queue.put(("fetch_error", {"error": str(exc), "force": force}))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def send_ff_queue(force: bool = True) -> None:
+        nonlocal ff_queue_sending, ff_queue_sync_after_id, ff_queue_last_signature
+        ff_queue_sync_after_id = None
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc))
+            return
+
+        endpoint_url = local_config.get("ff_queue_realtime_url", "").strip()
+        entries = collect_ff_queue_entries()
+        signature = ff_queue_signature(entries)
+        if not endpoint_url:
+            ff_queue_status_var.set("Sem endpoint")
+            if force:
+                log("Informe a URL da fila/Jarvis para sincronizar a Fila FF.")
+            return
+        if not force and signature == ff_queue_last_signature:
+            ff_queue_status_var.set("Sincronizado")
+            return
+        if ff_queue_sending:
+            return
+
+        ff_queue_sending = True
+        ff_queue_status_var.set("Enviando")
+
+        def run() -> None:
+            try:
+                response_text = send_ff_queue_realtime_update(
+                    endpoint_url,
+                    entries,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room=str(local_config.get("ff_queue_room", "principal")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                ff_queue_sync_queue.put(("sent", {"count": len(entries), "signature": signature, "response": response_text}))
+            except Exception as exc:
+                ff_queue_sync_queue.put(("send_error", str(exc)))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def fetch_ff_queue(force: bool = True) -> None:
+        nonlocal ff_queue_fetching
+        try:
+            local_config = update_config_from_form()
+            if force:
+                save_config(config_path, local_config)
+        except Exception as exc:
+            if force:
+                messagebox.showerror("Erro", str(exc))
+            return
+
+        endpoint_url = local_config.get("ff_queue_realtime_url", "").strip()
+        if not endpoint_url:
+            ff_queue_status_var.set("Sem endpoint")
+            if force:
+                log("Informe a URL da fila/Jarvis para buscar a Fila FF.")
+            return
+        if ff_queue_fetching:
+            return
+
+        ff_queue_fetching = True
+        ff_queue_status_var.set("Lendo Jarvis")
+
+        def run() -> None:
+            try:
+                state = fetch_ff_queue_realtime(
+                    endpoint_url,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room=str(local_config.get("ff_queue_room", "principal")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                ff_queue_sync_queue.put(("fetched", {"state": state, "force": force}))
+            except Exception as exc:
+                ff_queue_sync_queue.put(("fetch_error", {"error": str(exc), "force": force}))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def schedule_manual_poll() -> None:
+        nonlocal manual_poll_after_id
+        if app_closing:
+            return
+        if manual_poll_after_id is not None:
+            try:
+                root.after_cancel(manual_poll_after_id)
+            except tk.TclError:
+                pass
+        manual_poll_after_id = root.after(poll_interval_seconds() * 1000, run_manual_poll)
+
+    def run_manual_poll() -> None:
+        nonlocal manual_poll_after_id
+        if app_closing:
+            return
+        manual_poll_after_id = None
+        if sync_enabled_var.get():
+            fetch_panel_kills(force=False)
+        schedule_manual_poll()
+
+    def schedule_ff_queue_poll() -> None:
+        nonlocal ff_queue_poll_after_id
+        if app_closing:
+            return
+        if ff_queue_poll_after_id is not None:
+            try:
+                root.after_cancel(ff_queue_poll_after_id)
+            except tk.TclError:
+                pass
+        ff_queue_poll_after_id = root.after(ff_queue_poll_interval_seconds() * 1000, run_ff_queue_poll)
+
+    def run_ff_queue_poll() -> None:
+        nonlocal ff_queue_poll_after_id
+        if app_closing:
+            return
+        ff_queue_poll_after_id = None
+        if ff_queue_enabled_var.get():
+            fetch_ff_queue(force=False)
+        schedule_ff_queue_poll()
+
+    def schedule_ff_overlay_poll() -> None:
+        nonlocal ff_overlay_poll_after_id
+        if app_closing:
+            return
+        if ff_overlay_poll_after_id is not None:
+            try:
+                root.after_cancel(ff_overlay_poll_after_id)
+            except tk.TclError:
+                pass
+        ff_overlay_poll_after_id = root.after(ff_queue_poll_interval_seconds() * 1000, run_ff_overlay_poll)
+
+    def run_ff_overlay_poll() -> None:
+        nonlocal ff_overlay_poll_after_id
+        if app_closing:
+            return
+        ff_overlay_poll_after_id = None
+        if ff_overlay_enabled_var.get():
+            fetch_ff_overlay(force=False)
+        schedule_ff_overlay_poll()
+
+    def handle_sync_event(kind: str, payload: Any) -> None:
+        nonlocal manual_sending, manual_fetching, manual_last_signature, manual_last_remote_signature
+        nonlocal ff_overlay_sending, ff_overlay_fetching, ff_overlay_last_signature
+        nonlocal ff_overlay_applying_remote
+        nonlocal manual_last_fetch_error, manual_remote_count_override, manual_remote_total_override
+        if kind == "sent":
+            manual_sending = False
+            manual_last_signature = payload["signature"]
+            manual_status_var.set("Sincronizado")
+            manual_source_var.set(device_name_var.get().strip() or default_device_name())
+            response_text = str(payload.get("response", "")).strip()
+            if response_text:
+                log(f"Kills enviadas para o painel ({payload['count']} jogador(es)). Resposta: {response_text[:200]}")
+            else:
+                log(f"Kills enviadas para o painel ({payload['count']} jogador(es)).")
+            return
+
+        if kind == "send_error":
+            manual_sending = False
+            manual_status_var.set("Erro no envio")
+            log(f"Erro ao enviar kills para o painel: {payload}")
+            return
+
+        if kind == "fetched":
+            manual_fetching = False
+            state: RealtimeState = payload["state"]
+            players = state.players
+            force = bool(payload["force"])
+            has_rankings = bool(state.daily_ranking or state.global_ranking)
+            manual_last_fetch_error = ""
+            if has_rankings:
+                apply_kills_rankings(state)
+                manual_remote_count_override = state.total_players
+                manual_remote_total_override = state.total_kills
+                update_manual_metrics()
+                if state.updated_by:
+                    manual_source_var.set(state.updated_by)
+                manual_status_var.set("Ranking atualizado")
+                source_suffix = f" por {state.updated_by}" if state.updated_by else ""
+                display_count = state.total_players if state.total_players is not None else len(state.global_ranking or players)
+                display_total = state.total_kills if state.total_kills is not None else sum(player.kills for player in state.global_ranking or players)
+                if force:
+                    log(
+                        f"Ranking Kills FF atualizado ({len(state.daily_ranking or [])} diario, "
+                        f"{display_count} geral, {display_total} kills){source_suffix}."
+                    )
+                return
+            signature = manual_signature(players)
+            current_signature = manual_signature(collect_manual_players())
+            if signature != current_signature:
+                if time.monotonic() - manual_last_local_edit_at < 1.2 and not force:
+                    manual_status_var.set("Editando")
+                    return
+                manual_last_remote_signature = signature
+                set_manual_players(players, total_players=state.total_players, total_kills=state.total_kills)
+                if state.updated_by:
+                    manual_source_var.set(state.updated_by)
+                manual_status_var.set("Atualizado pelo painel")
+                source_suffix = f" por {state.updated_by}" if state.updated_by else ""
+                display_count = state.total_players if state.total_players is not None else len(players)
+                display_total = state.total_kills if state.total_kills is not None else sum(player.kills for player in players)
+                log(f"Painel lido em tempo real ({display_count} jogador(es), {display_total} kills){source_suffix}.")
+            elif force:
+                manual_remote_count_override = state.total_players
+                manual_remote_total_override = state.total_kills
+                update_manual_metrics()
+                if state.updated_by:
+                    manual_source_var.set(state.updated_by)
+                manual_status_var.set("Painel sem mudanças")
+                log("Painel lido, sem mudanças na lista de kills.")
+            else:
+                manual_status_var.set("Sincronizado" if manual_last_signature else "Manual")
+            return
+
+        if kind == "fetch_error":
+            manual_fetching = False
+            error = str(payload["error"])
+            force = bool(payload["force"])
+            manual_status_var.set("Painel sem leitura")
+            if force or error != manual_last_fetch_error:
+                log(f"Nao consegui ler o painel via GET: {error}")
+                manual_last_fetch_error = error
+            return
+
+        if kind == "jarvis_test":
+            if isinstance(payload, dict):
+                kills_error = str(payload.get("kills") or "")
+                queue_error = str(payload.get("queue") or "")
+                overlay_error = str(payload.get("overlay") or "")
+                manual_status_var.set("Jarvis conectado" if not kills_error else "Jarvis com erro")
+                ff_queue_status_var.set("Jarvis conectado" if not queue_error else "Jarvis com erro")
+                if overlay_error == "Endpoint opcional nao configurado":
+                    ff_overlay_status_var.set("Opcional")
+                else:
+                    ff_overlay_status_var.set("Jarvis conectado" if not overlay_error else "Jarvis com erro")
+                errors = []
+                if kills_error:
+                    errors.append(f"Kills FF: {kills_error}")
+                if queue_error:
+                    errors.append(f"Fila FF: {queue_error}")
+                if overlay_error and overlay_error != "Endpoint opcional nao configurado":
+                    errors.append(f"Overlay FF: {overlay_error}")
+            else:
+                errors = payload if isinstance(payload, list) else [str(payload)]
+                if errors:
+                    manual_status_var.set("Jarvis com erro")
+                    ff_queue_status_var.set("Jarvis com erro")
+                    ff_overlay_status_var.set("Jarvis com erro")
+            if errors:
+                log("Teste Jarvis FF falhou: " + " | ".join(str(error) for error in errors))
+            else:
+                if isinstance(payload, dict) and payload.get("overlay") == "Endpoint opcional nao configurado":
+                    log("Teste Jarvis FF concluido: Kills FF e Fila FF responderam via GET; Overlay FF esta opcional.")
+                else:
+                    log("Teste Jarvis FF concluido: endpoints configurados responderam via GET.")
+            refresh_ff_overlay(force=True)
+            return
+
+        if kind == "overlay_sent":
+            ff_overlay_sending = False
+            ff_overlay_last_signature = str(payload.get("signature", ""))
+            ff_overlay_status_var.set("Sincronizado")
+            response_text = str(payload.get("response", "")).strip()
+            if response_text:
+                log(f"Overlay FF enviado para o Jarvis. Resposta: {response_text[:200]}")
+            else:
+                log("Overlay FF enviado para o Jarvis.")
+            return
+
+        if kind == "overlay_send_error":
+            ff_overlay_sending = False
+            ff_overlay_status_var.set("Erro no envio")
+            log(f"Erro ao enviar Overlay FF para o Jarvis: {payload}")
+            return
+
+        if kind == "overlay_fetched":
+            ff_overlay_fetching = False
+            kills_state: RealtimeState = payload["kills_state"]
+            queue_state: FFQueueState = payload["queue_state"]
+            force = bool(payload.get("force", False)) if isinstance(payload, dict) else False
+            kills_has_rankings = bool(kills_state.daily_ranking or kills_state.global_ranking)
+            remote_kills_signature = manual_signature([] if kills_has_rankings else kills_state.players)
+            remote_queue_signature = ff_queue_signature(queue_state.entries)
+            current_kills_signature = manual_signature([] if kills_has_rankings else collect_manual_players())
+            current_queue_signature = ff_queue_signature(collect_ff_queue_entries())
+            if kills_has_rankings:
+                apply_kills_rankings(kills_state)
+                manual_remote_count_override = kills_state.total_players
+                manual_remote_total_override = kills_state.total_kills
+                update_manual_metrics()
+                if kills_state.updated_by:
+                    manual_source_var.set(kills_state.updated_by)
+                manual_status_var.set("Ranking atualizado")
+            if (
+                not force
+                and remote_kills_signature == current_kills_signature
+                and remote_queue_signature == current_queue_signature
+            ):
+                ff_overlay_status_var.set("Sincronizado" if ff_overlay_last_signature else "Local")
+                return
+            if (
+                not force
+                and (
+                    time.monotonic() - manual_last_local_edit_at < 1.2
+                    or time.monotonic() - ff_queue_last_local_edit_at < 1.2
+                )
+            ):
+                ff_overlay_status_var.set("Editando")
+                return
+            ff_overlay_applying_remote = True
+            try:
+                if kills_state.players and not kills_has_rankings:
+                    set_manual_players(
+                        kills_state.players,
+                        total_players=kills_state.total_players,
+                        total_kills=kills_state.total_kills,
+                    )
+                    if kills_state.updated_by:
+                        manual_source_var.set(kills_state.updated_by)
+                    manual_status_var.set("Overlay lido")
+                if queue_state.entries:
+                    set_ff_queue_entries(queue_state.entries)
+                    if queue_state.updated_by:
+                        ff_queue_source_var.set(queue_state.updated_by)
+                    ff_queue_status_var.set("Overlay lido")
+                ff_overlay_status_var.set("Atualizado pelo Jarvis")
+                refresh_ff_overlay(force=True)
+                ff_overlay_last_signature = ff_overlay_signature()
+            finally:
+                ff_overlay_applying_remote = False
+            log(
+                "Overlay FF lido do Jarvis "
+                f"({len(kills_state.players)} jogador(es), {len(queue_state.entries)} item(ns) de fila)."
+            )
+            return
+
+        if kind == "overlay_fetch_error":
+            ff_overlay_fetching = False
+            error = str(payload.get("error", payload))
+            force = bool(payload.get("force", False)) if isinstance(payload, dict) else False
+            ff_overlay_status_var.set("Jarvis sem leitura")
+            if force:
+                log(f"Nao consegui ler o Overlay FF via GET: {error}")
+
+    def handle_ff_queue_sync_event(kind: str, payload: Any) -> None:
+        nonlocal ff_queue_sending, ff_queue_fetching, ff_queue_last_signature, ff_queue_last_fetch_error
+        if kind == "sent":
+            ff_queue_sending = False
+            ff_queue_last_signature = payload["signature"]
+            ff_queue_status_var.set("Sincronizado")
+            ff_queue_source_var.set(device_name_var.get().strip() or default_device_name())
+            response_text = str(payload.get("response", "")).strip()
+            if response_text:
+                log(f"Fila FF enviada para o Jarvis ({payload['count']} jogador(es)). Resposta: {response_text[:200]}")
+            else:
+                log(f"Fila FF enviada para o Jarvis ({payload['count']} jogador(es)).")
+            return
+
+        if kind == "send_error":
+            ff_queue_sending = False
+            ff_queue_status_var.set("Erro no envio")
+            log(f"Erro ao enviar Fila FF para o Jarvis: {payload}")
+            return
+
+        if kind == "fetched":
+            ff_queue_fetching = False
+            state: FFQueueState = payload["state"]
+            entries = state.entries
+            force = bool(payload["force"])
+            signature = ff_queue_signature(entries)
+            current_signature = ff_queue_signature(collect_ff_queue_entries())
+            ff_queue_last_fetch_error = ""
+            if signature != current_signature:
+                if time.monotonic() - ff_queue_last_local_edit_at < 1.2 and not force:
+                    ff_queue_status_var.set("Editando")
+                    return
+                set_ff_queue_entries(entries)
+                if state.updated_by:
+                    ff_queue_source_var.set(state.updated_by)
+                ff_queue_status_var.set("Atualizado pelo Jarvis")
+                source_suffix = f" por {state.updated_by}" if state.updated_by else ""
+                log(f"Fila FF lida em tempo real ({len(entries)} jogador(es)){source_suffix}.")
+            elif force:
+                if state.updated_by:
+                    ff_queue_source_var.set(state.updated_by)
+                ff_queue_status_var.set("Fila sem mudanças")
+                log("Fila FF lida, sem mudanças.")
+            else:
+                ff_queue_status_var.set("Sincronizado" if ff_queue_last_signature else "Manual")
+            return
+
+        if kind == "fetch_error":
+            ff_queue_fetching = False
+            error = str(payload["error"])
+            force = bool(payload["force"])
+            ff_queue_status_var.set("Jarvis sem leitura")
+            if force or error != ff_queue_last_fetch_error:
+                log(f"Nao consegui ler a Fila FF via GET: {error}")
+                ff_queue_last_fetch_error = error
+
+    def pump_sync_queue() -> None:
+        if app_closing:
+            return
+        while True:
+            try:
+                kind, payload = sync_queue.get_nowait()
+            except queue.Empty:
+                break
+            handle_sync_event(kind, payload)
+        if not app_closing:
+            root.after(150, pump_sync_queue)
+
+    def pump_ff_queue_sync_queue() -> None:
+        if app_closing:
+            return
+        while True:
+            try:
+                kind, payload = ff_queue_sync_queue.get_nowait()
+            except queue.Empty:
+                break
+            handle_ff_queue_sync_event(kind, payload)
+        if not app_closing:
+            root.after(150, pump_ff_queue_sync_queue)
+
+    def open_layout_window() -> None:
+        window = ctk.CTkToplevel(root)
+        window.title("Personalizar janelas")
+        window.geometry("520x420")
+        window.minsize(480, 380)
+        window.configure(fg_color=canvas_bg)
+        window.transient(root)
+        window.grab_set()
+
+        box = ctk.CTkFrame(window, fg_color=panel, corner_radius=12, border_width=1, border_color=border)
+        box.pack(fill=tk.BOTH, expand=True, padx=18, pady=18)
+        box.columnconfigure(1, weight=1)
+        ctk.CTkLabel(box, text="Personalizar janelas", text_color=fg, font=("Segoe UI Semibold", 18)).grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(18, 2)
+        )
+        ctk.CTkLabel(
+            box,
+            text="Ajuste em tempo real e salve para manter ao reabrir.",
+            text_color=muted,
+            font=("Segoe UI", 11),
+        ).grid(row=1, column=0, columnspan=3, sticky="w", padx=18, pady=(0, 18))
+
+        rows = [
+            ("Altura da fila", participants_height_var, 240, 900, queue_size_text),
+            ("Altura dos eventos", events_height_var, 90, 360, event_size_text),
+            ("Largura do vencedor", winner_width_var, 260, 520, winner_size_text),
+            ("Fonte da fila/chat", raffle_font_size_var, 10, 20, font_size_text),
+        ]
+        for row_index, (label_text, variable, min_value, max_value, value_text) in enumerate(rows, start=2):
+            ctk.CTkLabel(box, text=label_text, text_color=muted, font=("Segoe UI", 12)).grid(
+                row=row_index, column=0, sticky="w", padx=18, pady=12
+            )
+            slider = ctk.CTkSlider(
+                box,
+                from_=min_value,
+                to=max_value,
+                number_of_steps=max_value - min_value,
+                variable=variable,
+                command=apply_layout_settings,
+            )
+            slider.grid(row=row_index, column=1, sticky="ew", padx=14, pady=12)
+            ctk.CTkLabel(box, textvariable=value_text, text_color=fg, font=("Segoe UI Semibold", 12)).grid(
+                row=row_index, column=2, sticky="e", padx=18, pady=12
+            )
+
+        def save_and_close() -> None:
+            save_form()
+            window.destroy()
+
+        actions = ctk.CTkFrame(box, fg_color=panel, corner_radius=0)
+        actions.grid(row=6, column=0, columnspan=3, sticky="ew", padx=18, pady=(18, 18))
+        button(actions, "Salvar personalização", save_and_close, "accent").pack(side=tk.LEFT, padx=(0, 8))
+        button(actions, "Fechar", window.destroy, "default").pack(side=tk.LEFT)
+
+    def format_raffle_timer(seconds: int) -> str:
+        seconds = max(0, seconds)
+        return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+    def normalize_participant_items(items: list[Any]) -> list[RaffleParticipant]:
+        normalized: list[RaffleParticipant] = []
+        for index, item in enumerate(items, start=1):
+            if isinstance(item, RaffleParticipant):
+                normalized.append(item)
+            elif isinstance(item, dict):
+                name = str(item.get("name") or item.get("username") or item.get("nick") or "").strip()
+                if name:
+                    normalized.append(
+                        RaffleParticipant(
+                            key=str(item.get("key") or f"local-{index}"),
+                            name=name,
+                            avatar_url=str(item.get("avatar_url") or item.get("avatar") or ""),
+                            platform=str(item.get("platform") or ""),
+                            supporter_tier=str(item.get("supporter_tier") or "normal"),
+                            entries=max(1, normalize_kill_value(item.get("entries", 1))),
+                            bonus_reason=str(item.get("bonus_reason") or ""),
+                            joined_at=str(item.get("joined_at") or ""),
+                        )
+                    )
+            else:
+                name = str(item)
+                normalized.append(RaffleParticipant(key=f"local-{index}", name=name))
+        return normalized
+
+    def supporter_tier_label(tier: str) -> str:
+        return {"fan": "Fã", "super_fan": "Super fã", "gift": "Gift", "sub": "Sub"}.get(str(tier or "normal"), "Seguidor")
+
+    def refresh_participant_list(items: list[Any]) -> None:
+        participants = normalize_participant_items(items)
+        desired = [
+            (
+                participant.key,
+                participant.name,
+                participant.avatar_url,
+                participant.platform,
+                participant.supporter_tier,
+                participant.entries,
+            )
+            for participant in participants
+        ]
+        if getattr(refresh_participant_list, "_items", None) == desired:
+            return
+        refresh_participant_list._items = desired  # type: ignore[attr-defined]
+
+        for widget in participant_widgets:
+            widget.destroy()
+        participant_widgets.clear()
+
+        if not desired:
+            empty = ctk.CTkLabel(
+                participants_frame,
+                text="Nenhum participante ainda",
+                text_color=muted,
+                font=("Segoe UI", layout_value(raffle_font_size_var, 10, 20)),
+            )
+            empty.grid(row=0, column=0, sticky="ew", padx=14, pady=14)
+            participant_widgets.append(empty)
+            return
+
+        for row_index, participant in enumerate(participants):
+            item_frame = ctk.CTkFrame(
+                participants_frame,
+                fg_color="#171014" if row_index % 2 == 0 else "#0f0b0e",
+                corner_radius=12,
+            )
+            item_frame.grid(row=row_index, column=0, sticky="ew", padx=8, pady=4)
+            item_frame.columnconfigure(1, weight=1)
+            avatar_label = make_avatar_label(item_frame, participant.name, participant.avatar_url, size=42)
+            avatar_label.grid(row=0, column=0, sticky="w", padx=(10, 8), pady=8)
+            text_stack = ctk.CTkFrame(item_frame, fg_color="transparent", corner_radius=0)
+            text_stack.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=7)
+            text_stack.columnconfigure(0, weight=1)
+            label = ctk.CTkLabel(
+                text_stack,
+                text=f"{row_index + 1:02d}  {participant.name}",
+                text_color=fg,
+                font=("Segoe UI Semibold", layout_value(raffle_font_size_var, 10, 20)),
+                anchor="w",
+            )
+            label.grid(row=0, column=0, sticky="ew")
+            if participant.platform:
+                platform_suffix = f" · {participant.platform}"
+            else:
+                platform_suffix = ""
+            ctk.CTkLabel(
+                text_stack,
+                text=f"{participant.entries} entrada(s) · {supporter_tier_label(participant.supporter_tier)}{platform_suffix}",
+                text_color=muted,
+                font=("Segoe UI", max(9, layout_value(raffle_font_size_var, 10, 20) - 2)),
+                anchor="w",
+            ).grid(row=1, column=0, sticky="ew")
+            participant_widgets.append(item_frame)
+
+    def update_winner_avatar(winner: RaffleWinner | None) -> None:
+        nonlocal winner_avatar_current
+        if winner is None:
+            winner_avatar_current = ("", "-")
+            winner_avatar_label.configure(image=None, text="-")
+            draw_raffle_wheel([])
+            return
+        winner_avatar_current = (winner.avatar_url, winner.name)
+        image = request_avatar_image(winner.avatar_url, 92)
+        winner_avatar_label.configure(
+            image=image,
+            text="" if image else avatar_initials(winner.name),
+        )
+
+    def draw_raffle_wheel(items: list[Any], focus_index: int = 0, winner: RaffleWinner | None = None, confetti: bool = False) -> None:
+        participants = normalize_participant_items(items)
+        wheel_canvas.delete("all")
+        width = max(360, int(wheel_canvas.winfo_width() or 430))
+        height = max(120, int(wheel_canvas.winfo_height() or 138))
+        wheel_canvas.create_rectangle(0, 0, width, height, fill=panel_alt, outline="")
+        if not participants:
+            wheel_canvas.create_text(width // 2, height // 2, text="Roleta aguardando participantes", fill=muted, font=("Segoe UI", 12))
+            return
+        visible = 7
+        card_width = max(96, width // visible)
+        center = width // 2
+        for offset in range(-3, 4):
+            participant = participants[(focus_index + offset) % len(participants)]
+            x = center + offset * card_width
+            active = offset == 0
+            fill = field if active else "#121016"
+            outline = accent if active else border
+            wheel_canvas.create_rectangle(x - card_width // 2 + 5, 20, x + card_width // 2 - 5, 108, fill=fill, outline=outline, width=2 if active else 1)
+            wheel_canvas.create_oval(x - 18, 30, x + 18, 66, fill=accent if active else border, outline="")
+            wheel_canvas.create_text(x, 48, text=avatar_initials(participant.name), fill=panel_alt if active else fg, font=("Segoe UI Semibold", 10))
+            display_name = participant.name[:14] + ("..." if len(participant.name) > 14 else "")
+            wheel_canvas.create_text(x, 80, text=display_name, fill=fg if active else muted, font=("Segoe UI Semibold", 10 if active else 9))
+            wheel_canvas.create_text(x, 96, text=f"{participant.entries}x", fill=teal if active else muted, font=("Segoe UI", 9))
+        wheel_canvas.create_polygon(center - 11, 8, center + 11, 8, center, 22, fill=accent, outline="")
+        if winner:
+            wheel_canvas.create_text(center, 124, text=f"Vencedor: {winner.name}", fill=accent, font=("Segoe UI Semibold", 12))
+        if confetti:
+            colors = [accent, teal, "#ffd166", "#8bb0ff", fg]
+            for _ in range(42):
+                x = secrets.randbelow(max(1, width))
+                y = secrets.randbelow(max(1, height))
+                color = colors[secrets.randbelow(len(colors))]
+                wheel_canvas.create_rectangle(x, y, x + 5, y + 9, fill=color, outline="")
+
+    def pump_avatar_results() -> None:
+        if app_closing:
+            return
+        updated = False
+        while True:
+            try:
+                url, size, image = avatar_result_queue.get_nowait()
+            except queue.Empty:
+                break
+            key = (url, size)
+            avatar_pending.discard(key)
+            if image is not None:
+                avatar_image_cache[key] = ctk.CTkImage(light_image=image, dark_image=image, size=(size, size))
+            else:
+                avatar_image_cache[key] = None
+            update_chat_avatar_widgets(url, size)
+            updated = True
+        if updated:
+            try:
+                if hasattr(refresh_participant_list, "_items"):
+                    delattr(refresh_participant_list, "_items")
+                refresh_participant_list(raffle_worker.participant_items() if raffle_worker else [])
+                current_url, current_name = winner_avatar_current
+                if current_url or current_name != "-":
+                    image = avatar_image_cache.get((current_url, 92))
+                    winner_avatar_label.configure(image=image, text="" if image else avatar_initials(current_name))
+            except Exception:
+                pass
+        if not app_closing:
+            root.after(300, pump_avatar_results)
+
+    def refresh_winner_messages(items: list[dict[str, str]]) -> None:
+        rendered = "\n".join(
+            f"[{item.get('time', '--:--:--')}] {item.get('username', '')}: {item.get('comment', '')}"
+            for item in items
+        )
+        if not rendered:
+            rendered = "Aguardando mensagens do vencedor..."
+        if getattr(refresh_winner_messages, "_text", None) == rendered:
+            return
+        refresh_winner_messages._text = rendered  # type: ignore[attr-defined]
+        winner_messages_text.configure(state="normal")
+        winner_messages_text.delete("1.0", "end")
+        winner_messages_text.insert("end", rendered)
+        winner_messages_text.see("end")
+        winner_messages_text.configure(state="disabled")
+
+    def pump_winner_messages() -> None:
+        if app_closing or raffle_worker is None:
+            return
+        refresh_winner_messages(raffle_worker.winner_message_items())
+        if not app_closing:
+            root.after(600, pump_winner_messages)
+
+    def raffle_history_path() -> Path:
+        raw_path = str(config.get("raffle_history_file", "raffle_history.json")).strip() or "raffle_history.json"
+        path = Path(raw_path)
+        return path if path.is_absolute() else ROOT / path
+
+    def update_raffle_status() -> None:
+        nonlocal raffle_worker
+        if app_closing or raffle_worker is None:
+            return
+
+        remaining = int(max(0, raffle_end_at - time.monotonic()))
+        participant_names = raffle_worker.participant_names()
+        raffle_timer_var.set(format_raffle_timer(remaining))
+        raffle_count_var.set(str(len(participant_names)))
+        raffle_entries_var.set(str(raffle_worker.total_entries()))
+        refresh_participant_list(raffle_worker.participant_items())
+
+        if raffle_worker.is_finished():
+            start_raffle_button.configure(state=tk.DISABLED)
+            cancel_raffle_button.configure(state=tk.DISABLED)
+            finish_raffle_button.configure(state=tk.NORMAL)
+            redraw_raffle_button.configure(state=tk.DISABLED)
+            conclude_raffle_button.configure(state=tk.DISABLED)
+            raffle_state_var.set("Pronto")
+            return
+
+        if not app_closing:
+            root.after(500, update_raffle_status)
+
+    def start_raffle() -> None:
+        nonlocal raffle_worker, raffle_end_at, raffle_animating, raffle_started_at
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+            if raffle_worker is not None:
+                messagebox.showinfo("Sorteio", "Conclua ou cancele o sorteio atual antes de iniciar outro.")
+                return
+            if raffle_animating:
+                return
+
+            duration_seconds = int(local_config.get("raffle_duration_seconds", 600))
+            source_mode = str(local_config.get("raffle_source_mode", "events"))
+            if source_mode == "events" and chat_webhook_server is None and chat_websocket_worker is None:
+                start_chat_listener()
+                if chat_webhook_server is None and chat_websocket_worker is None:
+                    return
+            raffle_worker = TikfinityRaffleWorker(
+                local_config.get("tikfinity_chat_url", "") if source_mode == "browser" else "",
+                local_config.get("raffle_command", "!sorteio"),
+                duration_seconds,
+                log,
+                source_mode=source_mode,
+                entries_normal=int(local_config.get("raffle_entries_normal", 1)),
+                entries_fan=int(local_config.get("raffle_entries_fan", 2)),
+                entries_super_fan=int(local_config.get("raffle_entries_super_fan", 3)),
+                entries_gift=int(local_config.get("raffle_entries_gift", 5)),
+                entries_sub=int(local_config.get("raffle_entries_sub", 10)),
+                user_cooldown_seconds=int(local_config.get("raffle_user_cooldown_seconds", 8)),
+                include_moderators=bool(local_config.get("raffle_include_moderators", True)),
+            )
+            raffle_worker.start()
+            raffle_started_at = datetime.now()
+            raffle_end_at = time.monotonic() + duration_seconds
+            raffle_timer_var.set(format_raffle_timer(duration_seconds))
+            raffle_count_var.set("0")
+            raffle_entries_var.set("0")
+            raffle_winner_var.set("-")
+            update_winner_avatar(None)
+            raffle_state_var.set("Coletando")
+            refresh_participant_list([])
+            refresh_winner_messages([])
+            start_raffle_button.configure(state=tk.DISABLED)
+            finish_raffle_button.configure(state=tk.DISABLED)
+            redraw_raffle_button.configure(state=tk.DISABLED)
+            conclude_raffle_button.configure(state=tk.DISABLED)
+            cancel_raffle_button.configure(state=tk.NORMAL)
+            source_label = "eventos do app" if source_mode == "events" else "URL do chat legado"
+            log(
+                f"Sorteio iniciado por {duration_seconds // 60} minuto(s). "
+                f"Fonte: {source_label}. Comando: {local_config.get('raffle_command')}"
+            )
+            update_raffle_status()
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc))
+
+    def animate_winner(names: list[str], winner: RaffleWinner) -> None:
+        nonlocal raffle_animating
+        participants = raffle_worker.participant_items() if raffle_worker else [winner]
+        frames = 58
+        raffle_animating = True
+        raffle_state_var.set("Sorteando")
+        start_raffle_button.configure(state=tk.DISABLED)
+        finish_raffle_button.configure(state=tk.DISABLED)
+        redraw_raffle_button.configure(state=tk.DISABLED)
+        conclude_raffle_button.configure(state=tk.DISABLED)
+        cancel_raffle_button.configure(state=tk.DISABLED)
+
+        def step(index: int = 0) -> None:
+            nonlocal raffle_animating
+            if index < frames:
+                focus = index % max(1, len(participants))
+                selected = participants[focus]
+                raffle_winner_var.set(selected.name)
+                draw_raffle_wheel(participants, focus_index=focus)
+                if index % 4 == 0:
+                    try:
+                        root.bell()
+                    except Exception:
+                        pass
+                delay = 28 + int(index * 3.3)
+                root.after(delay, lambda: step(index + 1))
+                return
+
+            raffle_winner_var.set(winner.name)
+            winner_index = next((index for index, participant in enumerate(participants) if participant.key == winner.key), 0)
+            draw_raffle_wheel(participants, focus_index=winner_index, winner=winner, confetti=True)
+            update_winner_avatar(winner)
+            raffle_state_var.set("Aguardando mensagens")
+            start_raffle_button.configure(state=tk.DISABLED)
+            finish_raffle_button.configure(state=tk.DISABLED)
+            redraw_raffle_button.configure(state=tk.NORMAL if raffle_worker and raffle_worker.has_remaining_winners() else tk.DISABLED)
+            conclude_raffle_button.configure(state=tk.NORMAL)
+            cancel_raffle_button.configure(state=tk.NORMAL)
+            raffle_animating = False
+            refresh_winner_messages([])
+            pump_winner_messages()
+            log(f"Vencedor do sorteio: {winner.name} ({winner.entries} entrada(s))")
+
+        step()
+
+    def finish_raffle() -> None:
+        nonlocal raffle_worker
+        if raffle_worker is None:
+            return
+        if not raffle_worker.is_finished():
+            messagebox.showinfo("Sorteio", "Aguarde o cronometro terminar para finalizar o sorteio.")
+            return
+
+        names = raffle_worker.participant_names()
+        refresh_participant_list(raffle_worker.participant_items())
+        winner = raffle_worker.draw_winner()
+        if winner:
+            animate_winner(names, winner)
+        else:
+            raffle_winner_var.set("-")
+            update_winner_avatar(None)
+            raffle_state_var.set("Sem participantes")
+            log("Sorteio encerrado sem participantes.")
+            raffle_worker.stop()
+            start_raffle_button.configure(state=tk.NORMAL)
+            finish_raffle_button.configure(state=tk.DISABLED)
+            redraw_raffle_button.configure(state=tk.DISABLED)
+            conclude_raffle_button.configure(state=tk.DISABLED)
+            raffle_worker = None
+
+    def redraw_raffle() -> None:
+        if raffle_worker is None or raffle_animating:
+            return
+        winner = raffle_worker.draw_winner()
+        if not winner:
+            messagebox.showinfo("Sorteio", "Nao ha outros participantes para sortear.")
+            redraw_raffle_button.configure(state=tk.DISABLED)
+            return
+        refresh_winner_messages([])
+        update_winner_avatar(None)
+        animate_winner(raffle_worker.participant_names(), winner)
+
+    def conclude_raffle() -> None:
+        nonlocal raffle_worker, raffle_started_at
+        if raffle_worker is None:
+            return
+
+        participants = raffle_worker.participant_names()
+        participant_items = raffle_worker.participant_history_items()
+        blocked_attempts = raffle_worker.blocked_history_items()
+        winners = raffle_worker.drawn_winner_names()
+        winner_messages = raffle_worker.winner_message_items()
+        record = {
+            "started_at": raffle_started_at.isoformat(timespec="seconds") if raffle_started_at else None,
+            "concluded_at": datetime.now().isoformat(timespec="seconds"),
+            "chat_url": tikfinity_url_var.get().strip(),
+            "source_mode": raffle_source_key(),
+            "command": raffle_command_var.get().strip() or "!sorteio",
+            "duration_seconds": int(config.get("raffle_duration_seconds", 600)),
+            "participants_count": len(participants),
+            "total_entries": raffle_worker.total_entries(),
+            "participants": participants,
+            "participant_items": participant_items,
+            "blocked_attempts": blocked_attempts,
+            "winners": winners,
+            "final_winner": winners[-1] if winners else None,
+            "final_winner_messages": winner_messages,
+        }
+        path = raffle_history_path()
+        append_raffle_history(path, record)
+        raffle_worker.stop()
+        raffle_worker = None
+        raffle_started_at = None
+        raffle_state_var.set("Concluido")
+        start_raffle_button.configure(state=tk.NORMAL)
+        finish_raffle_button.configure(state=tk.DISABLED)
+        redraw_raffle_button.configure(state=tk.DISABLED)
+        conclude_raffle_button.configure(state=tk.DISABLED)
+        cancel_raffle_button.configure(state=tk.DISABLED)
+        log(f"Sorteio concluido e salvo em: {path}")
+
+    def cancel_raffle() -> None:
+        nonlocal raffle_worker, raffle_started_at
+        if raffle_worker is None:
+            return
+        raffle_worker.stop()
+        raffle_worker = None
+        raffle_started_at = None
+        raffle_timer_var.set("00:00")
+        update_winner_avatar(None)
+        raffle_state_var.set("Cancelado")
+        start_raffle_button.configure(state=tk.NORMAL)
+        finish_raffle_button.configure(state=tk.DISABLED)
+        redraw_raffle_button.configure(state=tk.DISABLED)
+        conclude_raffle_button.configure(state=tk.DISABLED)
+        cancel_raffle_button.configure(state=tk.DISABLED)
+        log("Sorteio cancelado.")
 
     def hide_window() -> None:
         root.iconify()
 
     def close_app() -> None:
-        root.destroy()
+        nonlocal app_closing
+        nonlocal manual_sync_after_id, manual_poll_after_id
+        nonlocal ff_queue_sync_after_id, ff_queue_poll_after_id
+        nonlocal ff_overlay_sync_after_id, ff_overlay_poll_after_id
+        if app_closing:
+            return
+        app_closing = True
+        for after_id in (
+            manual_sync_after_id,
+            manual_poll_after_id,
+            ff_queue_sync_after_id,
+            ff_queue_poll_after_id,
+            ff_overlay_sync_after_id,
+            ff_overlay_poll_after_id,
+        ):
+            if after_id is not None:
+                try:
+                    root.after_cancel(after_id)
+                except tk.TclError:
+                    pass
+        manual_sync_after_id = None
+        manual_poll_after_id = None
+        ff_queue_sync_after_id = None
+        ff_queue_poll_after_id = None
+        ff_overlay_sync_after_id = None
+        ff_overlay_poll_after_id = None
+        try:
+            if raffle_worker is not None:
+                raffle_worker.stop()
+            stop_chat_listener(silent=True)
+            stop_livepix_webhook(silent=True)
+            close_ff_overlay_window()
+            close_chat_monitor_window()
+            close_chat_overlay()
+            close_livepix_overlay()
+        finally:
+            try:
+                root.quit()
+            except tk.TclError:
+                pass
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
 
-    buttons = ttk.Frame(main)
-    buttons.grid(row=8, column=0, columnspan=5, sticky="ew", pady=8)
-    ttk.Button(buttons, text="Salvar", command=save_form).pack(side=tk.LEFT, padx=(0, 8))
-    ttk.Button(buttons, text="Iniciar em segundo plano", command=start_background).pack(side=tk.LEFT, padx=(0, 8))
-    ttk.Button(buttons, text="Minimizar", command=hide_window).pack(side=tk.LEFT, padx=(0, 8))
-    ttk.Button(buttons, text="Testar com print exemplo", command=test_sample).pack(side=tk.LEFT, padx=(0, 8))
-    ttk.Button(buttons, text="Sair", command=close_app).pack(side=tk.RIGHT)
+    livepix_left = ctk.CTkScrollableFrame(
+        livepix_tab,
+        fg_color=bg,
+        corner_radius=0,
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
+    )
+    livepix_left.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
+    livepix_left.columnconfigure(0, weight=1)
+    livepix_right = ctk.CTkFrame(livepix_tab, fg_color=bg, corner_radius=0)
+    livepix_right.grid(row=0, column=1, sticky="nsew", padx=(6, 12), pady=0)
+    livepix_right.columnconfigure(0, weight=1)
+    livepix_right.rowconfigure(2, weight=1)
 
-    root.protocol("WM_DELETE_WINDOW", hide_window)
+    livepix_config_card = card(livepix_left, "Livepix API", "OAuth2, webhooks, checkout, metas e alertas.")
+    livepix_config_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+    livepix_config_card.columnconfigure(1, weight=1)
+    ctk.CTkCheckBox(
+        livepix_config_card,
+        text="Ativar integração Livepix",
+        variable=livepix_enabled_var,
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=2, column=0, columnspan=2, sticky="w", padx=18, pady=(4, 10))
+    section_label(livepix_config_card, "Client ID", 3)
+    entry(livepix_config_card, livepix_client_id_var).grid(row=3, column=1, sticky="ew", padx=(8, 18), pady=(6, 4))
+    section_label(livepix_config_card, "Client Secret", 4)
+    entry(livepix_config_card, livepix_client_secret_var, show="*").grid(row=4, column=1, sticky="ew", padx=(8, 18), pady=4)
+    section_label(livepix_config_card, "Escopos", 5)
+    entry(livepix_config_card, livepix_scopes_var).grid(row=5, column=1, sticky="ew", padx=(8, 18), pady=4)
+    section_label(livepix_config_card, "Moeda", 6)
+    combo(livepix_config_card, livepix_currency_var, ["BRL", "BNB", "BTC", "ETH", "USDT"], width=140).grid(
+        row=6, column=1, sticky="w", padx=(8, 18), pady=4
+    )
+    livepix_config_actions = ctk.CTkFrame(livepix_config_card, fg_color=panel, corner_radius=0)
+    livepix_config_actions.grid(row=7, column=0, columnspan=2, sticky="ew", padx=18, pady=(12, 16))
+    button(livepix_config_actions, "Testar e sincronizar", test_livepix_account, "accent", width=150).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_config_actions, "Salvar", save_form, "default", width=88).pack(side=tk.LEFT)
+
+    livepix_webhook_card = card(livepix_left, "Webhook local", "Recebe notificações da Livepix e atualiza o painel.")
+    livepix_webhook_card.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+    livepix_webhook_card.columnconfigure(1, weight=1)
+    section_label(livepix_webhook_card, "Host", 2)
+    entry(livepix_webhook_card, livepix_webhook_host_var).grid(row=2, column=1, sticky="ew", padx=(8, 18), pady=4)
+    section_label(livepix_webhook_card, "Porta", 3)
+    entry(livepix_webhook_card, livepix_webhook_port_var, width=120).grid(row=3, column=1, sticky="w", padx=(8, 18), pady=4)
+    section_label(livepix_webhook_card, "Token", 4)
+    entry(livepix_webhook_card, livepix_webhook_token_var).grid(row=4, column=1, sticky="ew", padx=(8, 18), pady=4)
+    entry(livepix_webhook_card, livepix_endpoint_var).grid(row=5, column=0, columnspan=2, sticky="ew", padx=18, pady=(10, 4))
+    livepix_webhook_actions = ctk.CTkFrame(livepix_webhook_card, fg_color=panel, corner_radius=0)
+    livepix_webhook_actions.grid(row=6, column=0, columnspan=2, sticky="ew", padx=18, pady=(8, 16))
+    button(livepix_webhook_actions, "Iniciar", start_livepix_webhook, "accent", width=90).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_webhook_actions, "Parar", stop_livepix_webhook, "danger", width=80).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_webhook_actions, "Copiar URL", copy_livepix_endpoint, "default", width=100).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_webhook_actions, "Cadastrar", register_livepix_webhook, "ghost", width=94).pack(side=tk.LEFT)
+
+    livepix_checkout_card = card(livepix_left, "Checkout", "Gera links de pagamento ou mensagem paga.")
+    livepix_checkout_card.grid(row=2, column=0, sticky="ew", padx=12, pady=8)
+    livepix_checkout_card.columnconfigure(1, weight=1)
+    section_label(livepix_checkout_card, "Valor", 2)
+    entry(livepix_checkout_card, livepix_checkout_amount_var, width=140).grid(row=2, column=1, sticky="w", padx=(8, 18), pady=4)
+    section_label(livepix_checkout_card, "Nome", 3)
+    entry(livepix_checkout_card, livepix_checkout_user_var).grid(row=3, column=1, sticky="ew", padx=(8, 18), pady=4)
+    section_label(livepix_checkout_card, "Mensagem", 4)
+    entry(livepix_checkout_card, livepix_checkout_message_var).grid(row=4, column=1, sticky="ew", padx=(8, 18), pady=4)
+    section_label(livepix_checkout_card, "Retorno", 5)
+    entry(livepix_checkout_card, livepix_redirect_url_var).grid(row=5, column=1, sticky="ew", padx=(8, 18), pady=4)
+    section_label(livepix_checkout_card, "Plano ID", 6)
+    entry(livepix_checkout_card, livepix_plan_id_var).grid(row=6, column=1, sticky="ew", padx=(8, 18), pady=4)
+    section_label(livepix_checkout_card, "Plano", 7)
+    plan_row = ctk.CTkFrame(livepix_checkout_card, fg_color=panel, corner_radius=0)
+    plan_row.grid(row=7, column=1, sticky="ew", padx=(8, 18), pady=4)
+    plan_row.columnconfigure(0, weight=1)
+    plan_row.columnconfigure(1, weight=1)
+    entry(plan_row, livepix_plan_slug_var).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+    entry(plan_row, livepix_plan_name_var).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+    section_label(livepix_checkout_card, "Descrição", 8)
+    entry(livepix_checkout_card, livepix_plan_description_var).grid(row=8, column=1, sticky="ew", padx=(8, 18), pady=4)
+    section_label(livepix_checkout_card, "Recorrência", 9)
+    sub_row = ctk.CTkFrame(livepix_checkout_card, fg_color=panel, corner_radius=0)
+    sub_row.grid(row=9, column=1, sticky="ew", padx=(8, 18), pady=4)
+    sub_row.columnconfigure(0, weight=1)
+    sub_row.columnconfigure(1, weight=1)
+    combo(sub_row, livepix_subscription_recurrence_var, ["monthly", "quarterly", "semiannual", "yearly"], width=150).grid(
+        row=0, column=0, sticky="ew", padx=(0, 6)
+    )
+    entry(sub_row, livepix_subscriber_email_var, placeholder_text="email opcional").grid(row=0, column=1, sticky="ew", padx=(6, 0))
+    livepix_checkout_actions = ctk.CTkFrame(livepix_checkout_card, fg_color=panel, corner_radius=0)
+    livepix_checkout_actions.grid(row=10, column=0, columnspan=2, sticky="ew", padx=18, pady=(12, 16))
+    button(livepix_checkout_actions, "Pagamento", lambda: create_livepix_checkout("payment"), "accent", width=112).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_checkout_actions, "Mensagem paga", lambda: create_livepix_checkout("message"), "default", width=126).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_checkout_actions, "Criar plano", create_livepix_plan, "ghost", width=100).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_checkout_actions, "Assinatura", create_livepix_subscription_checkout, "accent", width=104).pack(side=tk.LEFT)
+
+    livepix_goal_card = card(livepix_left, "Meta e overlay", "Configura meta local e janela para OBS.")
+    livepix_goal_card.grid(row=3, column=0, sticky="ew", padx=12, pady=(8, 12))
+    livepix_goal_card.columnconfigure(1, weight=1)
+    section_label(livepix_goal_card, "Título", 2)
+    entry(livepix_goal_card, livepix_goal_label_var).grid(row=2, column=1, sticky="ew", padx=(8, 18), pady=4)
+    section_label(livepix_goal_card, "Meta", 3)
+    entry(livepix_goal_card, livepix_goal_amount_var, width=140).grid(row=3, column=1, sticky="w", padx=(8, 18), pady=4)
+    section_label(livepix_goal_card, "Página", 4)
+    entry(livepix_goal_card, livepix_public_page_file_var).grid(row=4, column=1, sticky="ew", padx=(8, 18), pady=4)
+    ctk.CTkCheckBox(
+        livepix_goal_card,
+        text="Anunciar eventos Livepix no Chat Ao Vivo/overlay",
+        variable=livepix_announce_in_chat_var,
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).grid(row=5, column=0, columnspan=2, sticky="w", padx=18, pady=(8, 0))
+    livepix_goal_actions = ctk.CTkFrame(livepix_goal_card, fg_color=panel, corner_radius=0)
+    livepix_goal_actions.grid(row=6, column=0, columnspan=2, sticky="ew", padx=18, pady=(12, 16))
+    button(livepix_goal_actions, "Abrir overlay", open_livepix_overlay, "accent", width=118).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_goal_actions, "Evento teste", add_livepix_test_event, "default", width=110).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_goal_actions, "Exportar HTML", export_livepix_public_page, "ghost", width=120).pack(side=tk.LEFT)
+
+    livepix_metrics = ctk.CTkFrame(livepix_right, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+    livepix_metrics.grid(row=0, column=0, sticky="ew", padx=0, pady=(12, 8))
+    for column in range(5):
+        livepix_metrics.columnconfigure(column, weight=1)
+    metric_specs = [
+        ("Status", livepix_status_var, accent),
+        ("Conta", livepix_account_var, fg),
+        ("Total", livepix_total_var, teal),
+        ("Meta", livepix_goal_var, blue),
+        ("Eventos", livepix_count_var, fg),
+    ]
+    for col, (label_text, variable, color) in enumerate(metric_specs):
+        ctk.CTkLabel(livepix_metrics, text=label_text, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=col, sticky="w", padx=16, pady=(14, 0)
+        )
+        ctk.CTkLabel(livepix_metrics, textvariable=variable, text_color=color, font=("Segoe UI Semibold", 16), anchor="w").grid(
+            row=1, column=col, sticky="ew", padx=16, pady=(0, 14)
+        )
+
+    livepix_report_card = card(livepix_right, "Resumo", "Ranking, carteira e controles de alerta.")
+    livepix_report_card.grid(row=1, column=0, sticky="ew", pady=8)
+    livepix_report_card.columnconfigure(1, weight=1)
+    section_label(livepix_report_card, "Top apoiador", 2)
+    ctk.CTkLabel(livepix_report_card, textvariable=livepix_top_var, text_color=fg, font=("Segoe UI Semibold", 12), anchor="w").grid(
+        row=2, column=1, sticky="ew", padx=(8, 18), pady=8
+    )
+    section_label(livepix_report_card, "Carteira", 3)
+    ctk.CTkLabel(livepix_report_card, textvariable=livepix_wallet_var, text_color=teal, font=("Segoe UI Semibold", 12), anchor="w").grid(
+        row=3, column=1, sticky="ew", padx=(8, 18), pady=8
+    )
+    section_label(livepix_report_card, "API extra", 4)
+    ctk.CTkLabel(livepix_report_card, textvariable=livepix_extra_var, text_color=blue, font=("Segoe UI Semibold", 12), anchor="w", wraplength=760).grid(
+        row=4, column=1, sticky="ew", padx=(8, 18), pady=8
+    )
+    section_label(livepix_report_card, "Top 10", 5)
+    ctk.CTkLabel(
+        livepix_report_card,
+        textvariable=livepix_ranking_var,
+        text_color=fg,
+        font=("Segoe UI", 12),
+        anchor="w",
+        justify="left",
+        wraplength=760,
+    ).grid(row=5, column=1, sticky="ew", padx=(8, 18), pady=8)
+    livepix_control_actions = ctk.CTkFrame(livepix_report_card, fg_color=panel, corner_radius=0)
+    livepix_control_actions.grid(row=6, column=0, columnspan=2, sticky="ew", padx=18, pady=(8, 16))
+    button(livepix_control_actions, "Pular alerta", lambda: livepix_control("skip"), "default", width=105).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_control_actions, "Reexibir", lambda: livepix_control("replay"), "default", width=90).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_control_actions, "Auto on", lambda: livepix_control("autoplay_on"), "accent", width=86).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_control_actions, "Auto off", lambda: livepix_control("autoplay_off"), "danger", width=86).pack(side=tk.LEFT, padx=(0, 8))
+    button(livepix_control_actions, "Limpar histórico", clear_livepix_events, "ghost", width=120).pack(side=tk.LEFT)
+
+    livepix_events_card = card(livepix_right, "Eventos Livepix", "Pagamentos, mensagens, moderação e histórico local.")
+    livepix_events_card.grid(row=2, column=0, sticky="nsew", pady=(8, 12))
+    livepix_events_card.columnconfigure(0, weight=1)
+    livepix_events_card.rowconfigure(2, weight=1)
+    livepix_events_frame = ctk.CTkScrollableFrame(
+        livepix_events_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        scrollbar_button_color=border,
+        scrollbar_button_hover_color=accent,
+    )
+    livepix_events_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=18, pady=(10, 18))
+    livepix_events_frame.columnconfigure(0, weight=1)
+    render_livepix_events.frame = livepix_events_frame  # type: ignore[attr-defined]
+    update_livepix_endpoint_text()
+    refresh_livepix_dashboard()
+
+    appearance_body = ctk.CTkScrollableFrame(
+        appearance_tab,
+        fg_color=bg,
+        corner_radius=0,
+        scrollbar_button_color=border,
+        scrollbar_button_hover_color=accent,
+    )
+    appearance_body.grid(row=0, column=0, sticky="nsew")
+    appearance_body.columnconfigure(0, weight=1)
+    appearance_body.columnconfigure(1, weight=1)
+
+    brand_card = card(
+        appearance_body,
+        "Identidade visual",
+        "Troque o avatar principal e escolha um preset de tema para o app.",
+    )
+    brand_card.grid(row=0, column=0, sticky="nsew", padx=12, pady=(12, 8))
+    brand_card.columnconfigure(1, weight=1)
+    logo_preview_box = ctk.CTkFrame(
+        brand_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        width=152,
+        height=152,
+    )
+    logo_preview_box.grid(row=2, column=0, rowspan=5, sticky="nw", padx=18, pady=(12, 18))
+    logo_preview_box.grid_propagate(False)
+    logo_preview_label = ctk.CTkLabel(logo_preview_box, text="", text_color=accent, font=("Segoe UI Semibold", 42))
+    logo_preview_label.place(relx=0.5, rely=0.5, anchor="center")
+
+    section_label(brand_card, "Preset", 2, column=1)
+    appearance_preset_combo = combo(brand_card, appearance_preset_var, list(THEME_PRESETS.keys()), width=220)
+    appearance_preset_combo.grid(row=2, column=2, columnspan=2, sticky="ew", padx=18, pady=5)
+    appearance_preset_combo.configure(command=lambda _value: apply_theme_preset())
+    section_label(brand_card, "Imagem/avatar", 3, column=1)
+    entry(brand_card, logo_path_var).grid(row=3, column=2, columnspan=2, sticky="ew", padx=18, pady=5)
+
+    theme_preview = ctk.CTkFrame(
+        appearance_body,
+        fg_color=panel_alt,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+    )
+    theme_preview.grid(row=0, column=1, sticky="nsew", padx=12, pady=(12, 8))
+    theme_preview.columnconfigure(0, weight=1)
+    ctk.CTkLabel(
+        theme_preview,
+        text="Preview 2026",
+        text_color=fg,
+        font=("Segoe UI Semibold", 20),
+    ).grid(row=0, column=0, sticky="w", padx=22, pady=(22, 4))
+    ctk.CTkLabel(
+        theme_preview,
+        text="Painel escuro, bordas suaves, alto contraste e identidade própria.",
+        text_color=muted,
+        font=("Segoe UI", 11),
+    ).grid(row=1, column=0, sticky="w", padx=22, pady=(0, 16))
+    preview_metric = ctk.CTkFrame(theme_preview, fg_color=field, corner_radius=12, border_width=1, border_color=border)
+    preview_metric.grid(row=2, column=0, sticky="ew", padx=22, pady=(0, 14))
+    preview_metric.columnconfigure((0, 1, 2), weight=1)
+    for col, (label_text, value_text) in enumerate((("Jogadores", "8"), ("Kills", "42"), ("Status", "Live"))):
+        ctk.CTkLabel(preview_metric, text=label_text, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=col, sticky="w", padx=14, pady=(12, 0)
+        )
+        ctk.CTkLabel(preview_metric, text=value_text, text_color=teal, font=("Segoe UI Semibold", 24)).grid(
+            row=1, column=col, sticky="w", padx=14, pady=(0, 12)
+        )
+    ctk.CTkButton(
+        theme_preview,
+        text="Botão principal",
+        fg_color=accent,
+        hover_color=accent_hover,
+        text_color="#fff7f7",
+        corner_radius=12,
+        height=40,
+        font=("Segoe UI Semibold", 12),
+    ).grid(row=3, column=0, sticky="ew", padx=22, pady=(0, 22))
+
+    colors_card = card(
+        appearance_body,
+        "Editor de tema",
+        "Ajuste as cores do app. Salve e reabra para aplicar em toda a interface.",
+    )
+    colors_card.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=12, pady=(8, 12))
+    colors_card.columnconfigure(1, weight=1)
+    colors_card.columnconfigure(4, weight=1)
+    color_labels = {
+        "canvas_bg": "Fundo geral",
+        "bg": "Fundo das abas",
+        "panel": "Cards",
+        "panel_alt": "Card destaque",
+        "field": "Campos",
+        "border": "Bordas",
+        "fg": "Texto principal",
+        "muted": "Texto secundário",
+        "accent": "Cor principal",
+        "accent_hover": "Hover principal",
+        "teal": "Métrica/destaque",
+        "blue": "Badge secundário",
+        "danger": "Perigo",
+    }
+    color_swatches: dict[str, Any] = {}
+    theme_swatch_updating = False
+
+    def update_logo_preview(path_text: str | None = None) -> None:
+        preview_theme = appearance_config_from_vars()
+        if path_text is not None:
+            preview_theme["logo_path"] = path_text
+        path = resolve_logo_path(preview_theme)
+        try:
+            image = Image.open(path)
+            preview_image = ctk.CTkImage(light_image=image, dark_image=image, size=(124, 124))
+            root._appearance_logo_preview = preview_image  # type: ignore[attr-defined]
+            logo_preview_label.configure(image=preview_image, text="")
+        except Exception:
+            logo_preview_label.configure(image=None, text="A")
+
+    def choose_logo() -> None:
+        selected = filedialog.askopenfilename(
+            title="Escolher imagem do app",
+            filetypes=[
+                ("Imagens", "*.png *.jpg *.jpeg *.webp *.bmp"),
+                ("Todos os arquivos", "*.*"),
+            ],
+        )
+        if selected:
+            logo_path_var.set(selected)
+            update_logo_preview(selected)
+
+    def clear_logo() -> None:
+        logo_path_var.set("")
+        update_logo_preview("")
+
+    def choose_theme_color(key: str) -> None:
+        selected = colorchooser.askcolor(color=theme_color_vars[key].get(), title=f"Escolher {color_labels[key]}")
+        if selected and selected[1]:
+            theme_color_vars[key].set(selected[1].lower())
+            update_theme_swatches()
+
+    def update_theme_swatches() -> None:
+        nonlocal theme_swatch_updating
+        if theme_swatch_updating:
+            return
+        theme_swatch_updating = True
+        try:
+            for key, widget in color_swatches.items():
+                color = normalize_hex_color(theme_color_vars[key].get(), THEME_PRESETS[DEFAULT_THEME_NAME][key])
+                theme_color_vars[key].set(color)
+                widget.configure(fg_color=color, hover_color=color, text=color)
+        finally:
+            theme_swatch_updating = False
+
+    logo_actions = ctk.CTkFrame(brand_card, fg_color=panel, corner_radius=0)
+    logo_actions.grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=(8, 4))
+    button(logo_actions, "Escolher imagem", choose_logo, "accent", width=140).pack(side=tk.LEFT, padx=(0, 8))
+    button(logo_actions, "Usar padrão", clear_logo, "ghost", width=110).pack(side=tk.LEFT, padx=(0, 8))
+    ctk.CTkLabel(
+        brand_card,
+        text="Dica: use PNG quadrado para ficar perfeito no cabeçalho.",
+        text_color=muted,
+        font=("Segoe UI", 11),
+    ).grid(row=5, column=1, columnspan=3, sticky="w", padx=18, pady=(4, 18))
+
+    for index, key in enumerate(THEME_COLOR_KEYS):
+        row = 2 + index // 2
+        base_col = 0 if index % 2 == 0 else 3
+        ctk.CTkLabel(colors_card, text=color_labels[key], text_color=muted, font=("Segoe UI", 11)).grid(
+            row=row, column=base_col, sticky="w", padx=18, pady=6
+        )
+        entry(colors_card, theme_color_vars[key], width=110).grid(row=row, column=base_col + 1, sticky="ew", padx=8, pady=6)
+        swatch = ctk.CTkButton(
+            colors_card,
+            text=theme_color_vars[key].get(),
+            width=92,
+            height=32,
+            corner_radius=10,
+            fg_color=theme_color_vars[key].get(),
+            hover_color=theme_color_vars[key].get(),
+            text_color="#ffffff",
+            command=lambda color_key=key: choose_theme_color(color_key),
+        )
+        swatch.grid(row=row, column=base_col + 2, sticky="e", padx=(0, 18), pady=6)
+        color_swatches[key] = swatch
+
+    appearance_actions = ctk.CTkFrame(colors_card, fg_color=panel, corner_radius=0)
+    appearance_actions.grid(row=10, column=0, columnspan=6, sticky="ew", padx=18, pady=(18, 18))
+    button(appearance_actions, "Salvar e reabrir", lambda: save_appearance(restart=True), "accent", width=150).pack(
+        side=tk.LEFT, padx=(0, 8)
+    )
+    button(appearance_actions, "Salvar", lambda: save_appearance(restart=False), "ghost", width=90).pack(
+        side=tk.LEFT, padx=(0, 8)
+    )
+    button(appearance_actions, "Aplicar preset", apply_theme_preset, "default", width=120).pack(side=tk.LEFT, padx=(0, 8))
+    button(appearance_actions, "Atualizar preview", update_theme_swatches, "default", width=130).pack(side=tk.LEFT, padx=(0, 8))
+    button(appearance_actions, "Minimizar", hide_window, "default", width=96).pack(side=tk.LEFT, padx=(0, 8))
+
+    update_logo_preview()
+    update_theme_swatches()
+
+    button(general_actions, "Salvar configurações", save_form, "accent", width=150).pack(side=tk.LEFT, padx=(0, 8))
+    button(general_actions, "Minimizar", hide_window, "default", width=96).pack(side=tk.LEFT, padx=(0, 8))
+    button(general_actions, "Sair", close_app, "danger", width=76).pack(side=tk.LEFT, padx=(0, 8))
+
+    start_raffle_button = button(raffle_buttons, "Iniciar sorteio", start_raffle, "accent")
+    start_raffle_button.pack(side=tk.LEFT, padx=(0, 8))
+    finish_raffle_button = button(raffle_buttons, "Sortear vencedor", finish_raffle)
+    finish_raffle_button.configure(state="disabled")
+    finish_raffle_button.pack(side=tk.LEFT, padx=(0, 8))
+    redraw_raffle_button = button(raffle_buttons, "Sortear outro", redraw_raffle)
+    redraw_raffle_button.configure(state="disabled")
+    redraw_raffle_button.pack(side=tk.LEFT, padx=(0, 8))
+    conclude_raffle_button = button(raffle_buttons, "Concluir sorteio", conclude_raffle, "accent")
+    conclude_raffle_button.configure(state="disabled")
+    conclude_raffle_button.pack(side=tk.LEFT, padx=(0, 8))
+    button(raffle_buttons, "Personalizar janelas", open_layout_window, "ghost").pack(side=tk.LEFT, padx=(0, 8))
+    cancel_raffle_button = button(raffle_buttons, "Cancelar", cancel_raffle, "danger")
+    cancel_raffle_button.configure(state="disabled")
+    cancel_raffle_button.pack(side=tk.LEFT, padx=(0, 8))
+
+    def grid_action_buttons(parent: Any, specs: list[tuple[str, Any, str]], columns: int = 4) -> None:
+        for column in range(columns):
+            parent.columnconfigure(column, weight=1)
+        for index, (text, command, style) in enumerate(specs):
+            action_button = button(parent, text, command, style, width=1)
+            action_button.grid(
+                row=index // columns,
+                column=index % columns,
+                sticky="ew",
+                padx=4,
+                pady=4,
+            )
+
+    grid_action_buttons(
+        manual_actions,
+        [
+            ("Adicionar jogador", lambda: add_manual_row(), "accent"),
+            ("Enviar agora", lambda: send_manual_kills(force=True), "accent"),
+            ("Buscar painel", lambda: fetch_panel_kills(force=True), "default"),
+            ("Zerar", reset_manual_kills, "ghost"),
+            ("Limpar", clear_manual_table, "danger"),
+            ("Salvar", save_form, "ghost"),
+            ("Minimizar", hide_window, "default"),
+            ("Sair", close_app, "danger"),
+        ],
+    )
+
+    grid_action_buttons(
+        ff_queue_actions,
+        [
+            ("Adicionar jogador", lambda: add_ff_queue_row(), "accent"),
+            ("Chamar próximo", call_next_ff_queue, "accent"),
+            ("Marcar jogando", mark_called_playing, "default"),
+            ("Finalizar partida", finish_playing_ff_queue, "ghost"),
+            ("Enviar agora", lambda: send_ff_queue(force=True), "accent"),
+            ("Buscar Jarvis", lambda: fetch_ff_queue(force=True), "default"),
+            ("Limpar", clear_ff_queue, "danger"),
+            ("Salvar", save_form, "ghost"),
+        ],
+    )
+
+    grid_action_buttons(
+        ff_overlay_actions,
+        [
+            ("Abrir overlay", open_ff_overlay_window, "accent"),
+            ("Atualizar Jarvis", refresh_overlay_from_jarvis, "accent"),
+            ("Enviar overlay", lambda: send_ff_overlay(force=True), "accent"),
+            ("Buscar overlay", lambda: fetch_ff_overlay(force=True), "default"),
+            ("Buscar kills", lambda: fetch_panel_kills(force=True), "default"),
+            ("Buscar fila", lambda: fetch_ff_queue(force=True), "default"),
+            ("Salvar", save_form, "ghost"),
+            ("Fechar overlay", close_ff_overlay_window, "danger"),
+        ],
+        columns=4,
+    )
+
+    button(chat_actions, "Iniciar chat", start_chat_listener, "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
+    button(chat_actions, "Abrir janela", open_chat_monitor_window, "default", width=112).pack(side=tk.LEFT, padx=(0, 8))
+    button(chat_actions, "Overlay jogo", open_chat_overlay_window, "accent", width=112).pack(side=tk.LEFT, padx=(0, 8))
+    button(chat_actions, "Parar", stop_chat_listener, "danger", width=84).pack(side=tk.LEFT, padx=(0, 8))
+    button(chat_actions, "Copiar endpoint", copy_chat_endpoint, "default", width=130).pack(side=tk.LEFT, padx=(0, 8))
+    button(chat_actions, "Limpar chat", clear_chat_messages, "ghost", width=104).pack(side=tk.LEFT, padx=(0, 8))
+    button(chat_actions, "Salvar", save_form, "ghost", width=86).pack(side=tk.LEFT, padx=(0, 8))
+
+    root.protocol("WM_DELETE_WINDOW", close_app)
 
     def pump_log() -> None:
+        if app_closing:
+            return
         while True:
             try:
                 message = log_queue.get_nowait()
             except queue.Empty:
                 break
+            log_text.configure(state="normal")
             log_text.insert(tk.END, message + "\n")
             log_text.see(tk.END)
-        root.after(150, pump_log)
+            log_text.configure(state="disabled")
+        if not app_closing:
+            root.after(150, pump_log)
 
+    saved_manual_players = parse_players_payload(config.get("manual_kills", []))
+    set_manual_players(saved_manual_players)
+    manual_last_signature = manual_signature(collect_manual_players())
+    saved_ff_queue_entries = parse_ff_queue_payload(config.get("ff_queue_items", []))
+    set_ff_queue_entries(saved_ff_queue_entries)
+    ff_queue_last_signature = ff_queue_signature(collect_ff_queue_entries())
+    set_custom_commands(parse_chat_commands_payload(config.get("chat_commands", [])))
+    set_chat_timers(parse_chat_timers_payload(config.get("chat_timers", [])))
+    sync_enabled_var.trace_add("write", lambda *_args: schedule_manual_sync(100))
+    poll_seconds_var.trace_add("write", lambda *_args: schedule_manual_poll())
+    ff_queue_enabled_var.trace_add("write", lambda *_args: schedule_ff_queue_sync(100))
+    ff_queue_poll_seconds_var.trace_add("write", lambda *_args: schedule_ff_queue_poll())
+    ff_overlay_enabled_var.trace_add("write", lambda *_args: schedule_ff_overlay_poll())
+    auto_update_var.trace_add(
+        "write",
+        lambda *_args: general_update_state_var.set("Ativa" if auto_update_var.get() else "Desativada"),
+    )
+    chat_webhook_host_var.trace_add("write", lambda *_args: update_chat_endpoint_text())
+    chat_webhook_port_var.trace_add("write", lambda *_args: update_chat_endpoint_text())
+    chat_webhook_token_var.trace_add("write", lambda *_args: update_chat_endpoint_text())
+    chat_websocket_url_var.trace_add("write", lambda *_args: update_chat_endpoint_text())
+    chat_filter_var.trace_add("write", lambda *_args: refresh_chat_messages(force=True))
+    livepix_webhook_host_var.trace_add("write", lambda *_args: update_livepix_endpoint_text())
+    livepix_webhook_port_var.trace_add("write", lambda *_args: update_livepix_endpoint_text())
+    livepix_webhook_token_var.trace_add("write", lambda *_args: update_livepix_endpoint_text())
+    livepix_goal_amount_var.trace_add("write", lambda *_args: refresh_livepix_dashboard())
+    livepix_currency_var.trace_add("write", lambda *_args: refresh_livepix_dashboard())
+    def update_local_source_labels(*_args: Any) -> None:
+        local_name = device_name_var.get().strip() or default_device_name()
+        manual_source_var.set(local_name)
+        ff_queue_source_var.set(local_name)
+
+    device_name_var.trace_add("write", update_local_source_labels)
     pump_log()
-    log("Configure o atalho e clique em Iniciar em segundo plano.")
+    pump_sync_queue()
+    pump_ff_queue_sync_queue()
+    pump_chat_event_queue()
+    pump_livepix_queue()
+    pump_bot_send_results()
+    pump_chat_timers()
+    pump_avatar_results()
+    schedule_manual_poll()
+    schedule_ff_queue_poll()
+    schedule_ff_overlay_poll()
+    update_chat_endpoint_text()
+    apply_chat_overlay_settings()
+    apply_ff_overlay_settings(refresh=True)
+    refresh_chat_messages(force=True)
+    refresh_participant_list([])
+    log("Kills em modo manual. Edite a tabela e use Enviar agora, ou ative a sincronizacao automatica.")
     root.mainloop()
     return 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Captura kills do Free Fire e envia para Discord.")
+    parser = argparse.ArgumentParser(description="Painel manual de kills do Free Fire e sorteios para live.")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--image", type=Path, help="Processa uma imagem salva em vez de capturar a tela.")
-    parser.add_argument("--watch", action="store_true", help="Fica ouvindo o atalho global.")
+    parser.add_argument("--image", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--watch", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--gui", action="store_true", help="Abre a janela de configuracao.")
-    parser.add_argument("--dry-run", action="store_true", help="Mostra o resultado sem enviar para o Discord.")
-    parser.add_argument("--debug", action="store_true", help="Salva recortes usados pelo OCR em debug/.")
+    parser.add_argument("--version", action="store_true", help="Mostra a versao do aplicativo e sai.")
+    parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.version:
+        print(f"{APP_NAME} {APP_VERSION}")
+        return 0
+
+    if args.image or args.watch:
+        print("Captura automatica por print/OCR foi desativada. Use a interface de kills manuais.")
+        return 2
+
+    if maybe_apply_auto_update(args.config):
+        return 0
 
     if args.gui or (not args.image and not args.watch):
         return run_gui(args.config)
-
-    config = load_config(args.config)
-    if args.image:
-        process_image(args.image, config, dry_run=args.dry_run, keep_debug=args.debug)
-        return 0
-
-    if args.watch or not args.image:
-        hotkey_loop(config, dry_run=args.dry_run, keep_debug=args.debug)
-        return 0
 
     return 0
 
