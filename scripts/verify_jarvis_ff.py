@@ -181,6 +181,7 @@ def verify_contracts() -> None:
                 {"participantName": "Aizen", "score": "12"},
                 {"displayName": "Jarvis", "points": 4},
             ],
+            "ignored": [{"name": "Oculto", "key": "oculto", "ignored_at": 123}],
             "lastUpdatedBy": "Painel Jarvis",
             "onlineDevices": [{"name": "PC Live"}],
         }
@@ -189,6 +190,8 @@ def verify_contracts() -> None:
         raise RuntimeError(f"Parser Kills FF divergente: {kills_state.players!r}")
     if kills_state.updated_by != "Painel Jarvis" or not kills_state.devices:
         raise RuntimeError("Metadados Kills FF nao foram lidos.")
+    if not kills_state.ignored_players or kills_state.ignored_players[0].name != "Oculto":
+        raise RuntimeError(f"Ignorados Kills FF nao foram lidos: {kills_state.ignored_players!r}")
 
     queue_state = parse_ff_queue_state(
         {

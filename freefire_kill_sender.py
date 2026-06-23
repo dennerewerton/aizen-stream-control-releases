@@ -47,7 +47,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.22"
+APP_VERSION = "2.6.23"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -198,6 +198,13 @@ class PlayerKill:
 
 
 @dataclass
+class IgnoredKillPlayer:
+    name: str
+    key: str = ""
+    ignored_at: float = 0.0
+
+
+@dataclass
 class FFQueueEntry:
     name: str
     note: str = ""
@@ -269,6 +276,7 @@ class RealtimeState:
     devices: list[dict[str, Any]] | None = None
     daily_ranking: list[PlayerKill] | None = None
     global_ranking: list[PlayerKill] | None = None
+    ignored_players: list[IgnoredKillPlayer] | None = None
     total_players: int | None = None
     total_kills: int | None = None
     visible_players: int | None = None
@@ -2463,6 +2471,56 @@ def parse_players_payload(payload: Any) -> list[PlayerKill]:
     return players
 
 
+def parse_ignored_kills_payload(payload: Any) -> list[IgnoredKillPlayer]:
+    if not payload:
+        return []
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = [payload]
+
+    items: list[Any]
+    if isinstance(payload, dict):
+        items = []
+        for key, value in payload.items():
+            if isinstance(value, dict):
+                row = dict(value)
+                row.setdefault("key", key)
+                items.append(row)
+            else:
+                items.append({"key": key, "name": value or key})
+    elif isinstance(payload, list):
+        items = payload
+    else:
+        return []
+
+    ignored: list[IgnoredKillPlayer] = []
+    seen: set[str] = set()
+    for item in items:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("nick") or item.get("player") or item.get("key") or "").strip()
+            key = str(item.get("key") or normalize_player_key(name)).strip()
+            ignored_at = 0.0
+            try:
+                ignored_at = float(item.get("ignored_at") or item.get("ignoredAt") or 0)
+            except (TypeError, ValueError):
+                ignored_at = 0.0
+        else:
+            name = str(item or "").strip()
+            key = normalize_player_key(name)
+            ignored_at = 0.0
+        if not name and not key:
+            continue
+        identity = key or normalize_player_key(name)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        ignored.append(IgnoredKillPlayer(name=name or key, key=key, ignored_at=ignored_at))
+    ignored.sort(key=lambda item: normalize_player_key(item.name))
+    return ignored
+
+
 def parse_realtime_state(payload: Any) -> RealtimeState:
     if isinstance(payload, str):
         try:
@@ -2476,6 +2534,7 @@ def parse_realtime_state(payload: Any) -> RealtimeState:
     devices: list[dict[str, Any]] | None = None
     daily_ranking: list[PlayerKill] = []
     global_ranking: list[PlayerKill] = []
+    ignored_players: list[IgnoredKillPlayer] = []
     total_players: int | None = None
     total_kills: int | None = None
     visible_players: int | None = None
@@ -2493,6 +2552,7 @@ def parse_realtime_state(payload: Any) -> RealtimeState:
             or payload.get("overallRanking")
             or []
         )
+        ignored_players = parse_ignored_kills_payload(payload.get("ignored") or payload.get("ignored_players") or payload.get("ignoredPlayers") or [])
         if not players and global_ranking:
             players = global_ranking
         totals_source = payload
@@ -2547,6 +2607,7 @@ def parse_realtime_state(payload: Any) -> RealtimeState:
         devices=devices,
         daily_ranking=daily_ranking,
         global_ranking=global_ranking,
+        ignored_players=ignored_players,
         total_players=total_players,
         total_kills=total_kills,
         visible_players=visible_players,
@@ -4145,8 +4206,10 @@ def run_gui(config_path: Path) -> int:
     winner_avatar_current: tuple[str, str] = ("", "-")
     manual_rows: list[dict[str, Any]] = []
     kills_rank_rows: list[Any] = []
+    kills_ignored_rows: list[Any] = []
     kills_daily_ranking: list[PlayerKill] = []
     kills_global_ranking: list[PlayerKill] = []
+    kills_ignored_players: list[IgnoredKillPlayer] = []
     ff_queue_summary_widgets: list[Any] = []
     manual_sync_after_id: str | None = None
     manual_poll_after_id: str | None = None
@@ -4279,6 +4342,7 @@ def run_gui(config_path: Path) -> int:
     kills_rank_count_var = tk.StringVar(value="0")
     kills_rank_total_var = tk.StringVar(value="0")
     kills_rank_title_var = tk.StringVar(value="Ranking diario")
+    kills_ignored_count_var = tk.StringVar(value="0")
     tikfinity_url_var = tk.StringVar(value=config.get("tikfinity_chat_url", ""))
     chat_source_var = tk.StringVar(
         value="TikFinity WebSocket" if config.get("chat_event_source", "webhook") == "websocket" else "Webhook local"
@@ -5066,7 +5130,8 @@ def run_gui(config_path: Path) -> int:
     )
     kills_rank_card.grid(row=0, column=0, sticky="nsew", padx=12, pady=(12, 12))
     kills_rank_card.columnconfigure(0, weight=1)
-    kills_rank_card.rowconfigure(5, weight=1)
+    kills_rank_card.rowconfigure(5, weight=4)
+    kills_rank_card.rowconfigure(7, weight=1)
     kills_rank_controls = ctk.CTkFrame(kills_rank_card, fg_color=panel, corner_radius=0)
     kills_rank_controls.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 10))
     kills_rank_controls.columnconfigure(0, weight=1)
@@ -5174,6 +5239,34 @@ def run_gui(config_path: Path) -> int:
     )
     kills_rank_table_frame.grid(row=5, column=0, sticky="nsew", padx=18, pady=(0, 18))
     kills_rank_table_frame.columnconfigure(0, weight=1)
+    kills_ignored_header = ctk.CTkFrame(kills_rank_card, fg_color=panel, corner_radius=0)
+    kills_ignored_header.grid(row=6, column=0, sticky="ew", padx=18, pady=(0, 4))
+    kills_ignored_header.columnconfigure(0, weight=1)
+    ctk.CTkLabel(
+        kills_ignored_header,
+        text="Ignorados",
+        text_color=fg,
+        font=("Segoe UI Semibold", 13),
+        anchor="w",
+    ).grid(row=0, column=0, sticky="ew")
+    ctk.CTkLabel(
+        kills_ignored_header,
+        textvariable=kills_ignored_count_var,
+        text_color=muted,
+        font=("Segoe UI Semibold", 12),
+        width=40,
+    ).grid(row=0, column=1, sticky="e")
+    kills_ignored_frame = ctk.CTkScrollableFrame(
+        kills_rank_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        scrollbar_button_color="#3a1518",
+        scrollbar_button_hover_color="#5a1d22",
+    )
+    kills_ignored_frame.grid(row=7, column=0, sticky="nsew", padx=18, pady=(0, 18))
+    kills_ignored_frame.columnconfigure(0, weight=1)
 
     ff_queue_left = ctk.CTkScrollableFrame(
         ff_queue_tab,
@@ -6296,6 +6389,56 @@ def run_gui(config_path: Path) -> int:
             label="Reexibindo jogador",
         )
 
+    def refresh_kills_ignored_list() -> None:
+        for widget in kills_ignored_rows:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        kills_ignored_rows.clear()
+        kills_ignored_count_var.set(str(len(kills_ignored_players)))
+
+        if not kills_ignored_players:
+            empty = ctk.CTkLabel(
+                kills_ignored_frame,
+                text="Nenhum jogador ignorado.",
+                text_color=muted,
+                font=("Segoe UI", 12),
+                anchor="w",
+            )
+            empty.grid(row=0, column=0, sticky="ew", padx=14, pady=12)
+            kills_ignored_rows.append(empty)
+            return
+
+        for index, ignored_player in enumerate(kills_ignored_players, start=1):
+            row_frame = ctk.CTkFrame(
+                kills_ignored_frame,
+                fg_color="#171014" if index % 2 else "#0f0b0e",
+                corner_radius=10,
+            )
+            row_frame.grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
+            row_frame.columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                row_frame,
+                text=ignored_player.name,
+                text_color=fg,
+                font=("Segoe UI Semibold", 12),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=(12, 6), pady=8)
+            button(
+                row_frame,
+                "Reexibir",
+                lambda target=ignored_player: run_kills_rank_action(
+                    "unignore",
+                    player=PlayerKill(target.name, 0, key=target.key or normalize_player_key(target.name)),
+                    scope="both",
+                    label="Reexibindo jogador",
+                ),
+                "accent",
+                width=82,
+            ).grid(row=0, column=1, sticky="e", padx=(6, 12), pady=8)
+            kills_ignored_rows.append(row_frame)
+
     def refresh_kills_rank_table() -> None:
         for widget in kills_rank_rows:
             try:
@@ -6393,10 +6536,12 @@ def run_gui(config_path: Path) -> int:
             kills_rank_rows.append(row_frame)
 
     def apply_kills_rankings(state: RealtimeState) -> None:
-        nonlocal kills_daily_ranking, kills_global_ranking
+        nonlocal kills_daily_ranking, kills_global_ranking, kills_ignored_players
         kills_daily_ranking = sorted_rank_players(state.daily_ranking or [])
         kills_global_ranking = sorted_rank_players(state.global_ranking or state.players or [])
+        kills_ignored_players = list(state.ignored_players or [])
         refresh_kills_rank_table()
+        refresh_kills_ignored_list()
 
     def manual_signature(players: list[PlayerKill]) -> str:
         return json.dumps(player_payload(players), ensure_ascii=False, sort_keys=True)
@@ -11359,6 +11504,8 @@ def run_gui(config_path: Path) -> int:
     apply_ff_overlay_settings(refresh=True)
     refresh_chat_messages(force=True)
     refresh_participant_list([])
+    refresh_kills_rank_table()
+    refresh_kills_ignored_list()
     log("Kills em modo manual. Edite a tabela e use Enviar agora, ou ative a sincronizacao automatica.")
     root.mainloop()
     return 0

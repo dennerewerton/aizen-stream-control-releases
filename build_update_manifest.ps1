@@ -2,11 +2,11 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$DownloadUrl,
 
-  [string]$Version = "2.6.22",
+  [string]$Version = "2.6.23",
 
   [string]$Output = "dist\updates.json",
 
-  [string]$Notes = "Kills FF com acoes reais do Jarvis no ranking: +1/-1, definir, editar nome/ID, ignorar, reexibir e resetar."
+  [string]$Notes = "Kills FF mostra jogadores ignorados do Jarvis e permite reexibir direto pelo app."
 )
 
 $ErrorActionPreference = 'Stop'

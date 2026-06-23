@@ -225,10 +225,10 @@ Formato do manifesto:
 
 ```json
 {
-  "version": "2.6.22",
-  "notes": "Kills FF com acoes reais do Jarvis no ranking: +1/-1, definir, editar nome/ID, ignorar, reexibir e resetar.",
+  "version": "2.6.23",
+  "notes": "Kills FF mostra jogadores ignorados do Jarvis e permite reexibir direto pelo app.",
   "windows": {
-    "portable_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.22/AizenStreamControl.exe",
+    "portable_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.23/AizenStreamControl.exe",
     "sha256": "hash-sha256-do-exe"
   }
 }
@@ -237,7 +237,7 @@ Formato do manifesto:
 Para gerar o manifesto depois de publicar o exe:
 
 ```powershell
-.\build_update_manifest.ps1 -Version "2.6.22" -DownloadUrl "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.22/AizenStreamControl.exe"
+.\build_update_manifest.ps1 -Version "2.6.23" -DownloadUrl "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.23/AizenStreamControl.exe"
 ```
 
 Envie para o servidor:
@@ -246,6 +246,10 @@ Envie para o servidor:
 - `dist\updates.json`
 
 Depois cole a URL do `updates.json` no campo `Manifesto de atualização`.
+
+### Revisão 2.6.23
+
+A versão `2.6.23` adiciona na aba `Kills FF` a lista de jogadores ignorados vinda do Jarvis, com contador e botão `Reexibir` por jogador, aproximando o app da área de ignorados do painel admin do site.
 
 ### Revisão 2.6.22
 
