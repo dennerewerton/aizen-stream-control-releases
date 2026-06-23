@@ -2,11 +2,11 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$DownloadUrl,
 
-  [string]$Version = "2.6.20",
+  [string]$Version = "2.6.21",
 
   [string]$Output = "dist\updates.json",
 
-  [string]$Notes = "Fila FF deduplicada por jogador e Kills FF com ranking Diario/Geral visual separado da tabela manual."
+  [string]$Notes = "Fila FF com acoes reais do Jarvis: chamar proximo, remover, limpar, +1/-1 salas e sincronizar."
 )
 
 $ErrorActionPreference = 'Stop'

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.20",
-    "notes":  "Fila FF deduplicada por jogador e Kills FF com ranking Diario/Geral visual separado da tabela manual.",
+    "version":  "2.6.21",
+    "notes":  "Fila FF com acoes reais do Jarvis: chamar proximo, remover, limpar, +1/-1 salas e sincronizar.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.20/AizenStreamControl.exe",
-                    "sha256":  "4b72e6cad75e029c62e555b414da849d72a94fb95d5c649c3c776157aafb3b66"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.21/AizenStreamControl.exe",
+                    "sha256":  "56332df6a19512606b48d840156375cc1f4007392e8a23fb5edf739a824a1a00"
                 }
 }

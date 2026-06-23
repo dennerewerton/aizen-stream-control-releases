@@ -225,10 +225,10 @@ Formato do manifesto:
 
 ```json
 {
-  "version": "2.6.20",
-  "notes": "Fila FF deduplicada por jogador e Kills FF com ranking Diario/Geral visual separado da tabela manual.",
+  "version": "2.6.21",
+  "notes": "Fila FF com acoes reais do Jarvis: chamar proximo, remover, limpar, +1/-1 salas e sincronizar.",
   "windows": {
-    "portable_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.20/AizenStreamControl.exe",
+    "portable_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.21/AizenStreamControl.exe",
     "sha256": "hash-sha256-do-exe"
   }
 }
@@ -237,7 +237,7 @@ Formato do manifesto:
 Para gerar o manifesto depois de publicar o exe:
 
 ```powershell
-.\build_update_manifest.ps1 -Version "2.6.20" -DownloadUrl "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.20/AizenStreamControl.exe"
+.\build_update_manifest.ps1 -Version "2.6.21" -DownloadUrl "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.21/AizenStreamControl.exe"
 ```
 
 Envie para o servidor:
@@ -246,6 +246,10 @@ Envie para o servidor:
 - `dist\updates.json`
 
 Depois cole a URL do `updates.json` no campo `Manifesto de atualização`.
+
+### Revisão 2.6.21
+
+A versão `2.6.21` faz a aba `Fila FF` usar ações reais do Jarvis quando o jogador já veio do painel: `Chamar próximo` consome uma sala, `Remover` zera o membro, `Limpar` limpa a fila no site, `+1/-1` altera salas no servidor e `Sincronizar` normaliza a fila pelo Jarvis.
 
 ### Revisão 2.6.20
 

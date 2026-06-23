@@ -47,7 +47,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.20"
+APP_VERSION = "2.6.21"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -2741,6 +2741,80 @@ def fetch_ff_queue_realtime(
         headers=headers,
         timeout=12,
     )
+    response.raise_for_status()
+    return parse_ff_queue_state(response.text)
+
+
+def derive_ff_queue_action_endpoint(endpoint_url: str) -> str:
+    clean = normalize_endpoint_url(endpoint_url)
+    parsed = urlparse(clean)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/freefire-queue"):
+        path = f"{path}/action"
+    elif path.endswith("/freefire-queue"):
+        path = f"{path}/action"
+    elif path.endswith("/action"):
+        path = path
+    else:
+        path = f"{path}/action"
+    return parsed._replace(path=path, query="", fragment="").geturl()
+
+
+def send_ff_queue_action_update(
+    endpoint_url: str,
+    action: str,
+    entry: FFQueueEntry | None = None,
+    credits: int | None = None,
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> FFQueueState:
+    payload: dict[str, Any] = {
+        "source": "aizen-stream-control",
+        "mode": "ff_queue",
+        "app_version": APP_VERSION,
+        "room": room,
+        "client_id": device_id,
+        "client_name": device_name,
+        "updated_by": device_name,
+        "action": action,
+    }
+    if entry is not None:
+        payload.update(
+            {
+                "user_id": entry.user_id or entry.panel_user_id,
+                "panel_user_id": entry.panel_user_id,
+                "display_name": entry.name,
+                "name": entry.name,
+                "ff_player_id": entry.ff_player_id,
+                "credits": max(0, normalize_kill_value(entry.rooms)),
+                "rooms": max(0, normalize_kill_value(entry.rooms)),
+            }
+        )
+    if credits is not None:
+        payload["credits"] = max(0, normalize_kill_value(credits))
+        payload["rooms"] = max(0, normalize_kill_value(credits))
+
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-Room": room,
+        "X-Aizen-App-Version": APP_VERSION,
+        "X-Aizen-Mode": "ff_queue",
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.post(
+        derive_ff_queue_action_endpoint(endpoint_url),
+        json=payload,
+        headers=headers,
+        timeout=20,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
     response.raise_for_status()
     return parse_ff_queue_state(response.text)
 
@@ -6470,8 +6544,84 @@ def run_gui(config_path: Path) -> int:
         ff_queue_status_var.set("Editando")
         schedule_ff_queue_sync()
 
+    def ff_queue_row_entry(row: dict[str, Any]) -> FFQueueEntry:
+        return FFQueueEntry(
+            name=row["name_var"].get().strip(),
+            note=row["note_var"].get().strip(),
+            status=normalize_queue_status(row["status_var"].get()),
+            rooms=max(0, normalize_kill_value(row["rooms_var"].get())),
+            user_id=str(row.get("user_id", "") or "").strip(),
+            panel_user_id=str(row.get("panel_user_id", "") or "").strip(),
+            ff_player_id=str(row.get("ff_player_id", "") or "").strip(),
+        )
+
+    def ff_queue_row_has_remote_identity(row: dict[str, Any]) -> bool:
+        entry_item = ff_queue_row_entry(row)
+        return bool(entry_item.user_id or entry_item.panel_user_id or entry_item.ff_player_id)
+
+    def run_ff_queue_remote_action(
+        action: str,
+        row: dict[str, Any] | None = None,
+        credits: int | None = None,
+        fallback: callable | None = None,
+        label: str = "",
+    ) -> bool:
+        if row is not None and not ff_queue_row_has_remote_identity(row):
+            if fallback is not None:
+                fallback()
+            return False
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc))
+            return False
+        endpoint_url = local_config.get("ff_queue_realtime_url", "").strip()
+        if not endpoint_url:
+            if fallback is not None:
+                fallback()
+            return False
+
+        entry_item = ff_queue_row_entry(row) if row is not None else None
+        ff_queue_status_var.set(label or "Aplicando")
+
+        def run() -> None:
+            try:
+                state = send_ff_queue_action_update(
+                    endpoint_url,
+                    action,
+                    entry=entry_item,
+                    credits=credits,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room=str(local_config.get("ff_queue_room", "principal")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                ff_queue_sync_queue.put(("action_done", {"state": state, "action": action, "label": label or action}))
+            except Exception as exc:
+                ff_queue_sync_queue.put(("action_error", {"error": str(exc), "action": action, "label": label or action}))
+
+        threading.Thread(target=run, daemon=True).start()
+        return True
+
+    def adjust_ff_queue_rooms(row: dict[str, Any], delta: int) -> None:
+        if row not in ff_queue_rows:
+            return
+        current = max(1, normalize_kill_value(row["rooms_var"].get()))
+        next_value = max(0, current + delta)
+        action = "add_credit" if delta > 0 else "remove_credit"
+        if run_ff_queue_remote_action(action, row=row, credits=abs(delta), label="Atualizando salas"):
+            return
+        if next_value <= 0:
+            remove_ff_queue_row(row)
+            return
+        row["rooms_var"].set(str(next_value))
+
     def move_ff_queue_row(row: dict[str, Any], delta: int) -> None:
         if row not in ff_queue_rows:
+            return
+        remote_action = "move_up" if delta < 0 else "move_down"
+        if run_ff_queue_remote_action(remote_action, row=row, label="Reordenando fila"):
             return
         index = ff_queue_rows.index(row)
         new_index = max(0, min(len(ff_queue_rows) - 1, index + delta))
@@ -6525,7 +6675,9 @@ def run_gui(config_path: Path) -> int:
 
         button(row_frame, "↑", lambda: move_ff_queue_row(row, -1), "ghost", width=38).grid(row=0, column=5, padx=(6, 2), pady=8)
         button(row_frame, "↓", lambda: move_ff_queue_row(row, 1), "ghost", width=38).grid(row=0, column=6, padx=2, pady=8)
-        button(row_frame, "Remover", remove, "danger", width=92).grid(row=0, column=7, padx=(6, 12), pady=8)
+        button(row_frame, "+1", lambda: adjust_ff_queue_rooms(row, 1), "accent", width=44).grid(row=0, column=7, padx=2, pady=8)
+        button(row_frame, "-1", lambda: adjust_ff_queue_rooms(row, -1), "ghost", width=44).grid(row=0, column=8, padx=2, pady=8)
+        button(row_frame, "Remover", remove, "danger", width=92).grid(row=0, column=9, padx=(6, 12), pady=8)
 
         row.update(
             {
@@ -6552,6 +6704,8 @@ def run_gui(config_path: Path) -> int:
 
     def remove_ff_queue_row(row: dict[str, Any]) -> None:
         if row not in ff_queue_rows:
+            return
+        if run_ff_queue_remote_action("remove_member", row=row, label="Removendo jogador"):
             return
         ff_queue_rows.remove(row)
         row["frame"].destroy()
@@ -6585,11 +6739,15 @@ def run_gui(config_path: Path) -> int:
             ff_queue_applying_remote = False
 
     def clear_ff_queue() -> None:
+        if run_ff_queue_remote_action("clear_queue", label="Limpando fila"):
+            return
         set_ff_queue_entries([])
         ff_queue_status_var.set("Fila limpa")
         on_ff_queue_change()
 
     def call_next_ff_queue() -> None:
+        if run_ff_queue_remote_action("serve_next", label="Chamando proximo"):
+            return
         for row in ff_queue_rows:
             if row["name_var"].get().strip() and normalize_queue_status(row["status_var"].get()) == "Na fila":
                 row["status_var"].set("Chamado")
@@ -9736,6 +9894,26 @@ def run_gui(config_path: Path) -> int:
             log(f"Erro ao enviar Fila FF para o Jarvis: {payload}")
             return
 
+        if kind == "action_done":
+            state: FFQueueState = payload["state"]
+            entries = state.entries
+            set_ff_queue_entries(entries)
+            ff_queue_last_signature = ff_queue_signature(entries)
+            ff_queue_last_fetch_error = ""
+            if state.updated_by:
+                ff_queue_source_var.set(state.updated_by)
+            label = str(payload.get("label") or payload.get("action") or "acao")
+            ff_queue_status_var.set("Sincronizado")
+            log(f"Fila FF atualizada pelo Jarvis: {label} ({len(entries)} jogador(es)).")
+            return
+
+        if kind == "action_error":
+            label = str(payload.get("label") or payload.get("action") or "acao")
+            error = str(payload.get("error") or payload)
+            ff_queue_status_var.set("Erro na acao")
+            log(f"Nao consegui aplicar acao da Fila FF ({label}): {error}")
+            return
+
         if kind == "fetched":
             ff_queue_fetching = False
             state: FFQueueState = payload["state"]
@@ -10772,6 +10950,7 @@ def run_gui(config_path: Path) -> int:
             ("Finalizar partida", finish_playing_ff_queue, "ghost"),
             ("Enviar agora", lambda: send_ff_queue(force=True), "accent"),
             ("Buscar Jarvis", lambda: fetch_ff_queue(force=True), "default"),
+            ("Sincronizar", lambda: run_ff_queue_remote_action("sync", label="Sincronizando fila"), "default"),
             ("Limpar", clear_ff_queue, "danger"),
             ("Salvar", save_form, "ghost"),
         ],
