@@ -13,33 +13,127 @@ sys.path.insert(0, str(ROOT))
 
 from freefire_kill_sender import (  # noqa: E402
     FFQueueEntry,
+    derive_ff_overlay_config_endpoint,
     PlayerKill,
     derive_ff_queue_action_endpoint,
     derive_jarvis_endpoint,
     derive_kills_action_endpoint,
+    derive_kills_rank_endpoint,
+    derive_kills_style_endpoint,
+    derive_tikfinity_ff_gifts_endpoint,
     fetch_ff_overlay_realtime,
+    fetch_ff_overlay_config,
     fetch_ff_queue_realtime,
+    fetch_kills_style,
     fetch_kills_realtime,
+    fetch_tikfinity_ff_gifts,
+    kills_scope_label,
+    merge_ff_queue_entries,
+    normalize_kills_scope_value,
+    overlay_rank_players,
     parse_ff_queue_state,
     parse_realtime_state,
     send_ff_overlay_realtime_update,
+    send_ff_overlay_config_action,
     send_ff_queue_action_update,
     send_ff_queue_realtime_update,
     send_kills_action_update,
+    send_kills_style_update,
     send_kills_realtime_update,
+    send_tikfinity_ff_gifts_action,
+    serve_next_queue_entries,
 )
 
 
 class MockJarvisHandler(BaseHTTPRequestHandler):
     state: dict[str, dict[str, Any]] = {
-        "kills": {"players": []},
+        "kills": {"ranking": [], "daily_ranking": [], "ignored": {}},
+        "kills_rank": {},
+        "kills_style": {"style": {"title_text": "TOP KILLS", "font_family": "impact", "row_size": 26}},
         "queue": {"queue": []},
         "overlay": {"players": [], "queue": []},
+        "overlay_config": {
+            "profile": "streamer1",
+            "profile_label": "Streamer 1",
+            "profiles": [{"id": "streamer1", "label": "Streamer 1"}],
+            "overlay_url": "",
+            "config": {
+                "enabled_general": True,
+                "enabled_daily": True,
+                "enabled_queue": True,
+                "layout": "horizontal",
+                "font_family": "impact",
+                "animation": "slide",
+                "refresh_ms": 2500,
+                "switch_seconds": 10,
+                "gap": 14,
+                "wrap_padding": 8,
+                "panel_width": 360,
+                "panel_bg_enabled": True,
+                "panel_bg_color": "#05070D",
+                "panel_bg_opacity": 48,
+                "panel_radius": 10,
+                "row_bg_color": "#000000",
+                "row_bg_opacity": 28,
+                "accent_width": 4,
+                "title_size": 30,
+                "row_size": 22,
+                "value_size": 24,
+                "row_height": 40,
+                "limit_general": 10,
+                "limit_daily": 10,
+                "limit_queue": 8,
+                "general": {
+                    "title": "TOP KILLS GERAL",
+                    "title_color": "#FFD54A",
+                    "rank_color": "#FFD54A",
+                    "name_color": "#FFFFFF",
+                    "value_color": "#66FF99",
+                    "accent_color": "#FF4655",
+                },
+                "daily": {
+                    "title": "TOP KILLS DIA",
+                    "title_color": "#66FF99",
+                    "rank_color": "#66FF99",
+                    "name_color": "#FFFFFF",
+                    "value_color": "#FFD54A",
+                    "accent_color": "#24D17E",
+                },
+                "queue": {
+                    "title": "FILA FF",
+                    "title_color": "#7AD7FF",
+                    "rank_color": "#7AD7FF",
+                    "name_color": "#FFFFFF",
+                    "value_color": "#FFD54A",
+                    "accent_color": "#3BA7FF",
+                },
+            },
+        },
+        "tikfinity": {
+            "config": {"enabled": True, "coins_per_room": 50, "token_configured": True},
+            "mappings": [],
+            "users": [
+                {
+                    "user_id": "mock-user",
+                    "social_user": "aizen",
+                    "display_name": "Aizen",
+                    "total_coins": 150,
+                    "pending_coins": 0,
+                    "rooms_added": 3,
+                }
+            ],
+            "history": [{"social_user": "aizen", "display_name": "Aizen", "coins_added": 150, "ff_room_credits_added": 3}],
+            "profile": "streamer1",
+            "webhook_url": "",
+        },
     }
     headers_seen: dict[str, dict[str, str]] = {
         "kills": {},
+        "kills_style": {},
         "queue": {},
         "overlay": {},
+        "overlay_config": {},
+        "tikfinity": {},
     }
 
     def log_message(self, *_args: Any) -> None:
@@ -59,24 +153,333 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
         mode = str(payload.get("mode") or "")
         if self.path.rstrip("/").endswith("/freefire-kills/action"):
             self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
-            player_name = str(payload.get("name") or "AizenVerify")
-            player_kills = int(payload.get("kills") or 18)
-            self.state["kills"] = {
-                "ranking": [{"name": player_name, "kills": player_kills, "key": player_name.casefold()}],
-                "daily_ranking": [{"name": player_name, "kills": player_kills, "key": player_name.casefold()}],
+            action = str(payload.get("action") or "")
+            scope = str(payload.get("scope") or "both").strip().lower()
+            if scope not in {"general", "daily", "both"}:
+                scope = "both"
+
+            def clean_key(value: Any) -> str:
+                return " ".join(str(value or "").strip().casefold().split())
+
+            def player_row(item: PlayerKill) -> dict[str, Any]:
+                return {
+                    "name": item.name,
+                    "kills": int(item.kills),
+                    "key": item.key or clean_key(item.name),
+                    "ff_player_id": item.ff_player_id,
+                    "entries": int(item.entries or 0),
+                }
+
+            parsed_state = parse_realtime_state(self.state.get("kills") or {})
+            ranking_rows = [player_row(player) for player in (parsed_state.global_ranking or parsed_state.players or [])]
+            daily_rows = [player_row(player) for player in (parsed_state.daily_ranking or [])]
+            ignored_rows = {
+                (item.key or clean_key(item.name)): {"name": item.name, "key": item.key or clean_key(item.name)}
+                for item in (parsed_state.ignored_players or [])
             }
+
+            def sort_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                return sorted(rows, key=lambda row: (-int(row.get("kills") or 0), clean_key(row.get("name"))))
+
+            def find_row(rows: list[dict[str, Any]], key: str) -> dict[str, Any] | None:
+                for row in rows:
+                    if key and key in {clean_key(row.get("key")), clean_key(row.get("name"))}:
+                        return row
+                return None
+
+            def target_rows() -> list[tuple[str, list[dict[str, Any]]]]:
+                targets: list[tuple[str, list[dict[str, Any]]]] = []
+                if scope in {"general", "both"}:
+                    targets.append(("general", ranking_rows))
+                if scope in {"daily", "both"}:
+                    targets.append(("daily", daily_rows))
+                return targets
+
+            def save_kills_state(**extra: Any) -> None:
+                self.state["kills"] = {
+                    "ranking": sort_rows(ranking_rows),
+                    "daily_ranking": sort_rows(daily_rows),
+                    "ignored": ignored_rows,
+                    "total_visible_players": len(ranking_rows),
+                    "daily_total_visible_players": len(daily_rows),
+                    "total_kills": sum(int(row.get("kills") or 0) for row in ranking_rows),
+                    "daily_total_kills": sum(int(row.get("kills") or 0) for row in daily_rows),
+                }
+                self.state["kills"].update(extra)
+
+            if action == "reset":
+                ranking_rows.clear()
+                daily_rows.clear()
+                save_kills_state(action=action)
+                self._send_json({"ok": True, **self.state["kills"]})
+                return
+            if action == "reset_daily":
+                daily_rows.clear()
+                save_kills_state(action=action)
+                self._send_json({"ok": True, **self.state["kills"]})
+                return
+            if action == "reset_general":
+                ranking_rows.clear()
+                save_kills_state(action=action)
+                self._send_json({"ok": True, **self.state["kills"]})
+                return
+
+            player_name = str(payload.get("name") or payload.get("display_name") or payload.get("key") or "AizenVerify").strip()
+            player_key = clean_key(payload.get("key") or player_name)
+            player_kills = int(payload.get("kills") or payload.get("amount") or 0)
+            ff_player_id = str(payload.get("ff_player_id") or "")
+
+            if action == "ignore":
+                ignored_rows[player_key] = {"name": player_name, "key": player_key}
+                save_kills_state(action=action)
+                self._send_json({"ok": True, **self.state["kills"]})
+                return
+            if action == "unignore":
+                ignored_rows.pop(player_key, None)
+                save_kills_state(action=action)
+                self._send_json({"ok": True, **self.state["kills"]})
+                return
+            if action == "delete":
+                for _target_name, rows in target_rows():
+                    rows[:] = [row for row in rows if clean_key(row.get("key") or row.get("name")) != player_key]
+                save_kills_state(action=action)
+                self._send_json({"ok": True, **self.state["kills"]})
+                return
+            if action == "set_name":
+                new_name = str(payload.get("new_name") or payload.get("display_name") or player_name).strip()
+                for rows in (ranking_rows, daily_rows):
+                    row = find_row(rows, player_key)
+                    if row is not None:
+                        row["name"] = new_name
+                save_kills_state(action=action)
+                self._send_json({"ok": True, **self.state["kills"]})
+                return
+            if action == "set_ff_id":
+                for rows in (ranking_rows, daily_rows):
+                    row = find_row(rows, player_key)
+                    if row is not None:
+                        row["ff_player_id"] = ff_player_id
+                save_kills_state(action=action)
+                self._send_json({"ok": True, **self.state["kills"]})
+                return
+
+            if action in {"add", "remove", "set"}:
+                for _target_name, rows in target_rows():
+                    row = find_row(rows, player_key)
+                    if row is None:
+                        row = {
+                            "name": player_name,
+                            "kills": 0,
+                            "key": player_key,
+                            "ff_player_id": ff_player_id,
+                            "entries": 0,
+                        }
+                        rows.append(row)
+                    if ff_player_id:
+                        row["ff_player_id"] = ff_player_id
+                    current = int(row.get("kills") or 0)
+                    if action == "add":
+                        row["kills"] = max(0, current + abs(player_kills))
+                    elif action == "remove":
+                        row["kills"] = max(0, current - abs(player_kills))
+                    else:
+                        row["kills"] = max(0, player_kills)
+                    ignored_rows.pop(player_key, None)
+                save_kills_state(action=action)
+                self._send_json({"ok": True, **self.state["kills"]})
+                return
+
+            save_kills_state(action=action)
             self._send_json({"ok": True, **self.state["kills"]})
+            return
+        if self.path.rstrip("/").endswith("/freefire-kills/style"):
+            self.headers_seen["kills_style"] = {key: value for key, value in self.headers.items()}
+            style_payload = payload.get("style") if isinstance(payload.get("style"), dict) else payload
+            current_style = dict(self.state["kills_style"].get("style") or {})
+            current_style.update(dict(style_payload or {}))
+            self.state["kills_style"] = {"style": current_style}
+            self._send_json({"ok": True, **self.state["kills_style"]})
             return
         if self.path.rstrip("/").endswith("/freefire-queue/action"):
             self.headers_seen["queue"] = {key: value for key, value in self.headers.items()}
-            player_name = str(payload.get("name") or payload.get("display_name") or "AizenVerify")
-            rooms = max(1, int(payload.get("rooms") or payload.get("credits") or 1))
+            action = str(payload.get("action") or "")
+            current_entries = parse_ff_queue_state(self.state.get("queue") or {}).entries
+
+            def queue_to_payload(entries: list[FFQueueEntry], **extra: Any) -> dict[str, Any]:
+                queue_payload = [
+                    {
+                        "name": entry.name,
+                        "rooms": entry.rooms,
+                        "credits": entry.rooms,
+                        "user_id": entry.user_id,
+                        "panel_user_id": entry.panel_user_id or entry.user_id,
+                        "ff_player_id": entry.ff_player_id,
+                    }
+                    for entry in entries
+                ]
+                result = {
+                    "mode": "ff_queue",
+                    "room": payload.get("room"),
+                    "queue": queue_payload,
+                    "summary": {
+                        "total_members": len(queue_payload),
+                        "total_credits": sum(int(item.get("credits") or 0) for item in queue_payload),
+                    },
+                }
+                result.update(extra)
+                return result
+
+            def incoming_user_id() -> str:
+                return str(payload.get("user_id") or payload.get("panel_user_id") or "mock-user").strip()
+
+            def find_index(entries: list[FFQueueEntry], user_id: str) -> int:
+                for idx, entry in enumerate(entries):
+                    if user_id and user_id in {entry.user_id, entry.panel_user_id}:
+                        return idx
+                return -1
+
+            user_id = incoming_user_id()
+            idx = find_index(current_entries, user_id)
+
+            if action == "sync":
+                self.state["queue"] = queue_to_payload(current_entries)
+                self._send_json({"ok": True, **self.state["queue"]})
+                return
+            if action == "serve_next":
+                next_entries, served, remaining = serve_next_queue_entries(current_entries)
+                self.state["queue"] = queue_to_payload(
+                    next_entries,
+                    served_user_id=served.user_id if served else "",
+                    remaining=remaining,
+                )
+                self._send_json({"ok": True, **self.state["queue"]})
+                return
+            if action == "clear_queue":
+                self.state["queue"] = queue_to_payload([], cleared_credits=sum(entry.rooms for entry in current_entries))
+                self._send_json({"ok": True, **self.state["queue"]})
+                return
+            if action == "add_member":
+                player_name = str(payload.get("name") or payload.get("display_name") or "AizenVerify")
+                rooms = max(1, int(payload.get("rooms") or payload.get("credits") or 1))
+                ff_player_id = str(payload.get("ff_player_id") or "")
+                if idx >= 0:
+                    current_entries[idx].name = player_name
+                    current_entries[idx].rooms = rooms
+                    current_entries[idx].ff_player_id = ff_player_id
+                else:
+                    current_entries.append(
+                        FFQueueEntry(
+                            player_name,
+                            rooms=rooms,
+                            user_id=user_id,
+                            panel_user_id=user_id,
+                            ff_player_id=ff_player_id,
+                        )
+                    )
+                self.state["queue"] = queue_to_payload(current_entries)
+                self._send_json({"ok": True, **self.state["queue"]})
+                return
+
+            if idx < 0:
+                current_entries.append(FFQueueEntry("AizenVerify", rooms=0, user_id=user_id, panel_user_id=user_id))
+                idx = len(current_entries) - 1
+
+            entry = current_entries[idx]
+            if action == "set_name":
+                entry.name = str(payload.get("display_name") or payload.get("name") or entry.name)
+            elif action == "set_ff_id":
+                entry.ff_player_id = str(payload.get("ff_player_id") or "")
+            elif action == "add_credit":
+                entry.rooms = max(0, entry.rooms + max(1, int(payload.get("credits") or payload.get("rooms") or 1)))
+            elif action == "remove_credit":
+                entry.rooms = max(0, entry.rooms - max(1, int(payload.get("credits") or payload.get("rooms") or 1)))
+            elif action == "set_credit":
+                entry.rooms = max(0, int(payload.get("credits") or payload.get("rooms") or 0))
+            elif action == "remove_member":
+                current_entries.pop(idx)
+            elif action == "move_top" and idx >= 0:
+                current_entries.insert(0, current_entries.pop(idx))
+            elif action == "move_bottom" and idx >= 0:
+                current_entries.append(current_entries.pop(idx))
+            elif action == "move_up" and idx > 0:
+                current_entries[idx - 1], current_entries[idx] = current_entries[idx], current_entries[idx - 1]
+            elif action == "move_down" and idx < len(current_entries) - 1:
+                current_entries[idx + 1], current_entries[idx] = current_entries[idx], current_entries[idx + 1]
             self.state["queue"] = {
                 "mode": "ff_queue",
                 "room": payload.get("room"),
-                "queue": [{"name": player_name, "rooms": rooms, "credits": rooms, "user_id": "mock-user"}],
+                "queue": [
+                    {
+                        "name": entry.name,
+                        "rooms": entry.rooms,
+                        "credits": entry.rooms,
+                        "user_id": entry.user_id,
+                        "panel_user_id": entry.panel_user_id or entry.user_id,
+                        "ff_player_id": entry.ff_player_id,
+                    }
+                    for entry in current_entries
+                    if entry.rooms > 0 or action not in {"remove_credit", "set_credit"}
+                ],
+            }
+            self.state["queue"]["summary"] = {
+                "total_members": len(self.state["queue"]["queue"]),
+                "total_credits": sum(int(item.get("credits") or 0) for item in self.state["queue"]["queue"]),
             }
             self._send_json({"ok": True, **self.state["queue"]})
+            return
+        if self.path.rstrip("/").endswith("/tikfinity/ff-gifts"):
+            self.headers_seen["tikfinity"] = {key: value for key, value in self.headers.items()}
+            action = str(payload.get("action") or "save_config")
+            mappings = self.state["tikfinity"].setdefault("mappings", [])
+            users = self.state["tikfinity"].setdefault("users", [])
+            if action == "save_config":
+                self.state["tikfinity"]["config"] = {
+                    "enabled": bool(payload.get("enabled", True)),
+                    "coins_per_room": int(payload.get("coins_per_room") or 50),
+                    "token_configured": bool(payload.get("token")),
+                }
+            elif action == "add_mapping":
+                social_user = str(payload.get("social_user") or payload.get("handle") or "").strip().lstrip("@").casefold()
+                mappings[:] = [item for item in mappings if str(item.get("social_user") or "").casefold() != social_user]
+                mappings.append(
+                    {
+                        "social_user": social_user,
+                        "user_id": str(payload.get("user_id") or ""),
+                        "display_name": str(payload.get("display_name") or ""),
+                        "ff_player_id": str(payload.get("ff_player_id") or ""),
+                    }
+                )
+            elif action == "remove_mapping":
+                social_user = str(payload.get("social_user") or payload.get("handle") or "").strip().lstrip("@").casefold()
+                mappings[:] = [item for item in mappings if str(item.get("social_user") or "").casefold() != social_user]
+            elif action == "reset_user":
+                uid = str(payload.get("user_id") or "").strip()
+                users[:] = [item for item in users if str(item.get("user_id") or "") != uid]
+            elif action == "clear_events":
+                self.state["tikfinity"]["events"] = {}
+                self.state["tikfinity"]["recent"] = []
+                self.state["tikfinity"]["history"] = []
+            elif action == "clear_history":
+                self.state["tikfinity"]["recent"] = []
+                self.state["tikfinity"]["history"] = []
+            self.state["tikfinity"]["profile"] = str(payload.get("profile") or "streamer1")
+            self.state["tikfinity"]["webhook_url"] = f"http://{self.headers.get('host')}/api/tikfinity/gift?profile={self.state['tikfinity']['profile']}"
+            self._send_json({"ok": True, **self.state["tikfinity"]})
+            return
+        if self.path.rstrip("/").endswith("/freefire-overlay/config"):
+            self.headers_seen["overlay_config"] = {key: value for key, value in self.headers.items()}
+            action = str(payload.get("action") or "save_config")
+            if action == "create_profile":
+                label = str(payload.get("label") or "Perfil Teste")
+                self.state["overlay_config"]["profile"] = "perfil-teste"
+                self.state["overlay_config"]["profile_label"] = label
+                self.state["overlay_config"]["profiles"] = [{"id": "perfil-teste", "label": label}]
+            else:
+                config_payload = payload.get("config") if isinstance(payload.get("config"), dict) else payload
+                self.state["overlay_config"]["config"] = dict(config_payload)
+            profile = str(self.state["overlay_config"].get("profile") or "streamer1")
+            self.state["overlay_config"]["overlay_url"] = f"http://{self.headers.get('host')}/freefire/overlay?profile={profile}"
+            self._send_json({"ok": True, **self.state["overlay_config"]})
             return
         if mode == "ff_queue":
             self.state["queue"] = payload
@@ -90,10 +493,27 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": True})
 
     def do_GET(self) -> None:
-        if "freefire-overlay" in self.path or "mode=ff_overlay" in self.path:
+        if "freefire-overlay/config" in self.path:
+            self.headers_seen["overlay_config"] = {key: value for key, value in self.headers.items()}
+            profile = "streamer1"
+            if "profile=perfil-teste" in self.path:
+                profile = "perfil-teste"
+            self.state["overlay_config"]["profile"] = profile
+            self.state["overlay_config"]["overlay_url"] = f"http://{self.headers.get('host')}/freefire/overlay?profile={profile}"
+            self._send_json({"ok": True, **self.state["overlay_config"]})
+        elif "freefire-overlay" in self.path or "mode=ff_overlay" in self.path:
             self._send_json(self.state["overlay"])
         elif "freefire-queue" in self.path or "mode=ff_queue" in self.path:
             self._send_json(self.state["queue"])
+        elif "tikfinity/ff-gifts" in self.path:
+            self.headers_seen["tikfinity"] = {key: value for key, value in self.headers.items()}
+            self._send_json({"ok": True, **self.state["tikfinity"]})
+        elif "freefire-kills/rank" in self.path:
+            payload = self.state.get("kills_rank") or self.state["kills"]
+            self._send_json({"ok": True, **payload})
+        elif "freefire-kills/style" in self.path:
+            self.headers_seen["kills_style"] = {key: value for key, value in self.headers.items()}
+            self._send_json({"ok": True, **self.state["kills_style"]})
         else:
             self._send_json(self.state["kills"])
 
@@ -172,8 +592,32 @@ def verify_contracts() -> None:
         raise RuntimeError(f"Derivacao entre endpoints falhou: {direct_kills_to_queue}")
     if derive_kills_action_endpoint(expected_endpoints["kills"]) != "https://jarvis.squareweb.app/api/freefire-kills/action":
         raise RuntimeError("Derivacao da action Kills FF falhou.")
+    if derive_kills_rank_endpoint(expected_endpoints["kills"]) != "https://jarvis.squareweb.app/api/freefire-kills/rank":
+        raise RuntimeError("Derivacao do rank Kills FF falhou.")
+    if derive_kills_rank_endpoint("https://jarvis.squareweb.app/api/freefire-kills/action") != "https://jarvis.squareweb.app/api/freefire-kills/rank":
+        raise RuntimeError("Derivacao do rank Kills FF por action falhou.")
+    if derive_kills_rank_endpoint("https://jarvis.squareweb.app/freefire-kills/obs") != "https://jarvis.squareweb.app/api/freefire-kills/rank":
+        raise RuntimeError("Derivacao do rank Kills FF por OBS falhou.")
+    if derive_kills_style_endpoint(expected_endpoints["kills"]) != "https://jarvis.squareweb.app/api/freefire-kills/style":
+        raise RuntimeError("Derivacao do estilo Kills FF falhou.")
+    if derive_kills_style_endpoint("https://jarvis.squareweb.app/freefire-kills/obs") != "https://jarvis.squareweb.app/api/freefire-kills/style":
+        raise RuntimeError("Derivacao do estilo Kills FF por URL OBS falhou.")
     if derive_ff_queue_action_endpoint(expected_endpoints["queue"]) != "https://jarvis.squareweb.app/api/freefire-queue/action":
         raise RuntimeError("Derivacao da action Fila FF falhou.")
+    if derive_tikfinity_ff_gifts_endpoint(expected_endpoints["queue"]) != "https://jarvis.squareweb.app/api/tikfinity/ff-gifts":
+        raise RuntimeError("Derivacao TikFinity FF falhou.")
+    scope_checks = {
+        "Ambos": ("both", "Ambos"),
+        "Diario": ("daily", "Diario"),
+        "Somente dia": ("daily", "Diario"),
+        "Geral": ("general", "Geral"),
+        "general": ("general", "Geral"),
+    }
+    for raw_scope, (expected_scope, expected_label) in scope_checks.items():
+        if normalize_kills_scope_value(raw_scope) != expected_scope:
+            raise RuntimeError(f"Escopo Kills FF divergente: {raw_scope!r}")
+        if kills_scope_label(raw_scope) != expected_label:
+            raise RuntimeError(f"Rotulo de escopo Kills FF divergente: {raw_scope!r}")
 
     kills_state = parse_realtime_state(
         {
@@ -192,6 +636,27 @@ def verify_contracts() -> None:
         raise RuntimeError("Metadados Kills FF nao foram lidos.")
     if not kills_state.ignored_players or kills_state.ignored_players[0].name != "Oculto":
         raise RuntimeError(f"Ignorados Kills FF nao foram lidos: {kills_state.ignored_players!r}")
+    split_rank_state = parse_realtime_state(
+        {
+            "ranking": [{"name": "Fallback", "kills": 1}],
+            "daily_ranking": [{"name": "Dia", "kills": 7}],
+            "general_ranking": [{"name": "Geral", "kills": 21}],
+        }
+    )
+    if [(item.name, item.kills) for item in split_rank_state.daily_ranking] != [("Dia", 7)]:
+        raise RuntimeError(f"Rank diario separado divergente: {split_rank_state.daily_ranking!r}")
+    if [(item.name, item.kills) for item in split_rank_state.global_ranking] != [("Geral", 21)]:
+        raise RuntimeError(f"Rank geral separado divergente: {split_rank_state.global_ranking!r}")
+    overlay_rank = overlay_rank_players(
+        split_rank_state.daily_ranking,
+        split_rank_state.global_ranking,
+        [PlayerKill("Manual", 99)],
+    )
+    if [(item.name, item.kills) for item in overlay_rank] != [("Dia", 7)]:
+        raise RuntimeError(f"Overlay FF nao priorizou o rank diario: {overlay_rank!r}")
+    overlay_global_fallback = overlay_rank_players([], split_rank_state.global_ranking, [PlayerKill("Manual", 99)])
+    if [(item.name, item.kills) for item in overlay_global_fallback] != [("Geral", 21)]:
+        raise RuntimeError(f"Overlay FF nao usou fallback do rank geral: {overlay_global_fallback!r}")
 
     queue_state = parse_ff_queue_state(
         {
@@ -210,6 +675,48 @@ def verify_contracts() -> None:
         raise RuntimeError(f"Parser Fila FF divergente: {queue_state.entries!r}")
     if queue_state.updated_by != "Site Jarvis":
         raise RuntimeError("Metadados Fila FF nao foram lidos.")
+    queue_summary_state = parse_ff_queue_state(
+        {
+            "queue": {
+                "entries": [
+                    {"name": "Aizen", "credits": 4, "panel_user_id": "u-public", "ff_player_id": "123456"},
+                    {"name": "Jarvis", "credits": 2, "user_id": "member-2"},
+                ],
+                "total_members": 2,
+                "total_credits": 6,
+            },
+            "updated_by": "Jarvis Fila FF",
+        }
+    )
+    if queue_summary_state.total_members != 2 or queue_summary_state.total_credits != 6:
+        raise RuntimeError(f"Totais Fila FF nao foram lidos: {queue_summary_state!r}")
+    if [(item.name, item.rooms, item.panel_user_id, item.ff_player_id) for item in queue_summary_state.entries] != [
+        ("Aizen", 4, "u-public", "123456"),
+        ("Jarvis", 2, "", ""),
+    ]:
+        raise RuntimeError(f"Parser Fila FF queue.entries divergente: {queue_summary_state.entries!r}")
+    merged_queue = merge_ff_queue_entries(
+        [
+            FFQueueEntry("Aizen", rooms=1, ff_player_id="123456"),
+            FFQueueEntry("Aizen OFC", rooms=2, ff_player_id="123456"),
+            FFQueueEntry("Jarvis", rooms=1, user_id="member-1"),
+            FFQueueEntry("Jarvis Bot", rooms=3, user_id="member-1"),
+        ]
+    )
+    merged_signature = [(item.name, item.rooms, item.user_id, item.ff_player_id) for item in merged_queue]
+    if merged_signature != [("Aizen", 3, "", "123456"), ("Jarvis", 4, "member-1", "")]:
+        raise RuntimeError(f"Merge Fila FF por identidade divergente: {merged_signature!r}")
+    served_queue, served_player, remaining_rooms = serve_next_queue_entries(
+        [
+            FFQueueEntry("Aizen", rooms=2, user_id="member-a"),
+            FFQueueEntry("Jarvis", rooms=1, user_id="member-b"),
+        ]
+    )
+    served_signature = [(item.name, item.rooms, item.user_id) for item in served_queue]
+    if not served_player or served_player.name != "Aizen" or remaining_rooms != 1:
+        raise RuntimeError(f"Serve next Fila FF nao atendeu o primeiro jogador: {served_player!r}")
+    if served_signature != [("Jarvis", 1, "member-b"), ("Aizen", 1, "member-a")]:
+        raise RuntimeError(f"Serve next Fila FF nao reordenou como o site: {served_signature!r}")
 
     overlay_kills = parse_realtime_state({"players": [{"username": "Overlay", "total": 9}]})
     overlay_queue = parse_ff_queue_state({"queue": [{"participant": "Overlay", "phase": "waiting"}]})
@@ -254,19 +761,199 @@ def verify(
     if [(item.name, item.kills) for item in fetched_kills.players] != [(item.name, item.kills) for item in players]:
         raise RuntimeError(f"Kills FF divergente: {fetched_kills.players!r}")
     if kills_url.startswith("http://127.0.0.1:"):
+        MockJarvisHandler.state["kills_rank"] = {
+            "ranking": [{"name": "Geral Rank", "kills": 128}],
+            "daily_ranking": [{"name": "Dia Rank", "kills": 54}],
+        }
+        rank_fallback_state = fetch_kills_realtime(kills_url, device_id, device_name, room, token)
+        if [(item.name, item.kills) for item in rank_fallback_state.daily_ranking] != [("Dia Rank", 54)]:
+            raise RuntimeError(f"Fallback /rank nao carregou rank diario: {rank_fallback_state.daily_ranking!r}")
+        if [(item.name, item.kills) for item in rank_fallback_state.global_ranking] != [("Geral Rank", 128)]:
+            raise RuntimeError(f"Fallback /rank nao carregou rank geral: {rank_fallback_state.global_ranking!r}")
+        MockJarvisHandler.state["kills_rank"] = {}
+        saved_style = send_kills_style_update(
+            kills_url,
+            {"title_text": "TOP TESTE", "row_size": 31, "accent_enabled": True},
+            device_id=device_id,
+            device_name=device_name,
+            token=token,
+        )
+        if saved_style.get("title_text") != "TOP TESTE" or int(saved_style.get("row_size") or 0) != 31:
+            raise RuntimeError(f"Style Kills FF divergente no POST: {saved_style!r}")
+        fetched_style = fetch_kills_style(kills_url, device_id=device_id, device_name=device_name, token=token)
+        if fetched_style.get("title_text") != "TOP TESTE" or not fetched_style.get("accent_enabled"):
+            raise RuntimeError(f"Style Kills FF divergente no GET: {fetched_style!r}")
         action_state = send_kills_action_update(
             kills_url,
             "set",
             PlayerKill("AizenVerify", 18, key="aizenverify"),
             kills=18,
+            scope="both",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not action_state.daily_ranking or not action_state.global_ranking:
+            raise RuntimeError(f"Set Kills FF nao criou os dois rankings: {action_state!r}")
+        if action_state.daily_ranking[0].kills != 18 or action_state.global_ranking[0].kills != 18:
+            raise RuntimeError(f"Set Kills FF divergente: {action_state!r}")
+        added_kills = send_kills_action_update(
+            kills_url,
+            "add",
+            PlayerKill("AizenVerify", 18, key="aizenverify"),
+            kills=2,
+            scope="general",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not added_kills.global_ranking or added_kills.global_ranking[0].kills != 20:
+            raise RuntimeError(f"Add Kills FF geral divergente: {added_kills.global_ranking!r}")
+        removed_kills = send_kills_action_update(
+            kills_url,
+            "remove",
+            PlayerKill("AizenVerify", 18, key="aizenverify"),
+            kills=3,
             scope="daily",
             device_id=device_id,
             device_name=device_name,
             room=room,
             token=token,
         )
-        if not action_state.daily_ranking or action_state.daily_ranking[0].kills != 18:
-            raise RuntimeError(f"Action Kills FF divergente: {action_state.daily_ranking!r}")
+        if not removed_kills.daily_ranking or removed_kills.daily_ranking[0].kills != 15:
+            raise RuntimeError(f"Remove Kills FF diario divergente: {removed_kills.daily_ranking!r}")
+        renamed_kills = send_kills_action_update(
+            kills_url,
+            "set_name",
+            PlayerKill("AizenVerify", 0, key="aizenverify"),
+            new_name="AizenRenamed",
+            scope="both",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        renamed_names = {item.name for item in renamed_kills.global_ranking + renamed_kills.daily_ranking}
+        if "AizenRenamed" not in renamed_names or "AizenVerify" in renamed_names:
+            raise RuntimeError(f"Set name Kills FF divergente: {renamed_kills!r}")
+        id_kills = send_kills_action_update(
+            kills_url,
+            "set_ff_id",
+            PlayerKill("AizenRenamed", 0, key="aizenverify"),
+            ff_player_id="123456789",
+            scope="both",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        selected_ids = {
+            item.ff_player_id
+            for item in id_kills.global_ranking + id_kills.daily_ranking
+            if item.key == "aizenverify" or item.name == "AizenRenamed"
+        }
+        if selected_ids != {"123456789"}:
+            raise RuntimeError(f"Set ID FF Kills FF divergente: {id_kills!r}")
+        ignored_kills = send_kills_action_update(
+            kills_url,
+            "ignore",
+            PlayerKill("AizenRenamed", 0, key="aizenverify"),
+            scope="both",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not ignored_kills.ignored_players:
+            raise RuntimeError(f"Ignore Kills FF divergente: {ignored_kills.ignored_players!r}")
+        unignored_kills = send_kills_action_update(
+            kills_url,
+            "unignore",
+            PlayerKill("AizenRenamed", 0, key="aizenverify"),
+            scope="both",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if unignored_kills.ignored_players:
+            raise RuntimeError(f"Unignore Kills FF divergente: {unignored_kills.ignored_players!r}")
+        deleted_daily = send_kills_action_update(
+            kills_url,
+            "delete",
+            PlayerKill("AizenRenamed", 0, key="aizenverify"),
+            scope="daily",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if deleted_daily.daily_ranking or not deleted_daily.global_ranking:
+            raise RuntimeError(f"Delete diario Kills FF divergente: {deleted_daily!r}")
+        daily_again = send_kills_action_update(
+            kills_url,
+            "set",
+            PlayerKill("DailyVerify", 7, key="dailyverify"),
+            kills=7,
+            scope="daily",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not daily_again.daily_ranking:
+            raise RuntimeError(f"Set diario Kills FF divergente: {daily_again!r}")
+        reset_daily = send_kills_action_update(
+            kills_url,
+            "reset_daily",
+            PlayerKill("", 0),
+            scope="daily",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if reset_daily.daily_ranking or not reset_daily.global_ranking:
+            raise RuntimeError(f"Reset diario Kills FF divergente: {reset_daily!r}")
+        reset_general = send_kills_action_update(
+            kills_url,
+            "reset_general",
+            PlayerKill("", 0),
+            scope="general",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if reset_general.global_ranking:
+            raise RuntimeError(f"Reset geral Kills FF divergente: {reset_general!r}")
+        final_kills = send_kills_action_update(
+            kills_url,
+            "set",
+            PlayerKill("FinalVerify", 3, key="finalverify"),
+            kills=3,
+            scope="both",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not final_kills.daily_ranking or not final_kills.global_ranking:
+            raise RuntimeError(f"Set final Kills FF divergente: {final_kills!r}")
+        reset_state = send_kills_action_update(
+            kills_url,
+            "reset",
+            PlayerKill("", 0),
+            scope="both",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if reset_state.daily_ranking or reset_state.global_ranking:
+            raise RuntimeError(f"Reset total Kills FF divergente: {reset_state!r}")
 
     send_ff_queue_realtime_update(queue_url, queue, device_id, device_name, room, token)
     if queue_url.startswith("http://127.0.0.1:"):
@@ -277,10 +964,78 @@ def verify(
     ]:
         raise RuntimeError(f"Fila FF divergente: {fetched_queue.entries!r}")
     if queue_url.startswith("http://127.0.0.1:"):
+        cleared_queue = send_ff_queue_action_update(
+            queue_url,
+            "clear_queue",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if cleared_queue.entries or cleared_queue.total_members not in (0, None):
+            raise RuntimeError(f"Clear Fila FF divergente: {cleared_queue!r}")
+        added_queue = send_ff_queue_action_update(
+            queue_url,
+            "add_member",
+            FFQueueEntry("ManualVerify", rooms=4, user_id="member-123", ff_player_id="123456789"),
+            credits=4,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not added_queue.entries or added_queue.entries[0].user_id != "member-123" or added_queue.entries[0].ff_player_id != "123456789":
+            raise RuntimeError(f"Add member Fila FF divergente: {added_queue.entries!r}")
+        renamed_queue = send_ff_queue_action_update(
+            queue_url,
+            "set_name",
+            FFQueueEntry("ManualRenamed", rooms=4, user_id="member-123", ff_player_id="123456789"),
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not renamed_queue.entries or renamed_queue.entries[0].name != "ManualRenamed":
+            raise RuntimeError(f"Set name Fila FF divergente: {renamed_queue.entries!r}")
+        id_queue = send_ff_queue_action_update(
+            queue_url,
+            "set_ff_id",
+            FFQueueEntry("ManualRenamed", rooms=4, user_id="member-123", ff_player_id="987654321"),
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not id_queue.entries or id_queue.entries[0].ff_player_id != "987654321":
+            raise RuntimeError(f"Set ID FF Fila FF divergente: {id_queue.entries!r}")
+        plus_queue = send_ff_queue_action_update(
+            queue_url,
+            "add_credit",
+            FFQueueEntry("ManualRenamed", rooms=4, user_id="member-123", ff_player_id="987654321"),
+            credits=2,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not plus_queue.entries or plus_queue.entries[0].rooms != 6:
+            raise RuntimeError(f"Add credit Fila FF divergente: {plus_queue.entries!r}")
+        minus_queue = send_ff_queue_action_update(
+            queue_url,
+            "remove_credit",
+            FFQueueEntry("ManualRenamed", rooms=6, user_id="member-123", ff_player_id="987654321"),
+            credits=1,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not minus_queue.entries or minus_queue.entries[0].rooms != 5:
+            raise RuntimeError(f"Remove credit Fila FF divergente: {minus_queue.entries!r}")
         action_queue = send_ff_queue_action_update(
             queue_url,
             "set_credit",
-            FFQueueEntry("AizenVerify", rooms=3, user_id="mock-user"),
+            FFQueueEntry("ManualRenamed", rooms=5, user_id="member-123", ff_player_id="987654321"),
             credits=3,
             device_id=device_id,
             device_name=device_name,
@@ -288,18 +1043,158 @@ def verify(
             token=token,
         )
         if not action_queue.entries or action_queue.entries[0].rooms != 3:
-            raise RuntimeError(f"Action Fila FF divergente: {action_queue.entries!r}")
-        reordered_queue = send_ff_queue_action_update(
+            raise RuntimeError(f"Set credit Fila FF divergente: {action_queue.entries!r}")
+        if action_queue.total_members != 1 or action_queue.total_credits != 3:
+            raise RuntimeError(f"Resumo Action Fila FF divergente: {action_queue!r}")
+        added_second_queue = send_ff_queue_action_update(
             queue_url,
-            "move_top",
-            FFQueueEntry("AizenVerify", rooms=3, user_id="mock-user"),
+            "add_member",
+            FFQueueEntry("SecondVerify", rooms=1, user_id="member-999", ff_player_id="555555555"),
+            credits=1,
             device_id=device_id,
             device_name=device_name,
             room=room,
             token=token,
         )
-        if not reordered_queue.entries or reordered_queue.entries[0].name != "AizenVerify":
-            raise RuntimeError(f"Ordenacao Fila FF divergente: {reordered_queue.entries!r}")
+        if len(added_second_queue.entries) != 2:
+            raise RuntimeError(f"Segundo membro Fila FF divergente: {added_second_queue.entries!r}")
+        reordered_queue = send_ff_queue_action_update(
+            queue_url,
+            "move_top",
+            FFQueueEntry("SecondVerify", rooms=1, user_id="member-999"),
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not reordered_queue.entries or reordered_queue.entries[0].user_id != "member-999":
+            raise RuntimeError(f"Move top Fila FF divergente: {reordered_queue.entries!r}")
+        moved_down_queue = send_ff_queue_action_update(
+            queue_url,
+            "move_down",
+            FFQueueEntry("SecondVerify", rooms=1, user_id="member-999"),
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not moved_down_queue.entries or moved_down_queue.entries[-1].user_id != "member-999":
+            raise RuntimeError(f"Move down Fila FF divergente: {moved_down_queue.entries!r}")
+        moved_up_queue = send_ff_queue_action_update(
+            queue_url,
+            "move_up",
+            FFQueueEntry("SecondVerify", rooms=1, user_id="member-999"),
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not moved_up_queue.entries or moved_up_queue.entries[0].user_id != "member-999":
+            raise RuntimeError(f"Move up Fila FF divergente: {moved_up_queue.entries!r}")
+        moved_bottom_queue = send_ff_queue_action_update(
+            queue_url,
+            "move_bottom",
+            FFQueueEntry("SecondVerify", rooms=1, user_id="member-999"),
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if not moved_bottom_queue.entries or moved_bottom_queue.entries[-1].user_id != "member-999":
+            raise RuntimeError(f"Move bottom Fila FF divergente: {moved_bottom_queue.entries!r}")
+        synced_queue = send_ff_queue_action_update(
+            queue_url,
+            "sync",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if [(entry.user_id, entry.rooms) for entry in synced_queue.entries] != [("member-123", 3), ("member-999", 1)]:
+            raise RuntimeError(f"Sync Fila FF divergente: {synced_queue.entries!r}")
+        served_queue = send_ff_queue_action_update(
+            queue_url,
+            "serve_next",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        served_signature = [(entry.user_id, entry.rooms) for entry in served_queue.entries]
+        if served_signature != [("member-999", 1), ("member-123", 2)]:
+            raise RuntimeError(f"Serve next Fila FF divergente: {served_queue.entries!r}")
+        removed_queue = send_ff_queue_action_update(
+            queue_url,
+            "remove_member",
+            FFQueueEntry("SecondVerify", rooms=1, user_id="member-999"),
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        if [(entry.user_id, entry.rooms) for entry in removed_queue.entries] != [("member-123", 2)]:
+            raise RuntimeError(f"Remove member Fila FF divergente: {removed_queue.entries!r}")
+        tikfinity_url = derive_tikfinity_ff_gifts_endpoint(queue_url)
+        saved_tikfinity = send_tikfinity_ff_gifts_action(
+            tikfinity_url,
+            "save_config",
+            {"enabled": False, "coins_per_room": 75, "token": "secret-test"},
+            profile="streamer1",
+            device_id=device_id,
+            device_name=device_name,
+            token=token,
+        )
+        saved_config = saved_tikfinity.get("config") if isinstance(saved_tikfinity.get("config"), dict) else {}
+        if saved_config.get("enabled") is not False or int(saved_config.get("coins_per_room") or 0) != 75:
+            raise RuntimeError(f"Save config TikFinity FF divergente: {saved_tikfinity!r}")
+        tikfinity_state = send_tikfinity_ff_gifts_action(
+            tikfinity_url,
+            "add_mapping",
+            {"social_user": "aizen", "user_id": "mock-user", "display_name": "Aizen", "ff_player_id": "123456"},
+            profile="streamer1",
+            device_id=device_id,
+            device_name=device_name,
+            token=token,
+        )
+        if not tikfinity_state.get("mappings"):
+            raise RuntimeError(f"Action TikFinity FF divergente: {tikfinity_state!r}")
+        removed_mapping = send_tikfinity_ff_gifts_action(
+            tikfinity_url,
+            "remove_mapping",
+            {"social_user": "aizen"},
+            profile="streamer1",
+            device_id=device_id,
+            device_name=device_name,
+            token=token,
+        )
+        if removed_mapping.get("mappings"):
+            raise RuntimeError(f"Remove mapping TikFinity FF divergente: {removed_mapping!r}")
+        reset_user = send_tikfinity_ff_gifts_action(
+            tikfinity_url,
+            "reset_user",
+            {"user_id": "mock-user"},
+            profile="streamer1",
+            device_id=device_id,
+            device_name=device_name,
+            token=token,
+        )
+        if reset_user.get("users"):
+            raise RuntimeError(f"Reset user TikFinity FF divergente: {reset_user!r}")
+        cleared_history = send_tikfinity_ff_gifts_action(
+            tikfinity_url,
+            "clear_history",
+            {},
+            profile="streamer1",
+            device_id=device_id,
+            device_name=device_name,
+            token=token,
+        )
+        if cleared_history.get("history"):
+            raise RuntimeError(f"Clear history TikFinity FF divergente: {cleared_history!r}")
+        fetched_tikfinity = fetch_tikfinity_ff_gifts(tikfinity_url, "streamer1", device_id, device_name, token)
+        fetched_config = fetched_tikfinity.get("config") if isinstance(fetched_tikfinity.get("config"), dict) else {}
+        if int(fetched_config.get("coins_per_room") or 0) != 75:
+            raise RuntimeError(f"GET TikFinity FF divergente: {fetched_tikfinity!r}")
 
     try:
         send_ff_overlay_realtime_update(
@@ -321,6 +1216,81 @@ def verify(
             (item.name, item.note, item.status, item.rooms) for item in queue
         ]:
             raise RuntimeError(f"Overlay FF/Fila divergente: {overlay_queue.entries!r}")
+        overlay_config = {
+            "enabled_general": True,
+            "enabled_daily": True,
+            "enabled_queue": True,
+            "layout": "grid",
+            "font_family": "impact",
+            "animation": "pop",
+            "refresh_ms": 3000,
+            "switch_seconds": 11,
+            "limit_general": 7,
+            "limit_daily": 6,
+            "limit_queue": 5,
+            "panel_width": 420,
+            "gap": 18,
+            "wrap_padding": 12,
+            "title_size": 32,
+            "row_size": 24,
+            "value_size": 28,
+            "row_height": 44,
+            "panel_bg_color": "#101820",
+            "panel_bg_opacity": 55,
+            "panel_radius": 14,
+            "row_bg_color": "#050505",
+            "row_bg_opacity": 34,
+            "accent_width": 6,
+            "panel_bg_enabled": True,
+            "show_rank_prefix": True,
+            "show_medals": True,
+            "general": {
+                "title": "GERAL TESTE",
+                "title_color": "#FFD54A",
+                "rank_color": "#FFD54A",
+                "name_color": "#FFFFFF",
+                "value_color": "#66FF99",
+                "accent_color": "#FF4655",
+            },
+            "daily": {
+                "title": "DIA TESTE",
+                "title_color": "#66FF99",
+                "rank_color": "#66FF99",
+                "name_color": "#FFFFFF",
+                "value_color": "#FFD54A",
+                "accent_color": "#24D17E",
+            },
+            "queue": {
+                "title": "FILA TESTE",
+                "title_color": "#7AD7FF",
+                "rank_color": "#7AD7FF",
+                "name_color": "#FFFFFF",
+                "value_color": "#FFD54A",
+                "accent_color": "#3BA7FF",
+            },
+        }
+        saved_overlay_config = send_ff_overlay_config_action(
+            overlay_url,
+            "save_config",
+            {"config": overlay_config, "label": "Perfil Teste"},
+            profile="streamer1",
+            device_id=device_id,
+            device_name=device_name,
+            token=token,
+        )
+        saved_config = saved_overlay_config.get("config") if isinstance(saved_overlay_config.get("config"), dict) else {}
+        if int(saved_config.get("gap") or 0) != 18 or saved_config.get("queue", {}).get("title") != "FILA TESTE":
+            raise RuntimeError(f"Config Overlay FF divergente no POST: {saved_overlay_config!r}")
+        fetched_overlay_config = fetch_ff_overlay_config(
+            overlay_url,
+            profile="streamer1",
+            device_id=device_id,
+            device_name=device_name,
+            token=token,
+        )
+        fetched_config = fetched_overlay_config.get("config") if isinstance(fetched_overlay_config.get("config"), dict) else {}
+        if int(fetched_config.get("row_height") or 0) != 44 or fetched_config.get("general", {}).get("accent_color") != "#FF4655":
+            raise RuntimeError(f"Config Overlay FF divergente no GET: {fetched_overlay_config!r}")
         print("Overlay FF GET aplicavel: endpoint retornou players e queue no mesmo payload.")
     except Exception:
         if overlay_required:

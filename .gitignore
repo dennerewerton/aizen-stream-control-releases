@@ -5,5 +5,8 @@ debug/
 config.json
 dist/config.json
 dist/captures/
+raffle_history.json
+livepix_events.json
+_MEI*/
 *.spec
 exe-test-*.txt

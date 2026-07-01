@@ -1,119 +1,117 @@
 {
-  "hotkey": "CTRL+SHIFT+F12",
-  "discord_webhook_url": "COLE_AQUI_O_WEBHOOK_DO_DISCORD",
   "jarvis_endpoint_url": "",
+  "jarvis_api_token": "",
+  "jarvis_base_url": "",
+  "kills_realtime_url": "",
+  "kills_realtime_auto_sync": true,
+  "kills_realtime_poll_seconds": 15,
+  "kills_sync_room": "principal",
+  "freefire_kills_style_url": "",
+  "ff_queue_realtime_url": "",
+  "ff_overlay_realtime_url": "",
+  "ff_queue_auto_sync": true,
+  "ff_overlay_auto_sync": true,
+  "ff_queue_poll_seconds": 15,
+  "ff_queue_room": "principal",
+  "ff_queue_items": [],
+  "device_id": "",
+  "device_name": "",
+  "auto_update_enabled": true,
+  "updates_manifest_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json",
   "message_title": "Kills da partida",
-  "attach_screenshot": true,
-  "capture_target": "primary",
-  "ignored_players": [],
-  "captures_dir": "captures",
-  "debug_dir": "debug",
-  "reference_size": [
-    2560,
-    1080
-  ],
-  "name_corrections": {
-    "ruan lokol": "ruan loko'",
-    "vt cutcútn": "vt cutcut",
-    "vt cutcutn": "vt cutcut",
-    "AIZEN": "AIZEN OFC",
-    "AZARAD": "AZARADOyt",
-    "NEFLEXBB": "NEFLEX88",
-    "LOIJD": "LOUD",
-    "@JlJHHOfC": "@JUHHOfc",
-    "@JlJHH0fC": "@JUHHOfc",
-    "JlJHHOfC": "@JUHHOfc",
-    "JlJHH0fC": "@JUHHOfc",
-    "URIEL": "URIEL__WIN:)"
+  "kills_manual_scope": "daily",
+  "manual_kills": [],
+  "manual_kills_by_scope": {
+    "daily": [],
+    "general": []
   },
-  "layout": {
-    "kill_mode": "single_column",
-    "name_height": 46,
-    "rows": [
-      [
-        445,
-        529
-      ],
-      [
-        539,
-        622
-      ],
-      [
-        631,
-        715
-      ],
-      [
-        724,
-        807
-      ]
-    ],
-    "left": {
-      "name": [
-        488,
-        782
-      ],
-      "kills": [
-        820,
-        880
-      ]
-    },
-    "right": {
-      "name": [
-        1472,
-        1774
-      ],
-      "kills": [
-        1810,
-        1865
-      ]
-    }
+  "tikfinity_chat_url": "https://socialstream.ninja/dock.html?session=YW7ruvvTJN&ln=pt-br&darkmode&largeavatar&emoji&largecontent",
+  "chat_event_source": "webhook",
+  "chat_webhook_host": "127.0.0.1",
+  "chat_webhook_port": 8765,
+  "chat_webhook_token": "",
+  "chat_websocket_url": "ws://127.0.0.1:21213/",
+  "chat_max_messages": 250,
+  "chat_commands_enabled": false,
+  "chat_commands": [],
+  "chat_timers_enabled": false,
+  "chat_timers": [],
+  "bot_safe_delay_seconds": 15,
+  "bot_default_command_cooldown_seconds": 30,
+  "bot_default_timer_interval_seconds": 600,
+  "bot_default_timer_min_messages": 5,
+  "bot_delivery_method": "streamerbot_websocket",
+  "bot_streamerbot_ws_url": "ws://127.0.0.1:8080/",
+  "bot_streamerbot_http_url": "http://127.0.0.1:7474",
+  "bot_streamerbot_password": "",
+  "bot_streamerbot_action_name": "Aizen TikFinity Chatbot",
+  "bot_streamerbot_action_id": "",
+  "bot_ignore_usernames": "",
+  "livepix_enabled": false,
+  "livepix_client_id": "",
+  "livepix_client_secret": "",
+  "livepix_scopes": "account:read wallet:read payments:read payments:write messages:read messages:write subscriptions:read rewards:read webhooks controls currencies:read",
+  "livepix_webhook_host": "127.0.0.1",
+  "livepix_webhook_port": 8787,
+  "livepix_webhook_token": "",
+  "livepix_redirect_url": "https://livepix.gg",
+  "livepix_goal_amount": 50000,
+  "livepix_goal_label": "Meta da live",
+  "livepix_currency": "BRL",
+  "livepix_plan_id": "",
+  "livepix_plan_slug": "vip-live",
+  "livepix_plan_name": "VIP da live",
+  "livepix_plan_description": "Acesso aos benefícios de apoiador da live.",
+  "livepix_subscription_recurrence": "monthly",
+  "livepix_subscriber_email": "",
+  "livepix_announce_in_chat": true,
+  "livepix_public_page_file": "livepix_public.html",
+  "raffle_source_mode": "events",
+  "raffle_command": "!sorteio",
+  "raffle_duration_seconds": 600,
+  "raffle_entries_normal": 1,
+  "raffle_entries_fan": 2,
+  "raffle_entries_super_fan": 3,
+  "raffle_entries_gift": 5,
+  "raffle_entries_sub": 10,
+  "raffle_user_cooldown_seconds": 8,
+  "raffle_include_moderators": true,
+  "raffle_history_file": "raffle_history.json",
+  "ui_layout": {
+    "participants_height": 560,
+    "events_height": 170,
+    "winner_width": 360,
+    "raffle_font_size": 13,
+    "chat_overlay_opacity": 84,
+    "chat_overlay_font_size": 14,
+    "chat_overlay_width": 430,
+    "chat_overlay_height": 640,
+    "chat_overlay_compact": true,
+    "chat_overlay_controls": true,
+    "chat_overlay_clickthrough": false,
+    "ff_overlay_opacity": 92,
+    "ff_overlay_width": 760,
+    "ff_overlay_height": 420,
+    "ff_overlay_compact": false,
+    "ff_overlay_show_queue": true,
+    "ff_overlay_show_kills": true
   },
-  "final_layout": {
-    "kill_mode": "kda",
-    "name_height": 67,
-    "header_detection": [
-      350,
-      400,
-      2050,
-      480
-    ],
-    "rows": [
-      [
-        478,
-        565
-      ],
-      [
-        568,
-        654
-      ],
-      [
-        658,
-        744
-      ],
-      [
-        748,
-        833
-      ]
-    ],
-    "left": {
-      "name": [
-        535,
-        850
-      ],
-      "kills": [
-        835,
-        975
-      ]
-    },
-    "right": {
-      "name": [
-        1470,
-        1768
-      ],
-      "kills": [
-        1765,
-        1915
-      ]
-    }
+  "ui_theme": {
+    "preset": "Aizen Red",
+    "theme_schema_version": "2026.1",
+    "logo_path": "",
+    "canvas_bg": "#050506",
+    "bg": "#08090d",
+    "panel": "#101116",
+    "panel_alt": "#171217",
+    "field": "#090a0f",
+    "border": "#332025",
+    "fg": "#f8f3f2",
+    "muted": "#ad9da0",
+    "accent": "#ff2633",
+    "accent_hover": "#ff5a4d",
+    "teal": "#35d6a5",
+    "blue": "#8bb0ff",
+    "danger": "#d84855"
   }
 }

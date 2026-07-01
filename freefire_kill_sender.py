@@ -20,6 +20,7 @@ import threading
 import time
 import unicodedata
 import uuid
+import webbrowser
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -28,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import cv2
 import numpy as np
@@ -47,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.24"
+APP_VERSION = "2.6.52"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -291,6 +292,8 @@ class FFQueueState:
     updated_by: str = ""
     updated_at: str = ""
     devices: list[dict[str, Any]] | None = None
+    total_members: int | None = None
+    total_credits: int | None = None
 
 
 @dataclass
@@ -396,18 +399,27 @@ def load_config(path: Path) -> dict[str, Any]:
     data.setdefault("ignored_players", [])
     data.setdefault("jarvis_api_token", "")
     data.setdefault("manual_kills", [])
+    data.setdefault("kills_manual_scope", "daily")
     data.setdefault("kills_realtime_url", data.get("jarvis_endpoint_url", ""))
     data.setdefault("kills_realtime_auto_sync", True)
-    data.setdefault("kills_realtime_poll_seconds", 2)
+    data.setdefault("kills_realtime_poll_seconds", 15)
     data.setdefault("kills_sync_room", "principal")
+    data.setdefault("freefire_kills_style_url", "")
     data.setdefault("ff_queue_realtime_url", data.get("jarvis_endpoint_url", ""))
     data.setdefault("ff_queue_auto_sync", True)
-    data.setdefault("ff_queue_poll_seconds", 2)
+    data.setdefault("ff_queue_poll_seconds", 15)
     data.setdefault("ff_queue_room", "principal")
     data.setdefault("ff_queue_items", [])
+    data.setdefault("tikfinity_ff_gifts_url", "")
+    data.setdefault("tikfinity_ff_profile", "streamer1")
+    data.setdefault("tikfinity_ff_enabled", True)
+    data.setdefault("tikfinity_ff_coins_per_room", 50)
+    data.setdefault("tikfinity_ff_token", "")
     data.setdefault("jarvis_base_url", "")
     data.setdefault("ff_overlay_realtime_url", "")
     data.setdefault("ff_overlay_auto_sync", True)
+    data.setdefault("ff_overlay_config_url", "")
+    data.setdefault("ff_overlay_profile", "streamer1")
     if not str(data.get("device_name", "")).strip():
         data["device_name"] = default_device_name()
     if not str(data.get("device_id", "")).strip():
@@ -2149,6 +2161,45 @@ def player_payload(players: list[PlayerKill]) -> list[dict[str, Any]]:
     return [{"name": player.name, "kills": int(player.kills)} for player in players]
 
 
+def overlay_rank_players(
+    daily_ranking: list[PlayerKill] | None,
+    global_ranking: list[PlayerKill] | None,
+    manual_players: list[PlayerKill] | None = None,
+) -> list[PlayerKill]:
+    source = list(daily_ranking or global_ranking or manual_players or [])
+    return sorted(source, key=lambda item: (-normalize_kill_value(item.kills), normalize_player_key(item.name)))
+
+
+def normalize_kills_scope_value(value: Any) -> str:
+    text = str(value or "").strip().casefold()
+    folded = unicodedata.normalize("NFKD", text)
+    folded = "".join(character for character in folded if not unicodedata.combining(character))
+    folded = re.sub(r"[^a-z0-9]+", " ", folded).strip()
+    if folded in {"daily", "diario", "dia", "somente dia", "rank dia", "ranking dia"}:
+        return "daily"
+    if folded in {"general", "geral", "global", "somente geral", "rank geral", "ranking geral"}:
+        return "general"
+    return "both"
+
+
+def kills_scope_label(value: Any) -> str:
+    scope = normalize_kills_scope_value(value)
+    if scope == "daily":
+        return "Diario"
+    if scope == "general":
+        return "Geral"
+    return "Ambos"
+
+
+def kills_scope_description(value: Any) -> str:
+    scope = normalize_kills_scope_value(value)
+    if scope == "daily":
+        return "somente no rank do dia"
+    if scope == "general":
+        return "somente no rank geral"
+    return "no rank do dia e no geral"
+
+
 FF_QUEUE_STATUSES = ["Na fila", "Chamado", "Jogando", "Concluido"]
 
 
@@ -2225,14 +2276,17 @@ def is_auto_room_note(note: str) -> bool:
 
 
 def ff_queue_merge_key(entry: FFQueueEntry) -> str:
+    identity = str(entry.panel_user_id or entry.user_id or "").strip()
+    if identity:
+        return f"user:{identity.lower()}"
+    ff_id = re.sub(r"\D+", "", str(entry.ff_player_id or ""))
+    if ff_id:
+        return f"ff:{ff_id}"
     normalized_name = unicodedata.normalize("NFKD", normalize_player_key(entry.name))
     name_key = "".join(character for character in normalized_name if not unicodedata.combining(character))
     name_key = re.sub(r"\s+", " ", name_key).strip()
     if name_key:
         return f"name:{name_key}"
-    ff_id = re.sub(r"\D+", "", str(entry.ff_player_id or ""))
-    if ff_id:
-        return f"ff:{ff_id}"
     return "unknown"
 
 
@@ -2278,6 +2332,33 @@ def merge_ff_queue_entries(entries: list[FFQueueEntry]) -> list[FFQueueEntry]:
     return [grouped[key] for key in order]
 
 
+def serve_next_queue_entries(entries: list[FFQueueEntry]) -> tuple[list[FFQueueEntry], FFQueueEntry | None, int]:
+    current = merge_ff_queue_entries(entries)
+    target_index = -1
+    for index, entry in enumerate(current):
+        if entry.name.strip() and normalize_queue_status(entry.status) == "Na fila":
+            target_index = index
+            break
+    if target_index < 0:
+        return current, None, 0
+
+    served = current.pop(target_index)
+    remaining = max(0, normalize_kill_value(served.rooms) - 1)
+    if remaining > 0:
+        current.append(
+            FFQueueEntry(
+                name=served.name,
+                note=served.note,
+                status="Na fila",
+                rooms=remaining,
+                user_id=served.user_id,
+                panel_user_id=served.panel_user_id,
+                ff_player_id=served.ff_player_id,
+            )
+        )
+    return current, served, remaining
+
+
 def parse_ff_queue_payload(payload: Any) -> list[FFQueueEntry]:
     if isinstance(payload, str):
         try:
@@ -2292,6 +2373,14 @@ def parse_ff_queue_payload(payload: Any) -> list[FFQueueEntry]:
             if isinstance(value, list):
                 candidates = value
                 break
+            if isinstance(value, dict):
+                for nested_key in ("entries", "queue", "items", "players", "data"):
+                    nested_value = value.get(nested_key)
+                    if isinstance(nested_value, list):
+                        candidates = nested_value
+                        break
+                if isinstance(candidates, list):
+                    break
 
     if not isinstance(candidates, list):
         return []
@@ -2471,6 +2560,22 @@ def parse_players_payload(payload: Any) -> list[PlayerKill]:
     return players
 
 
+def ranking_payload_from(payload: dict[str, Any], direct_keys: tuple[str, ...], container_keys: tuple[str, ...] = ()) -> Any:
+    direct_value = first_present(payload, direct_keys)
+    if direct_value is not None:
+        return direct_value
+
+    for container_key in container_keys:
+        nested = payload.get(container_key)
+        if isinstance(nested, dict):
+            nested_value = first_present(nested, ("ranking", "rank", "players", "kills", "items", "data"))
+            if nested_value is not None:
+                return nested_value
+        elif isinstance(nested, list):
+            return nested
+    return None
+
+
 def parse_ignored_kills_payload(payload: Any) -> list[IgnoredKillPlayer]:
     if not payload:
         return []
@@ -2543,15 +2648,56 @@ def parse_realtime_state(payload: Any) -> RealtimeState:
     daily_visible_players: int | None = None
 
     if isinstance(payload, dict):
-        daily_ranking = parse_players_payload(payload.get("daily_ranking") or payload.get("dailyRanking") or [])
-        global_ranking = parse_players_payload(
-            payload.get("ranking")
-            or payload.get("global_ranking")
-            or payload.get("globalRanking")
-            or payload.get("overall_ranking")
-            or payload.get("overallRanking")
-            or []
+        daily_source = ranking_payload_from(
+            payload,
+            (
+                "daily_ranking",
+                "dailyRanking",
+                "daily_rank",
+                "dailyRank",
+                "day_ranking",
+                "dayRanking",
+                "dia_ranking",
+                "diaRanking",
+                "rank_daily",
+                "rankDaily",
+                "rank_dia",
+                "rankDia",
+                "ranking_daily",
+                "rankingDaily",
+            ),
+            ("daily", "day", "dia", "daily_stats", "dailyStats", "rank_daily", "rankDaily"),
         )
+        global_source = ranking_payload_from(
+            payload,
+            (
+                "general_ranking",
+                "generalRanking",
+                "general_rank",
+                "generalRank",
+                "geral_ranking",
+                "geralRanking",
+                "geral_rank",
+                "geralRank",
+                "global_ranking",
+                "globalRanking",
+                "global_rank",
+                "globalRank",
+                "overall_ranking",
+                "overallRanking",
+                "overall_rank",
+                "overallRank",
+                "all_time_ranking",
+                "allTimeRanking",
+                "ranking_general",
+                "rankingGeneral",
+            ),
+            ("general", "geral", "global", "overall", "all_time", "allTime", "rank_general", "rankGeneral"),
+        )
+        daily_ranking = parse_players_payload(daily_source or [])
+        if global_source is None:
+            global_source = first_present(payload, ("ranking",), [])
+        global_ranking = parse_players_payload(global_source or [])
         ignored_players = parse_ignored_kills_payload(payload.get("ignored") or payload.get("ignored_players") or payload.get("ignoredPlayers") or [])
         if not players and global_ranking:
             players = global_ranking
@@ -2628,6 +2774,8 @@ def parse_ff_queue_state(payload: Any) -> FFQueueState:
     updated_by = ""
     updated_at = ""
     devices: list[dict[str, Any]] | None = None
+    total_members: int | None = None
+    total_credits: int | None = None
 
     if isinstance(payload, dict):
         updated_by = str(
@@ -2649,8 +2797,29 @@ def parse_ff_queue_state(payload: Any) -> FFQueueState:
         raw_devices = payload.get("devices") or payload.get("clients") or payload.get("online_devices") or payload.get("onlineDevices")
         if isinstance(raw_devices, list):
             devices = [item for item in raw_devices if isinstance(item, dict)]
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        queue_info = payload.get("queue") if isinstance(payload.get("queue"), dict) else {}
+        total_members = optional_int_value(
+            first_present(
+                {**queue_info, **summary, **payload},
+                ("total_members", "totalMembers", "members", "member_count", "memberCount"),
+            )
+        )
+        total_credits = optional_int_value(
+            first_present(
+                {**queue_info, **summary, **payload},
+                ("total_credits", "totalCredits", "credits", "rooms", "salas", "room_count", "roomCount"),
+            )
+        )
 
-    return FFQueueState(entries=entries, updated_by=updated_by, updated_at=updated_at, devices=devices)
+    return FFQueueState(
+        entries=entries,
+        updated_by=updated_by,
+        updated_at=updated_at,
+        devices=devices,
+        total_members=total_members,
+        total_credits=total_credits,
+    )
 
 
 def send_kills_realtime_update(
@@ -2728,14 +2897,61 @@ def fetch_kills_realtime(
     }
     if room:
         params["room"] = room
+    base_url = normalize_endpoint_url(endpoint_url)
     response = requests.get(
-        normalize_endpoint_url(endpoint_url),
+        base_url,
         params=params,
         headers=headers,
         timeout=12,
     )
     response.raise_for_status()
-    return parse_realtime_state(response.text)
+    state = parse_realtime_state(response.text)
+    if state.daily_ranking or state.global_ranking:
+        return state
+
+    rank_url = derive_kills_rank_endpoint(endpoint_url)
+    if rank_url == base_url:
+        return state
+    rank_params = dict(params)
+    rank_params["limit"] = 200
+    try:
+        rank_response = requests.get(
+            rank_url,
+            params=rank_params,
+            headers=headers,
+            timeout=12,
+            allow_redirects=False,
+        )
+        if 300 <= rank_response.status_code < 400:
+            return state
+        if rank_response.status_code in {404, 405}:
+            return state
+        rank_response.raise_for_status()
+    except requests.RequestException:
+        return state
+    rank_state = parse_realtime_state(rank_response.text)
+    if rank_state.daily_ranking or rank_state.global_ranking:
+        return rank_state
+    return state
+
+
+def derive_kills_rank_endpoint(endpoint_url: str) -> str:
+    clean = normalize_endpoint_url(endpoint_url)
+    parsed = urlparse(clean)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/freefire-kills/rank"):
+        next_path = path
+    elif path.endswith("/api/freefire-kills/style"):
+        next_path = path[: -len("/style")] + "/rank"
+    elif path.endswith("/api/freefire-kills/action"):
+        next_path = path[: -len("/action")] + "/rank"
+    elif path.endswith("/api/freefire-kills"):
+        next_path = f"{path}/rank"
+    elif path.endswith("/freefire-kills/obs") or path.endswith("/freefire-kills"):
+        next_path = "/api/freefire-kills/rank"
+    else:
+        next_path = "/api/freefire-kills/rank"
+    return parsed._replace(path=next_path, query="", fragment="").geturl()
 
 
 def derive_kills_action_endpoint(endpoint_url: str) -> str:
@@ -2751,6 +2967,105 @@ def derive_kills_action_endpoint(endpoint_url: str) -> str:
     else:
         path = f"{path}/action"
     return parsed._replace(path=path, query="", fragment="").geturl()
+
+
+def derive_kills_style_endpoint(endpoint_url: str) -> str:
+    clean = normalize_endpoint_url(endpoint_url)
+    parsed = urlparse(clean)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/freefire-kills/style"):
+        next_path = path
+    elif path.endswith("/api/freefire-kills/action"):
+        next_path = path[: -len("/action")] + "/style"
+    elif path.endswith("/api/freefire-kills"):
+        next_path = f"{path}/style"
+    elif path.endswith("/freefire-kills/obs") or path.endswith("/freefire-kills"):
+        next_path = "/api/freefire-kills/style"
+    else:
+        next_path = "/api/freefire-kills/style"
+    return parsed._replace(path=next_path, query="", fragment="").geturl()
+
+
+def derive_kills_obs_url(endpoint_url: str) -> str:
+    clean = normalize_endpoint_url(endpoint_url)
+    parsed = urlparse(clean)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/freefire-kills/obs"):
+        next_path = path
+    else:
+        next_path = "/freefire-kills/obs"
+    return parsed._replace(path=next_path, query="", fragment="").geturl()
+
+
+def fetch_kills_style(
+    endpoint_url: str,
+    device_id: str = "",
+    device_name: str = "",
+    token: str = "",
+) -> dict[str, Any]:
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.get(
+        derive_kills_style_endpoint(endpoint_url),
+        params={"client_id": device_id, "client_name": device_name, "app_version": APP_VERSION},
+        headers=headers,
+        timeout=12,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Resposta de estilo Kills FF invalida.")
+    style = payload.get("style") if isinstance(payload.get("style"), dict) else payload
+    return dict(style)
+
+
+def send_kills_style_update(
+    endpoint_url: str,
+    style: dict[str, Any],
+    device_id: str = "",
+    device_name: str = "",
+    token: str = "",
+) -> dict[str, Any]:
+    payload = {
+        "source": "aizen-stream-control",
+        "app_version": APP_VERSION,
+        "client_id": device_id,
+        "client_name": device_name,
+        "updated_by": device_name,
+        "style": dict(style or {}),
+    }
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.post(
+        derive_kills_style_endpoint(endpoint_url),
+        json=payload,
+        headers=headers,
+        timeout=20,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    result = response.json()
+    if not isinstance(result, dict):
+        raise RuntimeError("Resposta de estilo Kills FF invalida.")
+    style_payload = result.get("style") if isinstance(result.get("style"), dict) else result
+    return dict(style_payload)
 
 
 def send_kills_action_update(
@@ -2790,7 +3105,7 @@ def send_kills_action_update(
     if new_name:
         payload["new_name"] = new_name
         payload["display_name"] = new_name
-    if ff_player_id:
+    if action == "set_ff_id" or ff_player_id:
         payload["ff_player_id"] = re.sub(r"\D+", "", str(ff_player_id))
 
     headers = {
@@ -2913,6 +3228,93 @@ def derive_ff_queue_action_endpoint(endpoint_url: str) -> str:
     else:
         path = f"{path}/action"
     return parsed._replace(path=path, query="", fragment="").geturl()
+
+
+def derive_tikfinity_ff_gifts_endpoint(endpoint_url: str) -> str:
+    clean = normalize_endpoint_url(endpoint_url)
+    parsed = urlparse(clean)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/tikfinity/ff-gifts"):
+        next_path = path
+    else:
+        next_path = "/api/tikfinity/ff-gifts"
+    return parsed._replace(path=next_path, query="", fragment="").geturl()
+
+
+def fetch_tikfinity_ff_gifts(
+    endpoint_url: str,
+    profile: str = "streamer1",
+    device_id: str = "",
+    device_name: str = "",
+    token: str = "",
+) -> dict[str, Any]:
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.get(
+        derive_tikfinity_ff_gifts_endpoint(endpoint_url),
+        params={"profile": profile, "client_id": device_id, "client_name": device_name, "app_version": APP_VERSION},
+        headers=headers,
+        timeout=12,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Resposta TikFinity FF invalida.")
+    return payload
+
+
+def send_tikfinity_ff_gifts_action(
+    endpoint_url: str,
+    action: str,
+    payload: dict[str, Any] | None = None,
+    profile: str = "streamer1",
+    device_id: str = "",
+    device_name: str = "",
+    token: str = "",
+) -> dict[str, Any]:
+    body: dict[str, Any] = dict(payload or {})
+    body.update(
+        {
+            "source": "aizen-stream-control",
+            "app_version": APP_VERSION,
+            "profile": profile,
+            "client_id": device_id,
+            "client_name": device_name,
+            "updated_by": device_name,
+            "action": action,
+        }
+    )
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.post(
+        derive_tikfinity_ff_gifts_endpoint(endpoint_url),
+        json=body,
+        headers=headers,
+        timeout=20,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    result = response.json()
+    if not isinstance(result, dict):
+        raise RuntimeError("Resposta TikFinity FF invalida.")
+    return result
 
 
 def send_ff_queue_action_update(
@@ -3078,6 +3480,99 @@ def fetch_ff_overlay_realtime(
     )
     response.raise_for_status()
     return parse_realtime_state(response.text), parse_ff_queue_state(response.text)
+
+
+def derive_ff_overlay_config_endpoint(endpoint_url: str) -> str:
+    clean = normalize_endpoint_url(endpoint_url)
+    parsed = urlparse(clean)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/freefire-overlay/config"):
+        next_path = path
+    elif path.endswith("/api/freefire-overlay/data"):
+        next_path = path[: -len("/data")] + "/config"
+    elif path.endswith("/api/freefire-overlay"):
+        next_path = f"{path}/config"
+    elif path.endswith("/freefire/overlay"):
+        next_path = "/api/freefire-overlay/config"
+    else:
+        next_path = "/api/freefire-overlay/config"
+    return parsed._replace(path=next_path, query="", fragment="").geturl()
+
+
+def fetch_ff_overlay_config(
+    endpoint_url: str,
+    profile: str = "streamer1",
+    device_id: str = "",
+    device_name: str = "",
+    token: str = "",
+) -> dict[str, Any]:
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.get(
+        derive_ff_overlay_config_endpoint(endpoint_url),
+        params={"profile": profile, "client_id": device_id, "client_name": device_name, "app_version": APP_VERSION},
+        headers=headers,
+        timeout=12,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("Resposta de configuracao do Overlay FF invalida.")
+    return payload
+
+
+def send_ff_overlay_config_action(
+    endpoint_url: str,
+    action: str,
+    payload: dict[str, Any] | None = None,
+    profile: str = "streamer1",
+    device_id: str = "",
+    device_name: str = "",
+    token: str = "",
+) -> dict[str, Any]:
+    body: dict[str, Any] = dict(payload or {})
+    body.update(
+        {
+            "source": "aizen-stream-control",
+            "app_version": APP_VERSION,
+            "profile": profile,
+            "client_id": device_id,
+            "client_name": device_name,
+            "updated_by": device_name,
+            "action": action,
+        }
+    )
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.post(
+        derive_ff_overlay_config_endpoint(endpoint_url),
+        json=body,
+        headers=headers,
+        timeout=20,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    result = response.json()
+    if not isinstance(result, dict):
+        raise RuntimeError("Resposta de configuracao do Overlay FF invalida.")
+    return result
 
 
 def send_to_discord(webhook_url: str, content: str, screenshot: Path | None) -> None:
@@ -4205,7 +4700,13 @@ def run_gui(config_path: Path) -> int:
     avatar_pending: set[tuple[str, int]] = set()
     winner_avatar_current: tuple[str, str] = ("", "-")
     manual_rows: list[dict[str, Any]] = []
-    kills_rank_rows: list[Any] = []
+    manual_scope_buffers: dict[str, list[PlayerKill]] = {"daily": [], "general": []}
+    manual_scope_dirty: set[str] = set()
+    manual_active_scope = normalize_kills_scope_value(config.get("kills_manual_scope", "daily"))
+    if manual_active_scope not in {"daily", "general"}:
+        manual_active_scope = "daily"
+    kills_daily_rank_rows: list[Any] = []
+    kills_global_rank_rows: list[Any] = []
     kills_ignored_rows: list[Any] = []
     kills_daily_ranking: list[PlayerKill] = []
     kills_global_ranking: list[PlayerKill] = []
@@ -4219,21 +4720,35 @@ def run_gui(config_path: Path) -> int:
     manual_last_local_edit_at = 0.0
     manual_last_signature = ""
     manual_last_remote_signature = ""
+    manual_last_rank_signature = ""
+    manual_poll_quiet_cycles = 0
     manual_remote_count_override: int | None = None
     manual_remote_total_override: int | None = None
     manual_last_fetch_error = ""
+    manual_dns_retry_after_id: str | None = None
     ff_queue_rows: list[dict[str, Any]] = []
     ff_queue_sync_after_id: str | None = None
     ff_queue_poll_after_id: str | None = None
     ff_queue_fetching = False
     ff_queue_sending = False
     ff_queue_applying_remote = False
+    ff_queue_remote_count_override: int | None = None
+    ff_queue_remote_rooms_override: int | None = None
     ff_queue_last_local_edit_at = 0.0
     ff_queue_last_signature = ""
+    ff_queue_poll_quiet_cycles = 0
     ff_queue_last_fetch_error = ""
+    tikfinity_ff_widgets: list[Any] = []
+    tikfinity_ff_user_widgets: list[Any] = []
+    tikfinity_ff_history_widgets: list[Any] = []
+    tikfinity_ff_profiles: list[dict[str, Any]] = []
     ff_overlay_sending = False
     ff_overlay_fetching = False
     ff_overlay_last_signature = ""
+    ff_overlay_last_remote_signature = ""
+    ff_overlay_poll_quiet_cycles = 0
+    ff_overlay_site_profiles: list[dict[str, Any]] = []
+    ff_overlay_site_last_config: dict[str, Any] = {}
     ff_overlay_sync_after_id: str | None = None
     ff_overlay_poll_after_id: str | None = None
     ff_overlay_applying_remote = False
@@ -4254,6 +4769,16 @@ def run_gui(config_path: Path) -> int:
     def log(message: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
         log_queue.put(f"[{stamp}] {message}")
+
+    def set_text_var(var: tk.StringVar, value: Any) -> None:
+        text = str(value)
+        if var.get() != text:
+            var.set(text)
+
+    def adaptive_poll_seconds(base_seconds: int, quiet_cycles: int, max_seconds: int = 90) -> int:
+        base = max(10, min(max_seconds, int(base_seconds)))
+        multiplier = 2 ** min(max(0, quiet_cycles), 3)
+        return max(10, min(max_seconds, base * multiplier))
 
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("dark-blue")
@@ -4310,16 +4835,140 @@ def run_gui(config_path: Path) -> int:
         initial_ff_overlay_url = initial_sync_url.replace("freefire-kills", "freefire-overlay")
     if not initial_ff_overlay_url and "freefire-queue" in initial_ff_queue_url:
         initial_ff_overlay_url = initial_ff_queue_url.replace("freefire-queue", "freefire-overlay")
+    initial_ff_overlay_config_url = str(config.get("ff_overlay_config_url", "")).strip()
+    if not initial_ff_overlay_config_url and initial_ff_overlay_url:
+        initial_ff_overlay_config_url = derive_ff_overlay_config_endpoint(initial_ff_overlay_url)
+    if not initial_ff_overlay_config_url and initial_jarvis_base_url:
+        initial_ff_overlay_config_url = derive_ff_overlay_config_endpoint(initial_jarvis_base_url)
+    initial_tikfinity_ff_url = str(config.get("tikfinity_ff_gifts_url", "")).strip()
+    if initial_jarvis_base_url and not initial_tikfinity_ff_url:
+        initial_tikfinity_ff_url = derive_tikfinity_ff_gifts_endpoint(initial_jarvis_base_url)
+    if initial_ff_queue_url and not initial_tikfinity_ff_url:
+        initial_tikfinity_ff_url = derive_tikfinity_ff_gifts_endpoint(initial_ff_queue_url)
     sync_url_var = tk.StringVar(value=initial_sync_url)
     title_var = tk.StringVar(value=config.get("message_title", "Kills da partida"))
+    initial_kills_style_source = initial_sync_url or initial_jarvis_base_url
+    initial_kills_style_url = str(config.get("freefire_kills_style_url") or "").strip()
+    if not initial_kills_style_url and initial_kills_style_source:
+        initial_kills_style_url = derive_kills_style_endpoint(initial_kills_style_source)
+    kills_style_url_var = tk.StringVar(value=initial_kills_style_url)
+    kills_obs_url_var = tk.StringVar(value=derive_kills_obs_url(initial_kills_style_source) if initial_kills_style_source else "")
+    kills_style_status_var = tk.StringVar(value="Não carregado")
+    kills_style_title_var = tk.StringVar(value="TOP KILLS")
+    kills_style_font_var = tk.StringVar(value="impact")
+    kills_style_align_var = tk.StringVar(value="left")
+    kills_style_title_align_var = tk.StringVar(value="left")
+    kills_style_title_size_var = tk.StringVar(value="34")
+    kills_style_row_size_var = tk.StringVar(value="26")
+    kills_style_kills_size_var = tk.StringVar(value="28")
+    kills_style_rank_size_var = tk.StringVar(value="24")
+    kills_style_weight_var = tk.StringVar(value="900")
+    kills_style_row_height_var = tk.StringVar(value="42")
+    kills_style_row_gap_var = tk.StringVar(value="5")
+    kills_style_row_max_width_var = tk.StringVar(value="0")
+    kills_style_column_gap_var = tk.StringVar(value="10")
+    kills_style_row_padding_var = tk.StringVar(value="10")
+    kills_style_wrap_padding_var = tk.StringVar(value="8")
+    kills_style_switch_seconds_var = tk.StringVar(value="10")
+    kills_style_title_color_var = tk.StringVar(value="#FFD54A")
+    kills_style_rank_color_var = tk.StringVar(value="#FFD54A")
+    kills_style_name_color_var = tk.StringVar(value="#FFFFFF")
+    kills_style_kills_color_var = tk.StringVar(value="#66FF99")
+    kills_style_shadow_color_var = tk.StringVar(value="#000000")
+    kills_style_shadow_blur_var = tk.StringVar(value="7")
+    kills_style_row_bg_color_var = tk.StringVar(value="#000000")
+    kills_style_row_bg_opacity_var = tk.StringVar(value="35")
+    kills_style_accent_color_var = tk.StringVar(value="#FF4655")
+    kills_style_accent_width_var = tk.StringVar(value="4")
+    kills_style_row_radius_var = tk.StringVar(value="8")
+    kills_style_show_title_var = tk.BooleanVar(value=True)
+    kills_style_uppercase_var = tk.BooleanVar(value=True)
+    kills_style_rank_prefix_var = tk.BooleanVar(value=True)
+    kills_style_medals_var = tk.BooleanVar(value=True)
+    kills_style_row_bg_var = tk.BooleanVar(value=False)
+    kills_style_accent_var = tk.BooleanVar(value=False)
     sync_room_var = tk.StringVar(value=config.get("kills_sync_room", "principal"))
     ff_queue_url_var = tk.StringVar(value=initial_ff_queue_url)
     ff_overlay_url_var = tk.StringVar(value=initial_ff_overlay_url)
+    ff_overlay_config_url_var = tk.StringVar(value=initial_ff_overlay_config_url)
+    ff_overlay_site_profile_var = tk.StringVar(value=str(config.get("ff_overlay_profile", "streamer1") or "streamer1"))
+    ff_overlay_site_label_var = tk.StringVar(value="")
+    ff_overlay_site_obs_url_var = tk.StringVar(value="-")
+    ff_overlay_site_status_var = tk.StringVar(value="Nao carregado")
+    ff_overlay_site_enabled_general_var = tk.BooleanVar(value=True)
+    ff_overlay_site_enabled_daily_var = tk.BooleanVar(value=True)
+    ff_overlay_site_enabled_queue_var = tk.BooleanVar(value=True)
+    ff_overlay_site_panel_bg_var = tk.BooleanVar(value=True)
+    ff_overlay_site_rank_prefix_var = tk.BooleanVar(value=True)
+    ff_overlay_site_medals_var = tk.BooleanVar(value=True)
+    ff_overlay_site_layout_var = tk.StringVar(value="horizontal")
+    ff_overlay_site_font_var = tk.StringVar(value="impact")
+    ff_overlay_site_animation_var = tk.StringVar(value="slide")
+    ff_overlay_site_refresh_var = tk.StringVar(value="2500")
+    ff_overlay_site_switch_var = tk.StringVar(value="10")
+    ff_overlay_site_limit_general_var = tk.StringVar(value="10")
+    ff_overlay_site_limit_daily_var = tk.StringVar(value="10")
+    ff_overlay_site_limit_queue_var = tk.StringVar(value="8")
+    ff_overlay_site_panel_width_var = tk.StringVar(value="360")
+    ff_overlay_site_gap_var = tk.StringVar(value="14")
+    ff_overlay_site_padding_var = tk.StringVar(value="8")
+    ff_overlay_site_title_size_var = tk.StringVar(value="30")
+    ff_overlay_site_row_size_var = tk.StringVar(value="22")
+    ff_overlay_site_value_size_var = tk.StringVar(value="24")
+    ff_overlay_site_row_height_var = tk.StringVar(value="40")
+    ff_overlay_site_panel_bg_color_var = tk.StringVar(value="#05070D")
+    ff_overlay_site_panel_bg_opacity_var = tk.StringVar(value="48")
+    ff_overlay_site_panel_radius_var = tk.StringVar(value="10")
+    ff_overlay_site_row_bg_color_var = tk.StringVar(value="#000000")
+    ff_overlay_site_row_bg_opacity_var = tk.StringVar(value="28")
+    ff_overlay_site_accent_width_var = tk.StringVar(value="4")
+    ff_overlay_site_panel_defaults = {
+        "general": {
+            "title": "TOP KILLS GERAL",
+            "title_color": "#FFD54A",
+            "rank_color": "#FFD54A",
+            "name_color": "#FFFFFF",
+            "value_color": "#66FF99",
+            "accent_color": "#FF4655",
+        },
+        "daily": {
+            "title": "TOP KILLS DIA",
+            "title_color": "#66FF99",
+            "rank_color": "#66FF99",
+            "name_color": "#FFFFFF",
+            "value_color": "#FFD54A",
+            "accent_color": "#24D17E",
+        },
+        "queue": {
+            "title": "FILA FF",
+            "title_color": "#7AD7FF",
+            "rank_color": "#7AD7FF",
+            "name_color": "#FFFFFF",
+            "value_color": "#FFD54A",
+            "accent_color": "#3BA7FF",
+        },
+    }
+    ff_overlay_site_panel_vars = {
+        panel_key: {field_key: tk.StringVar(value=str(field_value)) for field_key, field_value in fields.items()}
+        for panel_key, fields in ff_overlay_site_panel_defaults.items()
+    }
+    tikfinity_ff_url_var = tk.StringVar(value=initial_tikfinity_ff_url)
+    tikfinity_ff_profile_var = tk.StringVar(value=str(config.get("tikfinity_ff_profile", "streamer1") or "streamer1"))
+    tikfinity_ff_enabled_var = tk.BooleanVar(value=False)
+    tikfinity_ff_coins_var = tk.StringVar(value=str(config.get("tikfinity_ff_coins_per_room", 50)))
+    tikfinity_ff_token_var = tk.StringVar(value=str(config.get("tikfinity_ff_token", "")))
+    tikfinity_ff_status_var = tk.StringVar(value="Não carregado")
+    tikfinity_ff_webhook_var = tk.StringVar(value="-")
+    tikfinity_ff_summary_var = tk.StringVar(value="0 vínculos | 0 usuários | 0 eventos")
+    tikfinity_ff_map_handle_var = tk.StringVar(value="")
+    tikfinity_ff_map_user_id_var = tk.StringVar(value="")
+    tikfinity_ff_map_display_var = tk.StringVar(value="")
+    tikfinity_ff_map_ff_id_var = tk.StringVar(value="")
     ff_queue_room_var = tk.StringVar(value=config.get("ff_queue_room", "principal"))
     jarvis_base_url_var = tk.StringVar(value=initial_jarvis_base_url)
     ff_queue_enabled_var = tk.BooleanVar(value=bool(config.get("ff_queue_auto_sync", True)))
     ff_overlay_enabled_var = tk.BooleanVar(value=bool(config.get("ff_overlay_auto_sync", True)))
-    ff_queue_poll_seconds_var = tk.StringVar(value=str(config.get("ff_queue_poll_seconds", 2)))
+    ff_queue_poll_seconds_var = tk.StringVar(value=str(max(10, normalize_kill_value(config.get("ff_queue_poll_seconds", 15)))))
     ff_queue_status_var = tk.StringVar(value="Manual")
     ff_overlay_status_var = tk.StringVar(value="Local")
     ff_queue_count_var = tk.StringVar(value="0")
@@ -4327,10 +4976,16 @@ def run_gui(config_path: Path) -> int:
     ff_queue_summary_count_var = tk.StringVar(value="0")
     ff_queue_summary_rooms_var = tk.StringVar(value="0")
     ff_queue_source_var = tk.StringVar(value=config.get("device_name", default_device_name()))
+    ff_queue_manual_name_var = tk.StringVar(value="")
+    ff_queue_manual_user_id_var = tk.StringVar(value="")
+    ff_queue_manual_ff_id_var = tk.StringVar(value="")
+    ff_queue_manual_rooms_var = tk.StringVar(value="1")
     device_name_var = tk.StringVar(value=config.get("device_name", default_device_name()))
     jarvis_token_var = tk.StringVar(value=str(config.get("jarvis_api_token", "")))
     sync_enabled_var = tk.BooleanVar(value=bool(config.get("kills_realtime_auto_sync", True)))
-    poll_seconds_var = tk.StringVar(value=str(config.get("kills_realtime_poll_seconds", 2)))
+    poll_seconds_var = tk.StringVar(value=str(max(10, normalize_kill_value(config.get("kills_realtime_poll_seconds", 15)))))
+    initial_manual_scope = manual_active_scope
+    manual_scope_var = tk.StringVar(value="Geral" if initial_manual_scope == "general" else "Diario")
     auto_update_var = tk.BooleanVar(value=bool(config.get("auto_update_enabled", True)))
     general_update_state_var = tk.StringVar(value="Ativa" if auto_update_var.get() else "Desativada")
     updates_manifest_url_var = tk.StringVar(value=config.get("updates_manifest_url", ""))
@@ -4339,9 +4994,17 @@ def run_gui(config_path: Path) -> int:
     manual_total_var = tk.StringVar(value="0")
     manual_source_var = tk.StringVar(value=device_name_var.get())
     kills_rank_mode_var = tk.StringVar(value="Diario")
-    kills_rank_count_var = tk.StringVar(value="0")
-    kills_rank_total_var = tk.StringVar(value="0")
-    kills_rank_title_var = tk.StringVar(value="Ranking diario")
+    kills_daily_rank_count_var = tk.StringVar(value="0")
+    kills_daily_rank_total_var = tk.StringVar(value="0")
+    kills_global_rank_count_var = tk.StringVar(value="0")
+    kills_global_rank_total_var = tk.StringVar(value="0")
+    kills_overlay_status_var = tk.StringVar(value="Aguardando leitura do Jarvis")
+    kills_admin_name_var = tk.StringVar(value="")
+    kills_admin_new_name_var = tk.StringVar(value="")
+    kills_admin_ff_id_var = tk.StringVar(value="")
+    kills_admin_kills_var = tk.StringVar(value="1")
+    kills_admin_scope_var = tk.StringVar(value="Diario")
+    kills_admin_key_var = tk.StringVar(value="")
     kills_ignored_count_var = tk.StringVar(value="0")
     tikfinity_url_var = tk.StringVar(value=config.get("tikfinity_chat_url", ""))
     chat_source_var = tk.StringVar(
@@ -4672,7 +5335,7 @@ def run_gui(config_path: Path) -> int:
     ).pack(anchor="w")
     ctk.CTkLabel(
         title_stack,
-        text="Live suite 2026 para Free Fire, chat, sorteios, overlays e automações em tempo real",
+        text="Live suite 2026 para Free Fire, chat, sorteios e automações em tempo real",
         text_color=muted,
         font=("Segoe UI", 11),
     ).pack(anchor="w", pady=(2, 0))
@@ -4742,7 +5405,7 @@ def run_gui(config_path: Path) -> int:
     tabview.add("Comandos")
     tabview.add("Temporizador")
     tabview.add("Sorteio Chat")
-    tabview.add("Eventos")
+    tabview.add("Logs")
     tabview.add("Aparência")
     general_tab_root = tabview.tab("Geral")
     kills_tab_root = tabview.tab("Kills FF")
@@ -4753,7 +5416,7 @@ def run_gui(config_path: Path) -> int:
     commands_tab_root = tabview.tab("Comandos")
     timers_tab_root = tabview.tab("Temporizador")
     raffle_tab = tabview.tab("Sorteio Chat")
-    events_tab_root = tabview.tab("Eventos")
+    events_tab_root = tabview.tab("Logs")
     appearance_tab = tabview.tab("Aparência")
     general_tab_root.configure(fg_color=bg)
     kills_tab_root.configure(fg_color=bg)
@@ -4847,8 +5510,8 @@ def run_gui(config_path: Path) -> int:
     kills_tab.columnconfigure(0, weight=3, minsize=560)
     kills_tab.columnconfigure(1, weight=2, minsize=420)
     kills_tab.rowconfigure(0, weight=1)
-    ff_queue_tab.columnconfigure(0, weight=1, minsize=280)
-    ff_queue_tab.columnconfigure(1, weight=3, minsize=360)
+    ff_queue_tab.columnconfigure(0, weight=3, minsize=560)
+    ff_queue_tab.columnconfigure(1, weight=1, minsize=340)
     ff_queue_tab.rowconfigure(0, weight=1)
     ff_overlay_tab.columnconfigure(0, weight=1, minsize=360)
     ff_overlay_tab.columnconfigure(1, weight=2, minsize=520)
@@ -4897,6 +5560,8 @@ def run_gui(config_path: Path) -> int:
     kills_left.rowconfigure(0, weight=0)
     kills_left.rowconfigure(1, weight=0)
     kills_left.rowconfigure(2, weight=0)
+    kills_left.rowconfigure(3, weight=0)
+    kills_left.rowconfigure(4, weight=1)
 
     kills_right = ctk.CTkFrame(kills_tab, fg_color=bg, corner_radius=0)
     kills_right.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=0)
@@ -4931,7 +5596,7 @@ def run_gui(config_path: Path) -> int:
     jarvis_connection_card = card(
         general_tab,
         "Jarvis FF",
-        "Configure uma URL base e preencha os endpoints usados por Kills FF, Fila FF e Overlay FF.",
+        "Configure uma URL base e preencha os endpoints usados por Kills FF e Fila FF.",
     )
     jarvis_connection_card.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
     jarvis_connection_card.columnconfigure(1, weight=1)
@@ -4945,10 +5610,6 @@ def run_gui(config_path: Path) -> int:
     button(jarvis_connection_actions, "Testar Jarvis", lambda: test_jarvis_connection(), "default", width=120).pack(
         side=tk.LEFT, padx=(0, 8)
     )
-    button(jarvis_connection_actions, "Abrir Overlay FF", lambda: tabview.set("Overlay FF"), "ghost", width=130).pack(
-        side=tk.LEFT, padx=(0, 8)
-    )
-
     ff_dashboard_card = ctk.CTkFrame(
         general_tab,
         fg_color=panel_alt,
@@ -4957,7 +5618,7 @@ def run_gui(config_path: Path) -> int:
         border_color=border,
     )
     ff_dashboard_card.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
-    for column in range(3):
+    for column in range(2):
         ff_dashboard_card.columnconfigure(column, weight=1)
     ctk.CTkLabel(
         ff_dashboard_card,
@@ -4965,23 +5626,22 @@ def run_gui(config_path: Path) -> int:
         text_color=fg,
         font=("Segoe UI Semibold", 18),
         anchor="w",
-    ).grid(row=0, column=0, columnspan=3, sticky="ew", padx=18, pady=(16, 2))
+    ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=18, pady=(16, 2))
     ctk.CTkLabel(
         ff_dashboard_card,
-        text="Atalhos e status dos paineis sincronizados com o Jarvis.",
+        text="Atalhos dos paineis usados com o Jarvis.",
         text_color=muted,
         font=("Segoe UI", 11),
         anchor="w",
-    ).grid(row=1, column=0, columnspan=3, sticky="ew", padx=18, pady=(0, 12))
-    for column, (title_text, metric_var, source_var, status_var, target_tab) in enumerate(
+    ).grid(row=1, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 12))
+    for column, (title_text, metric_var, target_tab) in enumerate(
         (
-            ("Kills FF", manual_total_var, manual_source_var, manual_status_var, "Kills FF"),
-            ("Fila FF", ff_queue_count_var, ff_queue_source_var, ff_queue_status_var, "Fila FF"),
-            ("Overlay FF", ff_overlay_size_text, manual_source_var, ff_overlay_status_var, "Overlay FF"),
+            ("Kills FF", manual_total_var, "Kills FF"),
+            ("Fila FF", ff_queue_count_var, "Fila FF"),
         )
     ):
         panel_frame = ctk.CTkFrame(ff_dashboard_card, fg_color=field, corner_radius=12, border_width=1, border_color=border)
-        panel_frame.grid(row=2, column=column, sticky="nsew", padx=(18 if column == 0 else 6, 18 if column == 2 else 6), pady=(0, 18))
+        panel_frame.grid(row=2, column=column, sticky="nsew", padx=(18 if column == 0 else 6, 18 if column == 1 else 6), pady=(0, 18))
         panel_frame.columnconfigure(0, weight=1)
         ctk.CTkLabel(
             panel_frame,
@@ -4997,22 +5657,8 @@ def run_gui(config_path: Path) -> int:
             font=("Segoe UI Semibold", 24),
             anchor="w",
         ).grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 2))
-        ctk.CTkLabel(
-            panel_frame,
-            textvariable=source_var,
-            text_color=muted,
-            font=("Segoe UI", 10),
-            anchor="w",
-        ).grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 2))
-        ctk.CTkLabel(
-            panel_frame,
-            textvariable=status_var,
-            text_color=fg,
-            font=("Segoe UI Semibold", 11),
-            anchor="w",
-        ).grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 10))
         button(panel_frame, "Abrir", lambda tab_name=target_tab: tabview.set(tab_name), "ghost", width=84).grid(
-            row=4, column=0, sticky="ew", padx=14, pady=(0, 14)
+            row=2, column=0, sticky="ew", padx=14, pady=(8, 14)
         )
 
     general_info_card = ctk.CTkFrame(general_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
@@ -5044,7 +5690,7 @@ def run_gui(config_path: Path) -> int:
     general_actions = ctk.CTkFrame(general_tab, fg_color=bg, corner_radius=0)
     general_actions.grid(row=4, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
 
-    sync_card = card(kills_left, "Kills FF em tempo real", "Edite as kills e mantenha o painel Jarvis sincronizado em tempo real.")
+    sync_card = card(kills_left, "Lançamento de Kills FF", "Digite as kills no app e lance manualmente no painel Jarvis quando a partida acabar.")
     sync_card.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 8))
     sync_card.columnconfigure(1, weight=1)
     sync_card.columnconfigure(3, weight=1)
@@ -5054,7 +5700,7 @@ def run_gui(config_path: Path) -> int:
     entry(sync_card, title_var).grid(row=3, column=1, sticky="ew", padx=18, pady=5)
     section_label(sync_card, "Sala", 3, column=2)
     entry(sync_card, sync_room_var, width=140).grid(row=3, column=3, sticky="ew", padx=18, pady=5)
-    section_label(sync_card, "Ler painel a cada", 4)
+    section_label(sync_card, "Modo", 4)
     poll_row = ctk.CTkFrame(sync_card, fg_color=panel, corner_radius=0)
     poll_row.grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=(5, 18))
     entry(poll_row, poll_seconds_var, width=80).pack(side=tk.LEFT)
@@ -5068,12 +5714,23 @@ def run_gui(config_path: Path) -> int:
         border_color=border,
         text_color=fg,
     ).pack(side=tk.LEFT)
+    for child in poll_row.winfo_children():
+        child.destroy()
+    ctk.CTkLabel(
+        poll_row,
+        text="Lançamento manual: o app não lê nem edita o ranking automaticamente. Use Enviar agora para somar as kills digitadas.",
+        text_color=muted,
+        font=("Segoe UI", 11),
+        anchor="w",
+        wraplength=680,
+        justify="left",
+    ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     kill_metrics = ctk.CTkFrame(kills_left, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
     kill_metrics.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
-    for column in range(4):
+    for column in range(2):
         kill_metrics.columnconfigure(column, weight=1)
-    for col, label in enumerate(("Jogadores", "Total de kills", "Origem", "Status")):
+    for col, label in enumerate(("Jogadores", "Total de kills")):
         ctk.CTkLabel(kill_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
             row=0, column=col, sticky="w", padx=18, pady=(14, 0)
         )
@@ -5083,25 +5740,175 @@ def run_gui(config_path: Path) -> int:
     ctk.CTkLabel(kill_metrics, textvariable=manual_total_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
         row=1, column=1, sticky="w", padx=18, pady=(0, 14)
     )
-    ctk.CTkLabel(
-        kill_metrics,
-        textvariable=manual_source_var,
-        text_color=accent,
-        font=("Segoe UI Semibold", 14),
-    ).grid(row=1, column=2, sticky="w", padx=18, pady=(4, 14))
-    ctk.CTkLabel(
-        kill_metrics,
-        textvariable=manual_status_var,
-        text_color=accent,
-        font=("Segoe UI Semibold", 14),
-    ).grid(row=1, column=3, sticky="w", padx=18, pady=(4, 14))
+    kills_admin_card = card(
+        kills_left,
+        "Administrar ranking Jarvis",
+        "Aplique no Jarvis as mesmas acoes do site sem alterar a tabela visual da direita.",
+    )
+    kills_admin_card.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
+    kills_admin_card.columnconfigure(1, weight=1)
+    kills_admin_card.columnconfigure(3, weight=1)
+    section_label(kills_admin_card, "Jogador atual", 2)
+    entry(kills_admin_card, kills_admin_name_var).grid(row=2, column=1, sticky="ew", padx=18, pady=5)
+    section_label(kills_admin_card, "Novo nome", 2, column=2)
+    entry(kills_admin_card, kills_admin_new_name_var).grid(row=2, column=3, sticky="ew", padx=18, pady=5)
+    section_label(kills_admin_card, "ID FF", 3)
+    entry(kills_admin_card, kills_admin_ff_id_var, width=160).grid(row=3, column=1, sticky="ew", padx=18, pady=5)
+    section_label(kills_admin_card, "Kills", 3, column=2)
+    entry(kills_admin_card, kills_admin_kills_var, width=120).grid(row=3, column=3, sticky="w", padx=18, pady=5)
+    section_label(kills_admin_card, "Escopo", 4)
+    kills_admin_scope = ctk.CTkSegmentedButton(
+        kills_admin_card,
+        values=["Diario", "Geral"],
+        variable=kills_admin_scope_var,
+        height=34,
+        corner_radius=10,
+        fg_color=field,
+        selected_color=accent,
+        selected_hover_color=accent_hover,
+        unselected_color=field,
+        unselected_hover_color=chip_bg,
+        text_color=fg,
+        font=("Segoe UI Semibold", 12),
+    )
+    kills_admin_scope.grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=(5, 10))
+    kills_admin_actions = ctk.CTkFrame(kills_admin_card, fg_color=panel, corner_radius=0)
+    kills_admin_actions.grid(row=5, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
 
-    manual_card = card(kills_left, "Kills FF", "Digite ou edite as kills. Cada alteração pode atualizar o painel Jarvis em tempo real.")
-    manual_card.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=12, pady=(8, 12))
+    kills_style_card = card(
+        kills_left,
+        "OBS Kills FF",
+        "Personalize o overlay transparente /freefire-kills/obs do Jarvis direto pelo app.",
+    )
+    kills_style_card.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
+    kills_style_card.columnconfigure(1, weight=1)
+    kills_style_card.columnconfigure(3, weight=1)
+    section_label(kills_style_card, "Endpoint estilo", 2)
+    entry(kills_style_card, kills_style_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
+    section_label(kills_style_card, "URL OBS", 3)
+    ctk.CTkEntry(
+        kills_style_card,
+        textvariable=kills_obs_url_var,
+        fg_color=field,
+        border_color=border,
+        text_color=fg,
+        state="readonly",
+    ).grid(row=3, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
+    section_label(kills_style_card, "Título", 4)
+    entry(kills_style_card, kills_style_title_var).grid(row=4, column=1, sticky="ew", padx=18, pady=4)
+    section_label(kills_style_card, "Fonte", 4, column=2)
+    combo(kills_style_card, kills_style_font_var, ["impact", "arial", "trebuchet", "verdana", "tahoma", "georgia", "courier", "system"], width=160).grid(
+        row=4, column=3, sticky="ew", padx=18, pady=4
+    )
+    section_label(kills_style_card, "Alinhamento", 5)
+    combo(kills_style_card, kills_style_align_var, ["left", "center", "right"], width=140).grid(row=5, column=1, sticky="ew", padx=18, pady=4)
+    section_label(kills_style_card, "Título", 5, column=2)
+    combo(kills_style_card, kills_style_title_align_var, ["left", "center", "right"], width=140).grid(
+        row=5, column=3, sticky="ew", padx=18, pady=4
+    )
+    kills_style_sizes = ctk.CTkFrame(kills_style_card, fg_color=panel, corner_radius=0)
+    kills_style_sizes.grid(row=6, column=0, columnspan=4, sticky="ew", padx=18, pady=4)
+    for label, var in (
+        ("Título", kills_style_title_size_var),
+        ("Nome", kills_style_row_size_var),
+        ("Kills", kills_style_kills_size_var),
+        ("Rank", kills_style_rank_size_var),
+        ("Peso", kills_style_weight_var),
+        ("Altura", kills_style_row_height_var),
+        ("Espaço", kills_style_row_gap_var),
+    ):
+        ctk.CTkLabel(kills_style_sizes, text=label, text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(0, 6))
+        entry(kills_style_sizes, var, width=58).pack(side=tk.LEFT, padx=(0, 10))
+    kills_style_layout = ctk.CTkFrame(kills_style_card, fg_color=panel, corner_radius=0)
+    kills_style_layout.grid(row=7, column=0, columnspan=4, sticky="ew", padx=18, pady=4)
+    for label, var in (
+        ("Largura", kills_style_row_max_width_var),
+        ("Gap col.", kills_style_column_gap_var),
+        ("Pad. linha", kills_style_row_padding_var),
+        ("Padding", kills_style_wrap_padding_var),
+        ("Troca s", kills_style_switch_seconds_var),
+        ("Raio", kills_style_row_radius_var),
+        ("Borda px", kills_style_accent_width_var),
+    ):
+        ctk.CTkLabel(kills_style_layout, text=label, text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(0, 6))
+        entry(kills_style_layout, var, width=58).pack(side=tk.LEFT, padx=(0, 10))
+    kills_style_colors = ctk.CTkFrame(kills_style_card, fg_color=panel, corner_radius=0)
+    kills_style_colors.grid(row=8, column=0, columnspan=4, sticky="ew", padx=18, pady=4)
+    for label, var in (
+        ("Título", kills_style_title_color_var),
+        ("Rank", kills_style_rank_color_var),
+        ("Nome", kills_style_name_color_var),
+        ("Kills", kills_style_kills_color_var),
+        ("Sombra", kills_style_shadow_color_var),
+        ("Fundo", kills_style_row_bg_color_var),
+        ("Borda", kills_style_accent_color_var),
+    ):
+        ctk.CTkLabel(kills_style_colors, text=label, text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(0, 6))
+        entry(kills_style_colors, var, width=84).pack(side=tk.LEFT, padx=(0, 10))
+    kills_style_effects = ctk.CTkFrame(kills_style_card, fg_color=panel, corner_radius=0)
+    kills_style_effects.grid(row=9, column=0, columnspan=4, sticky="ew", padx=18, pady=4)
+    for label, var in (
+        ("Blur sombra", kills_style_shadow_blur_var),
+        ("Opac. fundo", kills_style_row_bg_opacity_var),
+    ):
+        ctk.CTkLabel(kills_style_effects, text=label, text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(0, 6))
+        entry(kills_style_effects, var, width=72).pack(side=tk.LEFT, padx=(0, 10))
+    kills_style_toggles = ctk.CTkFrame(kills_style_card, fg_color=panel, corner_radius=0)
+    kills_style_toggles.grid(row=10, column=0, columnspan=4, sticky="ew", padx=18, pady=6)
+    for label, var in (
+        ("Título", kills_style_show_title_var),
+        ("Maiúsculo", kills_style_uppercase_var),
+        ("Mostrar #", kills_style_rank_prefix_var),
+        ("Medalhas", kills_style_medals_var),
+        ("Fundo", kills_style_row_bg_var),
+        ("Borda", kills_style_accent_var),
+    ):
+        ctk.CTkCheckBox(
+            kills_style_toggles,
+            text=label,
+            variable=var,
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+    kills_style_footer = ctk.CTkFrame(kills_style_card, fg_color=panel, corner_radius=0)
+    kills_style_footer.grid(row=11, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 18))
+    kills_style_footer.columnconfigure(0, weight=1)
+    ctk.CTkLabel(kills_style_footer, textvariable=kills_style_status_var, text_color=accent, font=("Segoe UI Semibold", 11), anchor="w").grid(
+        row=0, column=0, sticky="ew", padx=(0, 10)
+    )
+    kills_style_actions = ctk.CTkFrame(kills_style_footer, fg_color=panel, corner_radius=0)
+    kills_style_actions.grid(row=0, column=1, sticky="e")
+
+    kills_admin_card.grid_remove()
+    kills_style_card.grid_remove()
+
+    manual_card = card(kills_left, "Kills FF", "Digite as kills feitas na partida e lance no rank diario ou geral.")
+    manual_card.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=12, pady=(8, 12))
     manual_card.columnconfigure(0, weight=1)
-    manual_card.rowconfigure(3, weight=1)
+    manual_card.rowconfigure(4, weight=1)
+    manual_scope_row = ctk.CTkFrame(manual_card, fg_color=panel, corner_radius=0)
+    manual_scope_row.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(2, 10))
+    manual_scope_row.columnconfigure(0, weight=1)
+    manual_scope_segmented = ctk.CTkSegmentedButton(
+        manual_scope_row,
+        values=["Diario", "Geral"],
+        variable=manual_scope_var,
+        height=36,
+        corner_radius=12,
+        fg_color=field,
+        selected_color=accent,
+        selected_hover_color=accent_hover,
+        unselected_color=field,
+        unselected_hover_color=chip_bg,
+        text_color=fg,
+        font=("Segoe UI Semibold", 12),
+        command=lambda _value=None: on_manual_scope_change(),
+    )
+    manual_scope_segmented.grid(row=0, column=0, sticky="ew", padx=(0, 0), pady=4)
     table_header = ctk.CTkFrame(manual_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
-    table_header.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 0))
+    table_header.grid(row=3, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 0))
     table_header.columnconfigure(0, weight=1)
     ctk.CTkLabel(table_header, text="Nick do jogador", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
         row=0, column=0, sticky="w", padx=14, pady=(0, 6)
@@ -5118,129 +5925,118 @@ def run_gui(config_path: Path) -> int:
         scrollbar_button_color="#3a1518",
         scrollbar_button_hover_color="#5a1d22",
     )
-    manual_table_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=18, pady=(0, 12))
+    manual_table_frame.grid(row=4, column=0, columnspan=4, sticky="nsew", padx=18, pady=(0, 12))
     manual_table_frame.columnconfigure(0, weight=1)
     manual_actions = ctk.CTkFrame(manual_card, fg_color=panel, corner_radius=0)
-    manual_actions.grid(row=4, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
+    manual_actions.grid(row=5, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
+
+    def build_kills_rank_section(
+        parent: Any,
+        title: str,
+        subtitle: str,
+        count_var: tk.StringVar,
+        total_var: tk.StringVar,
+        row: int,
+    ) -> ctk.CTkScrollableFrame:
+        section = ctk.CTkFrame(parent, fg_color=panel_alt, corner_radius=16, border_width=1, border_color=border)
+        section.grid(row=row, column=0, sticky="nsew", padx=18, pady=(0, 12))
+        section.columnconfigure(0, weight=1)
+        section.rowconfigure(3, weight=1)
+
+        header = ctk.CTkFrame(section, fg_color=panel_alt, corner_radius=0)
+        header.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 8))
+        header.columnconfigure(0, weight=1)
+        ctk.CTkLabel(header, text=title, text_color=fg, font=("Segoe UI Semibold", 15), anchor="w").grid(
+            row=0, column=0, sticky="ew"
+        )
+        ctk.CTkLabel(header, text=subtitle, text_color=muted, font=("Segoe UI", 11), anchor="w").grid(
+            row=1, column=0, sticky="ew", pady=(2, 0)
+        )
+
+        metrics = ctk.CTkFrame(section, fg_color=field, corner_radius=12, border_width=1, border_color=border)
+        metrics.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 10))
+        for metric_column in range(2):
+            metrics.columnconfigure(metric_column, weight=1)
+        for metric_column, label in enumerate(("Jogadores", "Kills")):
+            ctk.CTkLabel(metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+                row=0, column=metric_column, sticky="w", padx=12, pady=(10, 0)
+            )
+        ctk.CTkLabel(metrics, textvariable=count_var, text_color=teal, font=("Segoe UI Semibold", 22)).grid(
+            row=1, column=0, sticky="w", padx=12, pady=(0, 10)
+        )
+        ctk.CTkLabel(metrics, textvariable=total_var, text_color=teal, font=("Segoe UI Semibold", 22)).grid(
+            row=1, column=1, sticky="w", padx=12, pady=(0, 10)
+        )
+
+        rank_header = ctk.CTkFrame(section, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
+        rank_header.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 0))
+        rank_header.columnconfigure(1, weight=1)
+        ctk.CTkLabel(rank_header, text="#", text_color=muted, font=("Segoe UI Semibold", 11), width=42).grid(
+            row=0, column=0, sticky="w", padx=(12, 4), pady=(0, 6)
+        )
+        ctk.CTkLabel(rank_header, text="Jogador", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+            row=0, column=1, sticky="w", padx=8, pady=(0, 6)
+        )
+        ctk.CTkLabel(rank_header, text="Kills", text_color=muted, font=("Segoe UI Semibold", 11), width=70).grid(
+            row=0, column=2, sticky="e", padx=(8, 12), pady=(0, 6)
+        )
+        ctk.CTkLabel(rank_header, text="Ação", text_color=muted, font=("Segoe UI Semibold", 11), width=68).grid(
+            row=0, column=3, sticky="e", padx=(4, 12), pady=(0, 6)
+        )
+
+        table_frame = ctk.CTkScrollableFrame(
+            section,
+            fg_color=field,
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
+            scrollbar_button_color="#3a1518",
+            scrollbar_button_hover_color="#5a1d22",
+        )
+        table_frame.grid(row=3, column=0, sticky="nsew", padx=14, pady=(0, 14))
+        table_frame.columnconfigure(0, weight=1)
+        return table_frame
 
     kills_rank_card = card(
         kills_right,
         "Rank Kills FF",
-        "Visualize o ranking vindo do Jarvis sem alterar a tabela manual.",
+        "Dois rankings separados vindos do Jarvis, somente para visualizacao.",
     )
     kills_rank_card.grid(row=0, column=0, sticky="nsew", padx=12, pady=(12, 12))
     kills_rank_card.columnconfigure(0, weight=1)
-    kills_rank_card.rowconfigure(5, weight=4)
-    kills_rank_card.rowconfigure(7, weight=1)
-    kills_rank_controls = ctk.CTkFrame(kills_rank_card, fg_color=panel, corner_radius=0)
-    kills_rank_controls.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 10))
-    kills_rank_controls.columnconfigure(0, weight=1)
-    kills_rank_segmented = ctk.CTkSegmentedButton(
-        kills_rank_controls,
-        values=["Diario", "Geral"],
-        variable=kills_rank_mode_var,
-        command=lambda _value: refresh_kills_rank_table(),
-        height=34,
-        corner_radius=10,
-        fg_color=field,
-        selected_color=accent,
-        selected_hover_color=accent_hover,
-        unselected_color=field,
-        unselected_hover_color=chip_bg,
-        text_color=fg,
-        font=("Segoe UI Semibold", 12),
+    kills_rank_card.rowconfigure(3, weight=1)
+    kills_rank_card.rowconfigure(4, weight=1)
+    kills_rank_toolbar = ctk.CTkFrame(kills_rank_card, fg_color=panel, corner_radius=0)
+    kills_rank_toolbar.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 12))
+    kills_rank_toolbar.columnconfigure(0, weight=1)
+    ctk.CTkLabel(
+        kills_rank_toolbar,
+        text="Atualiza automaticamente pelo Jarvis; use Buscar Jarvis para forcar leitura.",
+        text_color=muted,
+        font=("Segoe UI", 11),
+        anchor="w",
+    ).grid(row=0, column=0, sticky="ew", padx=(0, 10))
+    button(kills_rank_toolbar, "Buscar Jarvis", lambda: fetch_panel_kills(force=True), "default", width=128).grid(
+        row=0, column=1, sticky="e"
     )
-    kills_rank_segmented.grid(row=0, column=0, sticky="ew")
-    kills_rank_actions = ctk.CTkFrame(kills_rank_controls, fg_color=panel, corner_radius=0)
-    kills_rank_actions.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-    for action_column in range(3):
-        kills_rank_actions.columnconfigure(action_column, weight=1)
-    button(kills_rank_actions, "Buscar ranking", lambda: fetch_panel_kills(force=True), "default", width=1).grid(
-        row=0, column=0, sticky="ew", padx=(0, 4), pady=0
-    )
-    button(
-        kills_rank_actions,
-        "Zerar diario",
-        lambda: run_kills_rank_action(
-            "reset_daily",
-            scope="daily",
-            label="Zerando diario",
-            confirm_text="Resetar o ranking diario? O ranking geral sera mantido.",
-        ),
-        "danger",
-        width=1,
-    ).grid(row=0, column=1, sticky="ew", padx=4, pady=0)
-    button(
-        kills_rank_actions,
-        "Zerar geral",
-        lambda: run_kills_rank_action(
-            "reset_general",
-            scope="general",
-            label="Zerando geral",
-            confirm_text="Resetar o ranking geral? O ranking diario sera mantido.",
-        ),
-        "danger",
-        width=1,
-    ).grid(row=0, column=2, sticky="ew", padx=(4, 0), pady=0)
-    button(
-        kills_rank_actions,
-        "Ignorar nome",
-        lambda: prompt_ignore_kills_rank_name(),
-        "ghost",
-        width=1,
-    ).grid(row=1, column=0, sticky="ew", padx=(0, 4), pady=(8, 0))
-    button(
-        kills_rank_actions,
-        "Reexibir",
-        lambda: prompt_unignore_kills_rank_name(),
-        "ghost",
-        width=1,
-    ).grid(row=1, column=1, sticky="ew", padx=4, pady=(8, 0))
-    kills_rank_metrics = ctk.CTkFrame(kills_rank_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    kills_rank_metrics.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
-    for column in range(3):
-        kills_rank_metrics.columnconfigure(column, weight=1)
-    for col, label in enumerate(("Modo", "Jogadores", "Kills")):
-        ctk.CTkLabel(kills_rank_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
-            row=0, column=col, sticky="w", padx=14, pady=(12, 0)
-        )
-    ctk.CTkLabel(kills_rank_metrics, textvariable=kills_rank_title_var, text_color=accent, font=("Segoe UI Semibold", 13)).grid(
-        row=1, column=0, sticky="w", padx=14, pady=(0, 12)
-    )
-    ctk.CTkLabel(kills_rank_metrics, textvariable=kills_rank_count_var, text_color=teal, font=("Segoe UI Semibold", 22)).grid(
-        row=1, column=1, sticky="w", padx=14, pady=(0, 12)
-    )
-    ctk.CTkLabel(kills_rank_metrics, textvariable=kills_rank_total_var, text_color=teal, font=("Segoe UI Semibold", 22)).grid(
-        row=1, column=2, sticky="w", padx=14, pady=(0, 12)
-    )
-    kills_rank_header = ctk.CTkFrame(kills_rank_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
-    kills_rank_header.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 0))
-    kills_rank_header.columnconfigure(1, weight=1)
-    ctk.CTkLabel(kills_rank_header, text="#", text_color=muted, font=("Segoe UI Semibold", 11), width=44).grid(
-        row=0, column=0, sticky="w", padx=(12, 4), pady=(0, 6)
-    )
-    ctk.CTkLabel(kills_rank_header, text="Jogador", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
-        row=0, column=1, sticky="w", padx=8, pady=(0, 6)
-    )
-    ctk.CTkLabel(kills_rank_header, text="Kills", text_color=muted, font=("Segoe UI Semibold", 11), width=72).grid(
-        row=0, column=2, sticky="e", padx=(8, 12), pady=(0, 6)
-    )
-    ctk.CTkLabel(kills_rank_header, text="Acoes", text_color=muted, font=("Segoe UI Semibold", 11), width=220).grid(
-        row=0, column=3, sticky="e", padx=(8, 12), pady=(0, 6)
-    )
-    kills_rank_table_frame = ctk.CTkScrollableFrame(
+    kills_daily_rank_table_frame = build_kills_rank_section(
         kills_rank_card,
-        fg_color=field,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-        scrollbar_button_color="#3a1518",
-        scrollbar_button_hover_color="#5a1d22",
+        "Kills Diárias",
+        "Ranking resetado por período diário no site.",
+        kills_daily_rank_count_var,
+        kills_daily_rank_total_var,
+        3,
     )
-    kills_rank_table_frame.grid(row=5, column=0, sticky="nsew", padx=18, pady=(0, 18))
-    kills_rank_table_frame.columnconfigure(0, weight=1)
+    kills_global_rank_table_frame = build_kills_rank_section(
+        kills_rank_card,
+        "Kills Geral",
+        "Acumulado geral dos jogadores no Jarvis.",
+        kills_global_rank_count_var,
+        kills_global_rank_total_var,
+        4,
+    )
     kills_ignored_header = ctk.CTkFrame(kills_rank_card, fg_color=panel, corner_radius=0)
-    kills_ignored_header.grid(row=6, column=0, sticky="ew", padx=18, pady=(0, 4))
+    kills_ignored_header.grid(row=5, column=0, sticky="ew", padx=18, pady=(0, 4))
     kills_ignored_header.columnconfigure(0, weight=1)
     ctk.CTkLabel(
         kills_ignored_header,
@@ -5264,9 +6060,81 @@ def run_gui(config_path: Path) -> int:
         border_color=border,
         scrollbar_button_color="#3a1518",
         scrollbar_button_hover_color="#5a1d22",
+        height=92,
     )
-    kills_ignored_frame.grid(row=7, column=0, sticky="nsew", padx=18, pady=(0, 18))
+    kills_ignored_frame.grid(row=6, column=0, sticky="ew", padx=18, pady=(0, 18))
     kills_ignored_frame.columnconfigure(0, weight=1)
+    kills_rank_card.grid_remove()
+
+    kills_overlay_daily_rows: list[Any] = []
+    kills_overlay_global_rows: list[Any] = []
+    kills_overlay_card = card(
+        kills_right,
+        "Overlay de ranking Kills FF",
+        "Ranking interno separado entre diário e geral.",
+    )
+    kills_overlay_card.grid(row=0, column=0, sticky="nsew", padx=12, pady=(12, 12))
+    kills_overlay_card.columnconfigure(0, weight=1)
+    kills_overlay_card.rowconfigure(3, weight=1)
+
+    kills_overlay_toolbar = ctk.CTkFrame(kills_overlay_card, fg_color=panel, corner_radius=0)
+    kills_overlay_toolbar.grid(row=2, column=0, sticky="ew", padx=18, pady=(2, 8))
+    kills_overlay_toolbar.columnconfigure(0, weight=1)
+    button(kills_overlay_toolbar, "Atualizar rank", lambda: fetch_panel_kills(force=True), "accent", width=128).grid(
+        row=0, column=0, sticky="e"
+    )
+
+    kills_overlay_tabview = ctk.CTkTabview(
+        kills_overlay_card,
+        fg_color=field,
+        segmented_button_fg_color=panel_alt,
+        segmented_button_selected_color=accent,
+        segmented_button_selected_hover_color=accent_hover,
+        segmented_button_unselected_color=panel_alt,
+        segmented_button_unselected_hover_color=chip_bg,
+        text_color=fg,
+        corner_radius=14,
+        border_width=1,
+        border_color=border,
+    )
+    kills_overlay_tabview.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
+    kills_overlay_tabview.add("Diário")
+    kills_overlay_tabview.add("Geral")
+    kills_overlay_daily_tab = kills_overlay_tabview.tab("Diário")
+    kills_overlay_global_tab = kills_overlay_tabview.tab("Geral")
+    for overlay_tab in (kills_overlay_daily_tab, kills_overlay_global_tab):
+        overlay_tab.configure(fg_color=field)
+        overlay_tab.columnconfigure(0, weight=1)
+        overlay_tab.rowconfigure(1, weight=1)
+
+    def build_kills_overlay_rank_tab(parent: Any) -> ctk.CTkScrollableFrame:
+        header = ctk.CTkFrame(parent, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
+        header.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
+        header.columnconfigure(1, weight=1)
+        ctk.CTkLabel(header, text="Rank", text_color=muted, font=("Segoe UI Semibold", 11), width=48).grid(
+            row=0, column=0, sticky="w", padx=(12, 6), pady=(0, 6)
+        )
+        ctk.CTkLabel(header, text="Jogador", text_color=muted, font=("Segoe UI Semibold", 11), anchor="w").grid(
+            row=0, column=1, sticky="ew", padx=8, pady=(0, 6)
+        )
+        ctk.CTkLabel(header, text="Kills", text_color=muted, font=("Segoe UI Semibold", 11), width=80).grid(
+            row=0, column=2, sticky="e", padx=(8, 12), pady=(0, 6)
+        )
+        table = ctk.CTkScrollableFrame(
+            parent,
+            fg_color="#050609",
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
+            scrollbar_button_color="#3a1518",
+            scrollbar_button_hover_color="#5a1d22",
+        )
+        table.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        table.columnconfigure(0, weight=1)
+        return table
+
+    kills_overlay_daily_frame = build_kills_overlay_rank_tab(kills_overlay_daily_tab)
+    kills_overlay_global_frame = build_kills_overlay_rank_tab(kills_overlay_global_tab)
 
     ff_queue_left = ctk.CTkScrollableFrame(
         ff_queue_tab,
@@ -5278,6 +6146,11 @@ def run_gui(config_path: Path) -> int:
     ff_queue_left.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
     ff_queue_left.columnconfigure(0, weight=1)
     ff_queue_left.rowconfigure(2, weight=1)
+
+    ff_queue_right = ctk.CTkFrame(ff_queue_tab, fg_color=bg, corner_radius=0)
+    ff_queue_right.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=0)
+    ff_queue_right.columnconfigure(0, weight=1)
+    ff_queue_right.rowconfigure(0, weight=1)
 
     ff_queue_sync_card = card(
         ff_queue_left,
@@ -5308,9 +6181,9 @@ def run_gui(config_path: Path) -> int:
 
     ff_queue_metrics = ctk.CTkFrame(ff_queue_left, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
     ff_queue_metrics.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
-    for column in range(4):
+    for column in range(2):
         ff_queue_metrics.columnconfigure(column, weight=1)
-    for col, label in enumerate(("Na fila", "Jogando", "Origem", "Status")):
+    for col, label in enumerate(("Na fila", "Jogando")):
         ctk.CTkLabel(ff_queue_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
             row=0, column=col, sticky="w", padx=18, pady=(14, 0)
         )
@@ -5320,25 +6193,191 @@ def run_gui(config_path: Path) -> int:
     ctk.CTkLabel(ff_queue_metrics, textvariable=ff_queue_playing_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
         row=1, column=1, sticky="w", padx=18, pady=(0, 14)
     )
-    ctk.CTkLabel(
-        ff_queue_metrics,
-        textvariable=ff_queue_source_var,
-        text_color=accent,
-        font=("Segoe UI Semibold", 14),
-    ).grid(row=1, column=2, sticky="w", padx=18, pady=(4, 14))
-    ctk.CTkLabel(
-        ff_queue_metrics,
-        textvariable=ff_queue_status_var,
-        text_color=accent,
-        font=("Segoe UI Semibold", 14),
-    ).grid(row=1, column=3, sticky="w", padx=18, pady=(4, 14))
+    ff_queue_summary_card = card(
+        ff_queue_right,
+        "Resumo de salas",
+        "Lista visual igual ao site: jogadores únicos e salas pendentes por estado.",
+    )
+    ff_queue_summary_card.grid(row=0, column=0, sticky="nsew", padx=(8, 12), pady=(12, 12))
+    ff_queue_summary_card.columnconfigure(0, weight=1)
+    ff_queue_summary_card.rowconfigure(3, weight=1)
+    ff_queue_summary_metrics = ctk.CTkFrame(
+        ff_queue_summary_card,
+        fg_color=panel_alt,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+    )
+    ff_queue_summary_metrics.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 10))
+    ff_queue_summary_metrics.columnconfigure(0, weight=1)
+    ff_queue_summary_metrics.columnconfigure(1, weight=1)
+    for column, (label, var) in enumerate(
+        (
+            ("Jogadores", ff_queue_summary_count_var),
+            ("Salas", ff_queue_summary_rooms_var),
+        )
+    ):
+        ctk.CTkLabel(ff_queue_summary_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=0, column=column, sticky="w", padx=12, pady=(10, 0)
+        )
+        ctk.CTkLabel(ff_queue_summary_metrics, textvariable=var, text_color=teal, font=("Segoe UI Semibold", 22)).grid(
+            row=1, column=column, sticky="w", padx=12, pady=(0, 10)
+        )
+    ff_queue_summary_frame = ctk.CTkScrollableFrame(
+        ff_queue_summary_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        height=180,
+        scrollbar_button_color="#3a1518",
+        scrollbar_button_hover_color="#5a1d22",
+    )
+    ff_queue_summary_frame.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
+    ff_queue_summary_frame.columnconfigure(0, weight=1)
+
+    ff_queue_manual_card = card(
+        ff_queue_left,
+        "Adicionar jogador manualmente",
+        "Mesmo cadastro do site: nome, ID do membro, ID FF e quantidade de salas.",
+    )
+    ff_queue_manual_card.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
+    ff_queue_manual_card.columnconfigure(1, weight=1)
+    ff_queue_manual_card.columnconfigure(3, weight=1)
+    section_label(ff_queue_manual_card, "Nome", 2)
+    entry(ff_queue_manual_card, ff_queue_manual_name_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
+    section_label(ff_queue_manual_card, "ID membro", 3)
+    entry(ff_queue_manual_card, ff_queue_manual_user_id_var).grid(row=3, column=1, sticky="ew", padx=18, pady=4)
+    section_label(ff_queue_manual_card, "ID FF", 3, column=2)
+    entry(ff_queue_manual_card, ff_queue_manual_ff_id_var).grid(row=3, column=3, sticky="ew", padx=18, pady=4)
+    section_label(ff_queue_manual_card, "Salas", 4)
+    entry(ff_queue_manual_card, ff_queue_manual_rooms_var, width=90).grid(row=4, column=1, sticky="w", padx=18, pady=(4, 14))
+    ff_queue_manual_actions = ctk.CTkFrame(ff_queue_manual_card, fg_color=panel, corner_radius=0)
+    ff_queue_manual_actions.grid(row=4, column=2, columnspan=2, sticky="e", padx=18, pady=(4, 14))
+    button(ff_queue_manual_actions, "Adicionar no Jarvis", lambda: add_ff_queue_manual_member(), "accent", width=142).pack(
+        side=tk.LEFT, padx=(0, 8)
+    )
+    button(ff_queue_manual_actions, "Limpar", lambda: clear_ff_queue_manual_form(), "ghost", width=80).pack(side=tk.LEFT)
+
+    tikfinity_ff_card = card(
+        ff_queue_left,
+        "Salas por Gifts TikFinity",
+        "Converta moedas de presentes em salas e vincule espectadores ao cadastro da Fila FF.",
+    )
+    tikfinity_ff_card.grid(row=4, column=0, sticky="ew", padx=12, pady=8)
+    tikfinity_ff_card.columnconfigure(1, weight=1)
+    tikfinity_ff_card.columnconfigure(3, weight=1)
+    section_label(tikfinity_ff_card, "URL Jarvis", 2)
+    entry(tikfinity_ff_card, tikfinity_ff_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
+    section_label(tikfinity_ff_card, "Perfil", 3)
+    entry(tikfinity_ff_card, tikfinity_ff_profile_var, width=120).grid(row=3, column=1, sticky="w", padx=18, pady=4)
+    section_label(tikfinity_ff_card, "Moedas por sala", 3, column=2)
+    entry(tikfinity_ff_card, tikfinity_ff_coins_var, width=100).grid(row=3, column=3, sticky="w", padx=18, pady=4)
+    section_label(tikfinity_ff_card, "Token webhook", 4)
+    entry(tikfinity_ff_card, tikfinity_ff_token_var).grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
+    section_label(tikfinity_ff_card, "Webhook", 5)
+    ctk.CTkEntry(
+        tikfinity_ff_card,
+        textvariable=tikfinity_ff_webhook_var,
+        fg_color=field,
+        border_color=border,
+        text_color=fg,
+        state="readonly",
+    ).grid(row=5, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
+    tikfinity_ff_toggle_row = ctk.CTkFrame(tikfinity_ff_card, fg_color=panel, corner_radius=0)
+    tikfinity_ff_toggle_row.grid(row=6, column=0, columnspan=4, sticky="ew", padx=18, pady=(6, 4))
+    ctk.CTkCheckBox(
+        tikfinity_ff_toggle_row,
+        text="Ativar gifts do TikFinity",
+        variable=tikfinity_ff_enabled_var,
+        fg_color=accent,
+        hover_color=accent_hover,
+        border_color=border,
+        text_color=fg,
+    ).pack(side=tk.LEFT, padx=(0, 12))
+    ctk.CTkLabel(tikfinity_ff_toggle_row, textvariable=tikfinity_ff_summary_var, text_color=muted, font=("Segoe UI", 11)).pack(
+        side=tk.LEFT, fill=tk.X, expand=True
+    )
+    ctk.CTkLabel(tikfinity_ff_toggle_row, textvariable=tikfinity_ff_status_var, text_color=accent, font=("Segoe UI Semibold", 11)).pack(
+        side=tk.RIGHT
+    )
+    tikfinity_ff_actions = ctk.CTkFrame(tikfinity_ff_card, fg_color=panel, corner_radius=0)
+    tikfinity_ff_actions.grid(row=7, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 10))
+    button(tikfinity_ff_actions, "Buscar", lambda: fetch_tikfinity_ff_panel(force=True), "default", width=82).pack(side=tk.LEFT, padx=(0, 6))
+    button(tikfinity_ff_actions, "Salvar config", lambda: save_tikfinity_ff_config(), "accent", width=112).pack(side=tk.LEFT, padx=(0, 6))
+    button(tikfinity_ff_actions, "Copiar webhook", lambda: copy_tikfinity_ff_webhook(), "default", width=126).pack(side=tk.LEFT, padx=(0, 6))
+    button(tikfinity_ff_actions, "Limpar histórico", lambda: clear_tikfinity_ff_history(), "danger", width=126).pack(side=tk.LEFT)
+
+    tikfinity_ff_map_card = ctk.CTkFrame(tikfinity_ff_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+    tikfinity_ff_map_card.grid(row=8, column=0, columnspan=4, sticky="ew", padx=18, pady=(2, 10))
+    tikfinity_ff_map_card.columnconfigure(1, weight=1)
+    tikfinity_ff_map_card.columnconfigure(3, weight=1)
+    section_label(tikfinity_ff_map_card, "TikTok", 0)
+    entry(tikfinity_ff_map_card, tikfinity_ff_map_handle_var).grid(row=0, column=1, sticky="ew", padx=10, pady=4)
+    section_label(tikfinity_ff_map_card, "ID membro", 0, column=2)
+    entry(tikfinity_ff_map_card, tikfinity_ff_map_user_id_var).grid(row=0, column=3, sticky="ew", padx=10, pady=4)
+    section_label(tikfinity_ff_map_card, "Nome", 1)
+    entry(tikfinity_ff_map_card, tikfinity_ff_map_display_var).grid(row=1, column=1, sticky="ew", padx=10, pady=4)
+    section_label(tikfinity_ff_map_card, "ID FF", 1, column=2)
+    entry(tikfinity_ff_map_card, tikfinity_ff_map_ff_id_var).grid(row=1, column=3, sticky="ew", padx=10, pady=4)
+    button(tikfinity_ff_map_card, "Vincular TikTok", lambda: add_tikfinity_ff_mapping(), "accent", width=130).grid(
+        row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(6, 10)
+    )
+
+    ctk.CTkLabel(tikfinity_ff_card, text="Vínculos", text_color=fg, font=("Segoe UI Semibold", 13)).grid(
+        row=9, column=0, columnspan=4, sticky="w", padx=18, pady=(4, 2)
+    )
+    tikfinity_ff_mappings_frame = ctk.CTkScrollableFrame(
+        tikfinity_ff_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        height=112,
+        scrollbar_button_color=border,
+        scrollbar_button_hover_color=accent,
+    )
+    tikfinity_ff_mappings_frame.grid(row=10, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 8))
+    tikfinity_ff_mappings_frame.columnconfigure(0, weight=1)
+    ctk.CTkLabel(tikfinity_ff_card, text="Moedas acumuladas", text_color=fg, font=("Segoe UI Semibold", 13)).grid(
+        row=11, column=0, columnspan=4, sticky="w", padx=18, pady=(4, 2)
+    )
+    tikfinity_ff_users_frame = ctk.CTkScrollableFrame(
+        tikfinity_ff_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        height=126,
+        scrollbar_button_color=border,
+        scrollbar_button_hover_color=accent,
+    )
+    tikfinity_ff_users_frame.grid(row=12, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 8))
+    tikfinity_ff_users_frame.columnconfigure(0, weight=1)
+    ctk.CTkLabel(tikfinity_ff_card, text="Histórico recente", text_color=fg, font=("Segoe UI Semibold", 13)).grid(
+        row=13, column=0, columnspan=4, sticky="w", padx=18, pady=(4, 2)
+    )
+    tikfinity_ff_history_frame = ctk.CTkScrollableFrame(
+        tikfinity_ff_card,
+        fg_color=field,
+        corner_radius=12,
+        border_width=1,
+        border_color=border,
+        height=126,
+        scrollbar_button_color=border,
+        scrollbar_button_hover_color=accent,
+    )
+    tikfinity_ff_history_frame.grid(row=14, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
+    tikfinity_ff_history_frame.columnconfigure(0, weight=1)
+    ff_queue_manual_card.grid_remove()
+    tikfinity_ff_card.grid_remove()
 
     ff_queue_card = card(
-        ff_queue_tab,
+        ff_queue_left,
         "Fila FF",
         "Organize jogadores por ordem, status e observações. As alterações podem ir para o Jarvis em tempo real.",
     )
-    ff_queue_card.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=(12, 12))
+    ff_queue_card.grid(row=2, column=0, sticky="nsew", padx=12, pady=(8, 12))
     ff_queue_card.columnconfigure(0, weight=1)
     ff_queue_card.rowconfigure(3, weight=1)
     ff_queue_header = ctk.CTkFrame(ff_queue_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
@@ -5433,6 +6472,172 @@ def run_gui(config_path: Path) -> int:
     ff_overlay_actions = ctk.CTkFrame(ff_overlay_sync_card, fg_color=panel, corner_radius=0)
     ff_overlay_actions.grid(row=5, column=0, columnspan=2, sticky="ew", padx=18, pady=(8, 18))
 
+    ff_overlay_site_card = card(
+        ff_overlay_controls,
+        "Overlay OBS do site",
+        "Carregue e salve a configuracao usada na URL /freefire/overlay do Jarvis.",
+    )
+    ff_overlay_site_card.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+    ff_overlay_site_card.columnconfigure(1, weight=1)
+    ff_overlay_site_card.columnconfigure(3, weight=1)
+    section_label(ff_overlay_site_card, "Endpoint config", 2)
+    entry(ff_overlay_site_card, ff_overlay_config_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    section_label(ff_overlay_site_card, "Perfil", 3)
+    entry(ff_overlay_site_card, ff_overlay_site_profile_var, width=150).grid(row=3, column=1, sticky="w", padx=18, pady=5)
+    section_label(ff_overlay_site_card, "Nome do perfil", 3, column=2)
+    entry(ff_overlay_site_card, ff_overlay_site_label_var).grid(row=3, column=3, sticky="ew", padx=18, pady=5)
+    section_label(ff_overlay_site_card, "URL OBS", 4)
+    entry(ff_overlay_site_card, ff_overlay_site_obs_url_var).grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+
+    ff_overlay_site_toggles = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel, corner_radius=0)
+    ff_overlay_site_toggles.grid(row=5, column=0, columnspan=4, sticky="ew", padx=18, pady=(6, 6))
+    for toggle_column in range(3):
+        ff_overlay_site_toggles.columnconfigure(toggle_column, weight=1)
+    for toggle_index, (text, var) in enumerate(
+        (
+            ("Rank geral", ff_overlay_site_enabled_general_var),
+            ("Rank do dia", ff_overlay_site_enabled_daily_var),
+            ("Fila FF", ff_overlay_site_enabled_queue_var),
+            ("Fundo blocos", ff_overlay_site_panel_bg_var),
+            ("Mostrar #", ff_overlay_site_rank_prefix_var),
+            ("Medalhas", ff_overlay_site_medals_var),
+        )
+    ):
+        ctk.CTkCheckBox(
+            ff_overlay_site_toggles,
+            text=text,
+            variable=var,
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=toggle_index // 3, column=toggle_index % 3, sticky="w", padx=(0, 12), pady=4)
+
+    section_label(ff_overlay_site_card, "Layout", 6)
+    combo(ff_overlay_site_card, ff_overlay_site_layout_var, ["horizontal", "vertical", "grid"], width=150).grid(
+        row=6, column=1, sticky="w", padx=18, pady=5
+    )
+    section_label(ff_overlay_site_card, "Fonte", 6, column=2)
+    combo(ff_overlay_site_card, ff_overlay_site_font_var, ["impact", "bebas", "rajdhani", "inter", "mono"], width=150).grid(
+        row=6, column=3, sticky="w", padx=18, pady=5
+    )
+    section_label(ff_overlay_site_card, "Animacao", 7)
+    combo(ff_overlay_site_card, ff_overlay_site_animation_var, ["none", "fade", "slide", "pop"], width=150).grid(
+        row=7, column=1, sticky="w", padx=18, pady=5
+    )
+    section_label(ff_overlay_site_card, "Refresh ms", 7, column=2)
+    entry(ff_overlay_site_card, ff_overlay_site_refresh_var, width=110).grid(row=7, column=3, sticky="w", padx=18, pady=5)
+    section_label(ff_overlay_site_card, "Troca seg.", 8)
+    entry(ff_overlay_site_card, ff_overlay_site_switch_var, width=110).grid(row=8, column=1, sticky="w", padx=18, pady=5)
+    section_label(ff_overlay_site_card, "Largura bloco", 8, column=2)
+    entry(ff_overlay_site_card, ff_overlay_site_panel_width_var, width=110).grid(row=8, column=3, sticky="w", padx=18, pady=5)
+    section_label(ff_overlay_site_card, "Limites", 9)
+    ff_overlay_site_limits = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel, corner_radius=0)
+    ff_overlay_site_limits.grid(row=9, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    entry(ff_overlay_site_limits, ff_overlay_site_limit_general_var, width=70).pack(side=tk.LEFT)
+    ctk.CTkLabel(ff_overlay_site_limits, text="geral", text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(6, 12))
+    entry(ff_overlay_site_limits, ff_overlay_site_limit_daily_var, width=70).pack(side=tk.LEFT)
+    ctk.CTkLabel(ff_overlay_site_limits, text="dia", text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(6, 12))
+    entry(ff_overlay_site_limits, ff_overlay_site_limit_queue_var, width=70).pack(side=tk.LEFT)
+    ctk.CTkLabel(ff_overlay_site_limits, text="fila", text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(6, 12))
+
+    ff_overlay_site_dimensions = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+    ff_overlay_site_dimensions.grid(row=10, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 6))
+    for dimension_column in range(6):
+        ff_overlay_site_dimensions.columnconfigure(dimension_column, weight=1)
+    ctk.CTkLabel(
+        ff_overlay_site_dimensions,
+        text="Tamanho e espaçamento",
+        text_color=fg,
+        font=("Segoe UI Semibold", 12),
+        anchor="w",
+    ).grid(row=0, column=0, columnspan=6, sticky="ew", padx=12, pady=(10, 2))
+    for index, (label, var, width) in enumerate(
+        (
+            ("Gap", ff_overlay_site_gap_var, 70),
+            ("Padding", ff_overlay_site_padding_var, 70),
+            ("Título", ff_overlay_site_title_size_var, 70),
+            ("Linha", ff_overlay_site_row_size_var, 70),
+            ("Valor", ff_overlay_site_value_size_var, 70),
+            ("Altura", ff_overlay_site_row_height_var, 70),
+        )
+    ):
+        ctk.CTkLabel(ff_overlay_site_dimensions, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=1, column=index, sticky="w", padx=12, pady=(4, 0)
+        )
+        entry(ff_overlay_site_dimensions, var, width=width).grid(row=2, column=index, sticky="ew", padx=12, pady=(0, 10))
+
+    ff_overlay_site_colors = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+    ff_overlay_site_colors.grid(row=11, column=0, columnspan=4, sticky="ew", padx=18, pady=6)
+    for color_column in range(6):
+        ff_overlay_site_colors.columnconfigure(color_column, weight=1)
+    ctk.CTkLabel(
+        ff_overlay_site_colors,
+        text="Fundo, linha e acento",
+        text_color=fg,
+        font=("Segoe UI Semibold", 12),
+        anchor="w",
+    ).grid(row=0, column=0, columnspan=6, sticky="ew", padx=12, pady=(10, 2))
+    for index, (label, var, width) in enumerate(
+        (
+            ("Fundo", ff_overlay_site_panel_bg_color_var, 92),
+            ("Opac.", ff_overlay_site_panel_bg_opacity_var, 70),
+            ("Raio", ff_overlay_site_panel_radius_var, 70),
+            ("Linha", ff_overlay_site_row_bg_color_var, 92),
+            ("Opac.", ff_overlay_site_row_bg_opacity_var, 70),
+            ("Acento", ff_overlay_site_accent_width_var, 70),
+        )
+    ):
+        ctk.CTkLabel(ff_overlay_site_colors, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=1, column=index, sticky="w", padx=12, pady=(4, 0)
+        )
+        entry(ff_overlay_site_colors, var, width=width).grid(row=2, column=index, sticky="ew", padx=12, pady=(0, 10))
+
+    ff_overlay_site_panels = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+    ff_overlay_site_panels.grid(row=12, column=0, columnspan=4, sticky="ew", padx=18, pady=6)
+    for panel_column in range(3):
+        ff_overlay_site_panels.columnconfigure(panel_column, weight=1)
+    ctk.CTkLabel(
+        ff_overlay_site_panels,
+        text="Títulos e cores por painel",
+        text_color=fg,
+        font=("Segoe UI Semibold", 12),
+        anchor="w",
+    ).grid(row=0, column=0, columnspan=3, sticky="ew", padx=12, pady=(10, 2))
+    for column, (panel_key, panel_title) in enumerate((("general", "Geral"), ("daily", "Dia"), ("queue", "Fila"))):
+        panel_box = ctk.CTkFrame(ff_overlay_site_panels, fg_color=field, corner_radius=10, border_width=1, border_color=border)
+        panel_box.grid(row=1, column=column, sticky="nsew", padx=8, pady=(4, 12))
+        panel_box.columnconfigure(1, weight=1)
+        ctk.CTkLabel(panel_box, text=panel_title, text_color=fg, font=("Segoe UI Semibold", 12), anchor="w").grid(
+            row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 2)
+        )
+        for row_index, (label, field_key) in enumerate(
+            (
+                ("Título", "title"),
+                ("Cor título", "title_color"),
+                ("Cor #", "rank_color"),
+                ("Cor nome", "name_color"),
+                ("Cor valor", "value_color"),
+                ("Cor acento", "accent_color"),
+            ),
+            start=1,
+        ):
+            ctk.CTkLabel(panel_box, text=label, text_color=muted, font=("Segoe UI", 10)).grid(
+                row=row_index, column=0, sticky="w", padx=(10, 6), pady=3
+            )
+            entry(panel_box, ff_overlay_site_panel_vars[panel_key][field_key], width=104).grid(
+                row=row_index, column=1, sticky="ew", padx=(0, 10), pady=3
+            )
+    ctk.CTkLabel(
+        ff_overlay_site_card,
+        textvariable=ff_overlay_site_status_var,
+        text_color=accent,
+        font=("Segoe UI Semibold", 12),
+        anchor="w",
+    ).grid(row=13, column=0, columnspan=4, sticky="ew", padx=18, pady=(6, 0))
+    ff_overlay_site_actions = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel, corner_radius=0)
+    ff_overlay_site_actions.grid(row=14, column=0, columnspan=4, sticky="ew", padx=18, pady=(10, 18))
+
     ff_overlay_metrics = ctk.CTkFrame(
         ff_overlay_controls,
         fg_color=panel_alt,
@@ -5440,7 +6645,7 @@ def run_gui(config_path: Path) -> int:
         border_width=1,
         border_color=border,
     )
-    ff_overlay_metrics.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+    ff_overlay_metrics.grid(row=2, column=0, sticky="ew", padx=12, pady=8)
     for column in range(3):
         ff_overlay_metrics.columnconfigure(column, weight=1)
     for col, (label, value_var) in enumerate(
@@ -5456,36 +6661,6 @@ def run_gui(config_path: Path) -> int:
         ctk.CTkLabel(ff_overlay_metrics, textvariable=value_var, text_color=teal, font=("Segoe UI Semibold", 24)).grid(
             row=1, column=col, sticky="w", padx=16, pady=(0, 12)
         )
-    ff_overlay_status_card = ctk.CTkFrame(
-        ff_overlay_controls,
-        fg_color=field,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-    )
-    ff_overlay_status_card.grid(row=2, column=0, sticky="ew", padx=12, pady=8)
-    ff_overlay_status_card.columnconfigure(1, weight=1)
-    ff_overlay_status_card.columnconfigure(3, weight=1)
-    for row_index, (label, source_var, status_var) in enumerate(
-        (
-            ("Kills FF", manual_source_var, manual_status_var),
-            ("Fila FF", ff_queue_source_var, ff_queue_status_var),
-            ("Overlay FF", manual_source_var, ff_overlay_status_var),
-        )
-    ):
-        ctk.CTkLabel(ff_overlay_status_card, text=label, text_color=muted, font=("Segoe UI Semibold", 11)).grid(
-            row=row_index, column=0, sticky="w", padx=14, pady=(12 if row_index == 0 else 4, 10)
-        )
-        ctk.CTkLabel(ff_overlay_status_card, textvariable=source_var, text_color=fg, font=("Segoe UI Semibold", 12)).grid(
-            row=row_index, column=1, sticky="ew", padx=8, pady=(12 if row_index == 0 else 4, 10)
-        )
-        ctk.CTkLabel(ff_overlay_status_card, text="Status", text_color=muted, font=("Segoe UI", 11)).grid(
-            row=row_index, column=2, sticky="w", padx=(8, 4), pady=(12 if row_index == 0 else 4, 10)
-        )
-        ctk.CTkLabel(ff_overlay_status_card, textvariable=status_var, text_color=accent, font=("Segoe UI Semibold", 12)).grid(
-            row=row_index, column=3, sticky="ew", padx=(4, 14), pady=(12 if row_index == 0 else 4, 10)
-        )
-
     ff_overlay_options = card(ff_overlay_controls, "Aparencia do overlay", "Controle a janela que fica sobre o jogo ou OBS.")
     ff_overlay_options.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
     ff_overlay_options.columnconfigure(1, weight=1)
@@ -6200,7 +7375,7 @@ def run_gui(config_path: Path) -> int:
     log_card.rowconfigure(1, weight=1)
     ctk.CTkLabel(
         log_card,
-        text="Eventos",
+        text="Logs",
         text_color=fg,
         font=("Segoe UI Semibold", 16),
     ).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 6))
@@ -6255,6 +7430,199 @@ def run_gui(config_path: Path) -> int:
     font_slider.configure(command=apply_layout_settings)
     apply_layout_settings()
 
+    def default_kills_style() -> dict[str, Any]:
+        return {
+            "title_text": "TOP KILLS",
+            "font_family": "impact",
+            "text_align": "left",
+            "title_align": "left",
+            "title_size": 34,
+            "row_size": 26,
+            "kills_size": 28,
+            "rank_size": 24,
+            "font_weight": 900,
+            "row_height": 42,
+            "row_gap": 5,
+            "row_max_width": 0,
+            "column_gap": 10,
+            "row_padding_x": 10,
+            "wrap_padding": 8,
+            "switch_seconds": 10,
+            "title_color": "#FFD54A",
+            "rank_color": "#FFD54A",
+            "name_color": "#FFFFFF",
+            "kills_color": "#66FF99",
+            "shadow_color": "#000000",
+            "shadow_blur": 7,
+            "row_bg_color": "#000000",
+            "row_bg_opacity": 35,
+            "accent_color": "#FF4655",
+            "accent_width": 4,
+            "row_radius": 8,
+            "show_title": True,
+            "uppercase_title": True,
+            "show_rank_prefix": True,
+            "show_medals": True,
+            "row_bg_enabled": False,
+            "accent_enabled": False,
+        }
+
+    def kills_style_int(var: tk.StringVar, fallback: int, min_value: int, max_value: int) -> int:
+        value = max(min_value, min(max_value, normalize_kill_value(var.get()) or fallback))
+        var.set(str(value))
+        return value
+
+    def apply_kills_style(style: dict[str, Any]) -> None:
+        data = default_kills_style()
+        if isinstance(style, dict):
+            data.update(style)
+        kills_style_title_var.set(str(data.get("title_text") or "TOP KILLS")[:40])
+        kills_style_font_var.set(str(data.get("font_family") or "impact"))
+        kills_style_align_var.set(str(data.get("text_align") or "left"))
+        kills_style_title_align_var.set(str(data.get("title_align") or "left"))
+        kills_style_title_size_var.set(str(max(18, min(96, normalize_kill_value(data.get("title_size", 34))))))
+        kills_style_row_size_var.set(str(max(14, min(80, normalize_kill_value(data.get("row_size", 26))))))
+        kills_style_kills_size_var.set(str(max(14, min(96, normalize_kill_value(data.get("kills_size", 28))))))
+        kills_style_rank_size_var.set(str(max(12, min(80, normalize_kill_value(data.get("rank_size", 24))))))
+        kills_style_weight_var.set(str(max(300, min(900, normalize_kill_value(data.get("font_weight", 900))))))
+        kills_style_row_height_var.set(str(max(24, min(120, normalize_kill_value(data.get("row_height", 42))))))
+        kills_style_row_gap_var.set(str(max(0, min(30, normalize_kill_value(data.get("row_gap", 5))))))
+        kills_style_row_max_width_var.set(str(max(0, min(1200, normalize_kill_value(data.get("row_max_width", 0))))))
+        kills_style_column_gap_var.set(str(max(0, min(60, normalize_kill_value(data.get("column_gap", 10))))))
+        kills_style_row_padding_var.set(str(max(0, min(60, normalize_kill_value(data.get("row_padding_x", 10))))))
+        kills_style_wrap_padding_var.set(str(max(0, min(80, normalize_kill_value(data.get("wrap_padding", 8))))))
+        kills_style_switch_seconds_var.set(str(max(3, min(120, normalize_kill_value(data.get("switch_seconds", 10))))))
+        kills_style_title_color_var.set(normalize_hex_color(data.get("title_color"), "#FFD54A"))
+        kills_style_rank_color_var.set(normalize_hex_color(data.get("rank_color"), "#FFD54A"))
+        kills_style_name_color_var.set(normalize_hex_color(data.get("name_color"), "#FFFFFF"))
+        kills_style_kills_color_var.set(normalize_hex_color(data.get("kills_color"), "#66FF99"))
+        kills_style_shadow_color_var.set(normalize_hex_color(data.get("shadow_color"), "#000000"))
+        kills_style_shadow_blur_var.set(str(max(0, min(24, normalize_kill_value(data.get("shadow_blur", 7))))))
+        kills_style_row_bg_color_var.set(normalize_hex_color(data.get("row_bg_color"), "#000000"))
+        kills_style_row_bg_opacity_var.set(str(max(0, min(100, normalize_kill_value(data.get("row_bg_opacity", 35))))))
+        kills_style_accent_color_var.set(normalize_hex_color(data.get("accent_color"), "#FF4655"))
+        kills_style_accent_width_var.set(str(max(0, min(20, normalize_kill_value(data.get("accent_width", 4))))))
+        kills_style_row_radius_var.set(str(max(0, min(40, normalize_kill_value(data.get("row_radius", 8))))))
+        kills_style_show_title_var.set(bool(data.get("show_title", True)))
+        kills_style_uppercase_var.set(bool(data.get("uppercase_title", True)))
+        kills_style_rank_prefix_var.set(bool(data.get("show_rank_prefix", True)))
+        kills_style_medals_var.set(bool(data.get("show_medals", True)))
+        kills_style_row_bg_var.set(bool(data.get("row_bg_enabled", False)))
+        kills_style_accent_var.set(bool(data.get("accent_enabled", False)))
+
+    def collect_kills_style() -> dict[str, Any]:
+        return {
+            "title_text": kills_style_title_var.get().strip()[:40] or "TOP KILLS",
+            "font_family": kills_style_font_var.get().strip() or "impact",
+            "text_align": kills_style_align_var.get().strip() or "left",
+            "title_align": kills_style_title_align_var.get().strip() or "left",
+            "title_size": kills_style_int(kills_style_title_size_var, 34, 18, 96),
+            "row_size": kills_style_int(kills_style_row_size_var, 26, 14, 80),
+            "kills_size": kills_style_int(kills_style_kills_size_var, 28, 14, 96),
+            "rank_size": kills_style_int(kills_style_rank_size_var, 24, 12, 80),
+            "font_weight": kills_style_int(kills_style_weight_var, 900, 300, 900),
+            "row_height": kills_style_int(kills_style_row_height_var, 42, 24, 120),
+            "row_gap": kills_style_int(kills_style_row_gap_var, 5, 0, 30),
+            "row_max_width": kills_style_int(kills_style_row_max_width_var, 0, 0, 1200),
+            "column_gap": kills_style_int(kills_style_column_gap_var, 10, 0, 60),
+            "row_padding_x": kills_style_int(kills_style_row_padding_var, 10, 0, 60),
+            "wrap_padding": kills_style_int(kills_style_wrap_padding_var, 8, 0, 80),
+            "switch_seconds": kills_style_int(kills_style_switch_seconds_var, 10, 3, 120),
+            "title_color": normalize_hex_color(kills_style_title_color_var.get(), "#FFD54A"),
+            "rank_color": normalize_hex_color(kills_style_rank_color_var.get(), "#FFD54A"),
+            "name_color": normalize_hex_color(kills_style_name_color_var.get(), "#FFFFFF"),
+            "kills_color": normalize_hex_color(kills_style_kills_color_var.get(), "#66FF99"),
+            "shadow_color": normalize_hex_color(kills_style_shadow_color_var.get(), "#000000"),
+            "shadow_blur": kills_style_int(kills_style_shadow_blur_var, 7, 0, 24),
+            "row_bg_color": normalize_hex_color(kills_style_row_bg_color_var.get(), "#000000"),
+            "row_bg_opacity": kills_style_int(kills_style_row_bg_opacity_var, 35, 0, 100),
+            "accent_color": normalize_hex_color(kills_style_accent_color_var.get(), "#FF4655"),
+            "accent_width": kills_style_int(kills_style_accent_width_var, 4, 0, 20),
+            "row_radius": kills_style_int(kills_style_row_radius_var, 8, 0, 40),
+            "show_title": bool(kills_style_show_title_var.get()),
+            "uppercase_title": bool(kills_style_uppercase_var.get()),
+            "show_rank_prefix": bool(kills_style_rank_prefix_var.get()),
+            "show_medals": bool(kills_style_medals_var.get()),
+            "row_bg_enabled": bool(kills_style_row_bg_var.get()),
+            "accent_enabled": bool(kills_style_accent_var.get()),
+        }
+
+    def kills_style_endpoint() -> str:
+        endpoint_url = normalize_endpoint_url(kills_style_url_var.get())
+        if endpoint_url:
+            return derive_kills_style_endpoint(endpoint_url)
+        source_url = normalize_endpoint_url(sync_url_var.get())
+        if source_url:
+            return derive_kills_style_endpoint(source_url)
+        base_url = normalize_endpoint_url(jarvis_base_url_var.get())
+        return derive_kills_style_endpoint(base_url) if base_url else ""
+
+    def load_kills_style(force: bool = True) -> None:
+        endpoint_url = kills_style_endpoint()
+        if not endpoint_url:
+            kills_style_status_var.set("Sem endpoint")
+            if force:
+                log("Configure a URL do Jarvis para carregar o estilo OBS Kills FF.")
+            return
+        kills_style_url_var.set(endpoint_url)
+        kills_obs_url_var.set(derive_kills_obs_url(endpoint_url))
+        kills_style_status_var.set("Carregando")
+        local_device_id = str(config.get("device_id", "")).strip()
+        local_device_name = device_name_var.get().strip()
+        local_token = jarvis_token_var.get().strip()
+
+        def run() -> None:
+            try:
+                style = fetch_kills_style(endpoint_url, device_id=local_device_id, device_name=local_device_name, token=local_token)
+                sync_queue.put(("kills_style_loaded", {"style": style}))
+            except Exception as exc:
+                sync_queue.put(("kills_style_error", {"error": str(exc), "label": "carregar estilo"}))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def save_kills_style() -> None:
+        endpoint_url = kills_style_endpoint()
+        if not endpoint_url:
+            kills_style_status_var.set("Sem endpoint")
+            log("Configure a URL do Jarvis para salvar o estilo OBS Kills FF.")
+            return
+        kills_style_url_var.set(endpoint_url)
+        kills_obs_url_var.set(derive_kills_obs_url(endpoint_url))
+        style = collect_kills_style()
+        kills_style_status_var.set("Salvando")
+        local_device_id = str(config.get("device_id", "")).strip()
+        local_device_name = device_name_var.get().strip()
+        local_token = jarvis_token_var.get().strip()
+
+        def run() -> None:
+            try:
+                saved = send_kills_style_update(endpoint_url, style, device_id=local_device_id, device_name=local_device_name, token=local_token)
+                sync_queue.put(("kills_style_saved", {"style": saved}))
+            except Exception as exc:
+                sync_queue.put(("kills_style_error", {"error": str(exc), "label": "salvar estilo"}))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def reset_kills_style_form() -> None:
+        apply_kills_style(default_kills_style())
+        kills_style_status_var.set("Padrão aplicado")
+
+    def copy_kills_obs_url() -> None:
+        url = kills_obs_url_var.get().strip() or (derive_kills_obs_url(kills_style_endpoint()) if kills_style_endpoint() else "")
+        if not url:
+            kills_style_status_var.set("Sem URL OBS")
+            return
+        root.clipboard_clear()
+        root.clipboard_append(url)
+        kills_style_status_var.set("URL OBS copiada")
+
+    def open_kills_obs_url() -> None:
+        url = kills_obs_url_var.get().strip() or (derive_kills_obs_url(kills_style_endpoint()) if kills_style_endpoint() else "")
+        if not url:
+            kills_style_status_var.set("Sem URL OBS")
+            return
+        webbrowser.open(url)
+
     def sorted_rank_players(players: list[PlayerKill]) -> list[PlayerKill]:
         merged: dict[str, PlayerKill] = {}
         order: list[str] = []
@@ -6288,6 +7656,80 @@ def run_gui(config_path: Path) -> int:
 
     def current_kills_rank_scope() -> str:
         return "general" if kills_rank_mode_var.get() == "Geral" else "daily"
+
+    def clone_player_list(players: list[PlayerKill]) -> list[PlayerKill]:
+        return [
+            PlayerKill(
+                name=player.name,
+                kills=normalize_kill_value(player.kills),
+                key=player.key,
+                ff_player_id=player.ff_player_id,
+                entries=normalize_kill_value(player.entries),
+            )
+            for player in players
+        ]
+
+    def current_manual_scope() -> str:
+        scope = normalize_kills_scope_value(manual_scope_var.get())
+        return scope if scope in {"daily", "general"} else "daily"
+
+    def manual_scope_label(scope: str | None = None) -> str:
+        return kills_scope_label(scope or current_manual_scope())
+
+    def manual_scope_rank_players(scope: str | None = None) -> list[PlayerKill]:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        return kills_global_ranking if clean_scope == "general" else kills_daily_ranking
+
+    def manual_scope_display_players(scope: str | None = None, prefer_remote: bool = True) -> list[PlayerKill]:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        rank_players = manual_scope_rank_players(clean_scope)
+        if prefer_remote and rank_players and clean_scope not in manual_scope_dirty:
+            manual_scope_buffers[clean_scope] = clone_player_list(rank_players)
+            return clone_player_list(rank_players)
+        buffered_players = manual_scope_buffers.get(clean_scope) or []
+        if buffered_players:
+            return clone_player_list(buffered_players)
+        if rank_players:
+            manual_scope_buffers[clean_scope] = clone_player_list(rank_players)
+            return clone_player_list(rank_players)
+        return []
+
+    def sync_kills_rank_tab_with_manual_scope(scope: str | None = None) -> None:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        rank_label = "Geral" if clean_scope == "general" else "Diario"
+        kills_rank_mode_var.set(rank_label)
+        try:
+            kills_overlay_tabview.set("Geral" if clean_scope == "general" else "Diário")
+        except (NameError, AttributeError, tk.TclError):
+            pass
+
+    def remember_current_manual_scope() -> None:
+        scope = current_manual_scope()
+        manual_scope_buffers[scope] = clone_player_list(collect_manual_players())
+
+    def refresh_manual_table_for_scope(scope: str | None = None, prefer_remote: bool = True) -> None:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        players = manual_scope_display_players(clean_scope, prefer_remote=prefer_remote)
+        set_manual_players(players)
+        sync_kills_rank_tab_with_manual_scope(clean_scope)
+        manual_status_var.set("Mostrando rank geral" if clean_scope == "general" else "Mostrando rank diario")
+
+    def on_manual_scope_change() -> None:
+        nonlocal manual_active_scope
+        previous_scope = manual_active_scope
+        new_scope = current_manual_scope()
+        if new_scope not in {"daily", "general"}:
+            new_scope = "daily"
+            manual_scope_var.set("Diario")
+        if previous_scope in {"daily", "general"}:
+            manual_scope_buffers[previous_scope] = clone_player_list(collect_manual_players())
+        manual_active_scope = new_scope
+        config["kills_manual_scope"] = new_scope
+        refresh_manual_table_for_scope(new_scope, prefer_remote=True)
 
     def run_kills_rank_action(
         action: str,
@@ -6336,6 +7778,126 @@ def run_gui(config_path: Path) -> int:
 
         threading.Thread(target=run, daemon=True).start()
         return True
+
+    def kills_admin_scope_value() -> str:
+        scope = normalize_kills_scope_value(kills_admin_scope_var.get())
+        return scope if scope in {"daily", "general"} else "daily"
+
+    def select_kills_admin_player(player: PlayerKill, scope_label: str) -> None:
+        clean_scope = "Geral" if str(scope_label).strip().lower().startswith("ger") else "Diario"
+        kills_admin_name_var.set(player.name)
+        kills_admin_new_name_var.set("")
+        kills_admin_ff_id_var.set(str(player.ff_player_id or ""))
+        kills_admin_kills_var.set("1")
+        kills_admin_scope_var.set(clean_scope)
+        kills_admin_key_var.set(player.key or normalize_player_key(player.name))
+        manual_status_var.set(f"Selecionado: {player.name}")
+
+    def kills_admin_player(require_name: bool = True) -> PlayerKill | None:
+        name = kills_admin_name_var.get().strip()
+        if require_name and not name:
+            messagebox.showinfo("Kills FF", "Informe o jogador atual.")
+            return None
+        ff_player_id = re.sub(r"\D+", "", kills_admin_ff_id_var.get())
+        player_key = kills_admin_key_var.get().strip() or normalize_player_key(name)
+        return PlayerKill(name=name, kills=0, key=player_key, ff_player_id=ff_player_id)
+
+    def kills_admin_kill_value() -> int | None:
+        try:
+            value = int(float(kills_admin_kills_var.get().replace(",", ".")))
+        except ValueError:
+            messagebox.showinfo("Kills FF", "Informe uma quantidade de kills valida.")
+            return None
+        return max(0, min(999999, value))
+
+    def apply_kills_admin_action(action: str) -> None:
+        normalized = str(action or "").strip().lower()
+        scope = kills_admin_scope_value()
+
+        if normalized in {"reset", "reset_daily", "reset_general"}:
+            if normalized == "reset":
+                run_kills_rank_action(
+                    "reset",
+                    scope="both",
+                    label="Zerando tudo",
+                    confirm_text="Resetar o ranking diário e o ranking geral? Jogadores ignorados serão mantidos.",
+                )
+                return
+            confirm_text = (
+                "Resetar o ranking diario? O ranking geral sera mantido."
+                if normalized == "reset_daily"
+                else "Resetar o ranking geral? O ranking diario sera mantido."
+            )
+            label = "Zerando diario" if normalized == "reset_daily" else "Zerando geral"
+            run_kills_rank_action(normalized, scope="daily" if normalized == "reset_daily" else "general", label=label, confirm_text=confirm_text)
+            return
+
+        player = kills_admin_player(require_name=True)
+        if player is None:
+            return
+
+        if normalized in {"add", "remove", "set"}:
+            kills = kills_admin_kill_value()
+            if kills is None:
+                return
+            labels = {
+                "add": "Somando kills",
+                "remove": "Removendo kills",
+                "set": "Definindo kills",
+            }
+            run_kills_rank_action(normalized, player=player, kills=kills, scope=scope, label=labels[normalized])
+            return
+
+        if normalized == "set_name":
+            new_name = kills_admin_new_name_var.get().strip()
+            if not new_name:
+                messagebox.showinfo("Kills FF", "Informe o novo nome.")
+                return
+            run_kills_rank_action("set_name", player=player, new_name=new_name, scope="both", label="Editando nome")
+            return
+
+        if normalized == "set_ff_id":
+            raw_id = kills_admin_ff_id_var.get().strip()
+            clean_id = re.sub(r"\D+", "", raw_id)
+            if raw_id and not re.fullmatch(r"\d{5,15}", clean_id):
+                messagebox.showinfo("Kills FF", "ID FF invalido. Use somente numeros, de 5 a 15 digitos.")
+                return
+            run_kills_rank_action("set_ff_id", player=player, ff_player_id=clean_id, scope="both", label="Editando ID FF")
+            return
+
+        if normalized == "ignore":
+            run_kills_rank_action(
+                "ignore",
+                player=player,
+                scope="both",
+                label="Ignorando jogador",
+                confirm_text=f"Ignorar {player.name} no ranking e no OBS?",
+            )
+            return
+
+        if normalized == "unignore":
+            run_kills_rank_action("unignore", player=player, scope="both", label="Reexibindo jogador")
+            return
+
+        if normalized == "delete":
+            run_kills_rank_action(
+                "delete",
+                player=player,
+                scope=scope,
+                label="Removendo jogador",
+                confirm_text=f"Remover {player.name} do ranking selecionado?",
+            )
+            return
+
+        messagebox.showinfo("Kills FF", "Acao invalida.")
+
+    def clear_kills_admin_fields() -> None:
+        kills_admin_name_var.set("")
+        kills_admin_new_name_var.set("")
+        kills_admin_ff_id_var.set("")
+        kills_admin_kills_var.set("1")
+        kills_admin_scope_var.set("Diario")
+        kills_admin_key_var.set("")
 
     def prompt_set_kills_rank_value(player: PlayerKill) -> None:
         value = simpledialog.askinteger(
@@ -6440,118 +8002,258 @@ def run_gui(config_path: Path) -> int:
             kills_ignored_rows.append(row_frame)
 
     def refresh_kills_rank_table() -> None:
-        for widget in kills_rank_rows:
-            try:
-                widget.destroy()
-            except tk.TclError:
-                pass
-        kills_rank_rows.clear()
-
-        players = current_kills_rank_players()
-        mode = "geral" if kills_rank_mode_var.get() == "Geral" else "diario"
-        kills_rank_title_var.set(f"Ranking {mode}")
-        kills_rank_count_var.set(str(len(players)))
-        kills_rank_total_var.set(str(sum(player.kills for player in players)))
-
-        if not players:
-            empty = ctk.CTkLabel(
-                kills_rank_table_frame,
-                text="Busque o painel Jarvis para carregar o ranking.",
-                text_color=muted,
-                font=("Segoe UI", 12),
-                anchor="w",
-            )
-            empty.grid(row=0, column=0, sticky="ew", padx=14, pady=14)
-            kills_rank_rows.append(empty)
+        table_signature = json.dumps(
+            {
+                "daily": player_payload(kills_daily_ranking),
+                "global": player_payload(kills_global_ranking),
+                "ignored": [
+                    {"name": player.name, "key": player.key}
+                    for player in kills_ignored_players
+                ],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if getattr(refresh_kills_rank_table, "_signature", None) == table_signature:
             return
+        refresh_kills_rank_table._signature = table_signature  # type: ignore[attr-defined]
 
-        for index, player in enumerate(players[:150], start=1):
-            row_frame = ctk.CTkFrame(
-                kills_rank_table_frame,
-                fg_color="#171014" if index % 2 else "#0f0b0e",
-                corner_radius=10,
-            )
-            row_frame.grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
-            row_frame.columnconfigure(1, weight=1)
-            medal_color = accent if index <= 3 else muted
-            ctk.CTkLabel(
-                row_frame,
-                text=f"{index:02d}",
-                text_color=medal_color,
-                font=("Segoe UI Semibold", 12),
-                width=42,
-            ).grid(row=0, column=0, sticky="w", padx=(12, 6), pady=8)
-            ctk.CTkLabel(
-                row_frame,
-                text=player.name,
-                text_color=fg,
-                font=("Segoe UI Semibold", 12),
-                anchor="w",
-            ).grid(row=0, column=1, sticky="ew", padx=6, pady=8)
-            ctk.CTkLabel(
-                row_frame,
-                text=str(player.kills),
-                text_color=teal,
-                font=("Segoe UI Semibold", 14),
-                width=72,
-            ).grid(row=0, column=2, sticky="e", padx=(6, 12), pady=8)
-            row_actions = ctk.CTkFrame(row_frame, fg_color="transparent", corner_radius=0)
-            row_actions.grid(row=0, column=3, sticky="e", padx=(0, 12), pady=8)
-            button(
-                row_actions,
-                "+1",
-                lambda target=player: run_kills_rank_action("add", player=target, kills=1, label="Somando kill"),
-                "accent",
-                width=38,
-            ).pack(side=tk.LEFT, padx=2)
-            button(
-                row_actions,
-                "-1",
-                lambda target=player: run_kills_rank_action("remove", player=target, kills=1, label="Removendo kill"),
-                "ghost",
-                width=38,
-            ).pack(side=tk.LEFT, padx=2)
-            button(row_actions, "Def", lambda target=player: prompt_set_kills_rank_value(target), "default", width=44).pack(
-                side=tk.LEFT, padx=2
-            )
-            button(row_actions, "Nome", lambda target=player: prompt_set_kills_rank_name(target), "default", width=58).pack(
-                side=tk.LEFT, padx=2
-            )
-            button(row_actions, "ID", lambda target=player: prompt_set_kills_rank_ff_id(target), "default", width=40).pack(
-                side=tk.LEFT, padx=2
-            )
-            button(
-                row_actions,
-                "Ignorar",
-                lambda target=player: run_kills_rank_action(
-                    "ignore",
-                    player=target,
-                    scope="both",
-                    label="Ignorando jogador",
-                    confirm_text=f"Ignorar {target.name} no ranking e no OBS?",
-                ),
-                "danger",
-                width=68,
-            ).pack(side=tk.LEFT, padx=2)
-            kills_rank_rows.append(row_frame)
+        def render_rank(
+            table_frame: Any,
+            row_widgets: list[Any],
+            players: list[PlayerKill],
+            count_var: tk.StringVar,
+            total_var: tk.StringVar,
+            empty_text: str,
+            scope_label: str,
+        ) -> None:
+            for widget in row_widgets:
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    pass
+            row_widgets.clear()
+            set_text_var(count_var, len(players))
+            set_text_var(total_var, sum(player.kills for player in players))
+
+            if not players:
+                empty = ctk.CTkLabel(
+                    table_frame,
+                    text=empty_text,
+                    text_color=muted,
+                    font=("Segoe UI", 12),
+                    anchor="w",
+                )
+                empty.grid(row=0, column=0, sticky="ew", padx=14, pady=14)
+                row_widgets.append(empty)
+                return
+
+            for index, player in enumerate(players[:150], start=1):
+                row_frame = ctk.CTkFrame(
+                    table_frame,
+                    fg_color="#171014" if index % 2 else "#0f0b0e",
+                    corner_radius=10,
+                )
+                row_frame.grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
+                row_frame.columnconfigure(1, weight=1)
+                medal_color = accent if index <= 3 else muted
+                ctk.CTkLabel(
+                    row_frame,
+                    text=f"{index:02d}",
+                    text_color=medal_color,
+                    font=("Segoe UI Semibold", 12),
+                    width=42,
+                ).grid(row=0, column=0, sticky="w", padx=(12, 6), pady=8)
+                ctk.CTkLabel(
+                    row_frame,
+                    text=player.name,
+                    text_color=fg,
+                    font=("Segoe UI Semibold", 12),
+                    anchor="w",
+                ).grid(row=0, column=1, sticky="ew", padx=6, pady=8)
+                ctk.CTkLabel(
+                    row_frame,
+                    text=str(player.kills),
+                    text_color=teal,
+                    font=("Segoe UI Semibold", 14),
+                    width=70,
+                ).grid(row=0, column=2, sticky="e", padx=(6, 8), pady=8)
+                button(
+                    row_frame,
+                    "Usar",
+                    lambda selected=player, scope=scope_label: select_kills_admin_player(selected, scope),
+                    "default",
+                    width=58,
+                ).grid(row=0, column=3, sticky="e", padx=(4, 10), pady=6)
+                row_widgets.append(row_frame)
+
+        def render_overlay_rank(table_frame: Any, row_widgets: list[Any], players: list[PlayerKill], empty_text: str) -> None:
+            for widget in row_widgets:
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    pass
+            row_widgets.clear()
+
+            if not players:
+                empty = ctk.CTkLabel(
+                    table_frame,
+                    text=empty_text,
+                    text_color=muted,
+                    font=("Segoe UI", 12),
+                    anchor="center",
+                    justify="center",
+                )
+                empty.grid(row=0, column=0, sticky="nsew", padx=16, pady=18)
+                row_widgets.append(empty)
+                return
+
+            for index, player in enumerate(players[:80], start=1):
+                row_frame = ctk.CTkFrame(
+                    table_frame,
+                    fg_color="#171014" if index % 2 else "#0f0b0e",
+                    corner_radius=12,
+                    border_width=1 if index <= 3 else 0,
+                    border_color=accent if index == 1 else border,
+                )
+                row_frame.grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
+                row_frame.columnconfigure(1, weight=1)
+                rank_color = accent if index == 1 else teal if index <= 3 else muted
+                ctk.CTkLabel(
+                    row_frame,
+                    text=f"#{index:02d}",
+                    text_color=rank_color,
+                    font=("Segoe UI Semibold", 14),
+                    width=54,
+                ).grid(row=0, column=0, sticky="w", padx=(12, 8), pady=10)
+                ctk.CTkLabel(
+                    row_frame,
+                    text=player.name,
+                    text_color=fg,
+                    font=("Segoe UI Semibold", 14),
+                    anchor="w",
+                ).grid(row=0, column=1, sticky="ew", padx=6, pady=10)
+                ctk.CTkLabel(
+                    row_frame,
+                    text=str(player.kills),
+                    text_color=teal,
+                    font=("Segoe UI Semibold", 18),
+                    width=80,
+                ).grid(row=0, column=2, sticky="e", padx=(8, 14), pady=10)
+                row_widgets.append(row_frame)
+
+        daily_overlay_players = sorted_rank_players(kills_daily_ranking)
+        global_overlay_players = sorted_rank_players(kills_global_ranking)
+
+        render_rank(
+            kills_daily_rank_table_frame,
+            kills_daily_rank_rows,
+            kills_daily_ranking,
+            kills_daily_rank_count_var,
+            kills_daily_rank_total_var,
+            "Busque o painel Jarvis para carregar as kills diárias.",
+            "Diario",
+        )
+        render_rank(
+            kills_global_rank_table_frame,
+            kills_global_rank_rows,
+            kills_global_ranking,
+            kills_global_rank_count_var,
+            kills_global_rank_total_var,
+            "Busque o painel Jarvis para carregar as kills gerais.",
+            "Geral",
+        )
+        render_overlay_rank(
+            kills_overlay_daily_frame,
+            kills_overlay_daily_rows,
+            daily_overlay_players,
+            "Rank diário ainda não recebido do Jarvis.",
+        )
+        render_overlay_rank(
+            kills_overlay_global_frame,
+            kills_overlay_global_rows,
+            global_overlay_players,
+            "Rank geral ainda não recebido do Jarvis.",
+        )
 
     def apply_kills_rankings(state: RealtimeState) -> None:
         nonlocal kills_daily_ranking, kills_global_ranking, kills_ignored_players
         kills_daily_ranking = sorted_rank_players(state.daily_ranking or [])
-        kills_global_ranking = sorted_rank_players(state.global_ranking or state.players or [])
+        if state.global_ranking:
+            kills_global_ranking = sorted_rank_players(state.global_ranking)
+        elif not state.daily_ranking:
+            kills_global_ranking = sorted_rank_players(state.players or [])
+        else:
+            kills_global_ranking = []
         kills_ignored_players = list(state.ignored_players or [])
         refresh_kills_rank_table()
         refresh_kills_ignored_list()
+        if current_manual_scope() not in manual_scope_dirty:
+            refresh_manual_table_for_scope(current_manual_scope(), prefer_remote=True)
+        else:
+            update_manual_metrics()
+        set_text_var(
+            kills_overlay_status_var,
+            f"Carregado: {len(kills_daily_ranking)} dia / {len(kills_global_ranking)} geral"
+            if (kills_daily_ranking or kills_global_ranking)
+            else "Jarvis respondeu sem ranking",
+        )
+        try:
+            refresh_ff_overlay(force=True)
+        except NameError:
+            pass
 
-    def manual_signature(players: list[PlayerKill]) -> str:
-        return json.dumps(player_payload(players), ensure_ascii=False, sort_keys=True)
+    def save_kills_rank_cache() -> None:
+        if not (kills_daily_ranking or kills_global_ranking):
+            return
+        config["kills_rank_cache"] = {
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "daily_ranking": player_payload(kills_daily_ranking),
+            "ranking": player_payload(kills_global_ranking),
+        }
+        try:
+            save_config(config_path, config)
+        except Exception as exc:
+            log(f"Nao consegui salvar cache do ranking Kills FF: {exc}")
+
+    def apply_kills_rank_cache() -> bool:
+        cached = config.get("kills_rank_cache")
+        if not isinstance(cached, dict):
+            return False
+        state = parse_realtime_state(cached)
+        if not (state.daily_ranking or state.global_ranking):
+            return False
+        apply_kills_rankings(state)
+        cached_at = str(cached.get("updated_at") or "").strip()
+        suffix = f" ({cached_at})" if cached_at else ""
+        set_text_var(kills_overlay_status_var, f"Mostrando último rank salvo{suffix}")
+        return True
+
+    def kills_rank_signature_for_state(state: RealtimeState) -> str:
+        return json.dumps(
+            {
+                "daily": player_payload(sorted_rank_players(state.daily_ranking or [])),
+                "global": player_payload(sorted_rank_players(state.global_ranking or state.players or [])),
+                "ignored": [{"name": player.name, "key": player.key} for player in state.ignored_players],
+                "total_players": state.total_players,
+                "total_kills": state.total_kills,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    def manual_signature(players: list[PlayerKill], scope: str = "") -> str:
+        payload: Any = player_payload(players)
+        if scope:
+            payload = {"scope": normalize_kills_scope_value(scope), "players": payload}
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
     def poll_interval_seconds() -> int:
         try:
             value = int(float(poll_seconds_var.get().replace(",", ".")))
         except ValueError:
-            value = 2
-        return max(1, min(60, value))
+            value = 15
+        return max(10, min(120, value))
 
     def collect_manual_players() -> list[PlayerKill]:
         players: list[PlayerKill] = []
@@ -6571,12 +8273,13 @@ def run_gui(config_path: Path) -> int:
         players = collect_manual_players()
         count_value = manual_remote_count_override if manual_remote_count_override is not None else len(players)
         total_value = manual_remote_total_override if manual_remote_total_override is not None else sum(player.kills for player in players)
-        manual_count_var.set(str(count_value))
-        manual_total_var.set(str(total_value))
+        set_text_var(manual_count_var, count_value)
+        set_text_var(manual_total_var, total_value)
         try:
-            refresh_ff_overlay()
+            refresh_kills_rank_table()
         except NameError:
             pass
+        return
 
     def clear_manual_metric_overrides() -> None:
         nonlocal manual_remote_count_override, manual_remote_total_override
@@ -6605,6 +8308,9 @@ def run_gui(config_path: Path) -> int:
         nonlocal manual_last_local_edit_at
         if manual_applying_remote:
             return
+        scope = current_manual_scope()
+        manual_scope_buffers[scope] = clone_player_list(collect_manual_players())
+        manual_scope_dirty.add(scope)
         clear_manual_metric_overrides()
         manual_last_local_edit_at = time.monotonic()
         update_manual_metrics()
@@ -6817,6 +8523,58 @@ def run_gui(config_path: Path) -> int:
         if notify:
             on_manual_change()
 
+    def open_manual_kill_dialog() -> None:
+        dialog = ctk.CTkToplevel(root)
+        dialog.title("Adicionar jogador em Kills FF")
+        dialog.geometry("500x360")
+        dialog.minsize(440, 320)
+        dialog.configure(fg_color=bg)
+        try:
+            dialog.transient(root)
+            dialog.grab_set()
+            dialog.lift()
+            dialog.focus_force()
+        except tk.TclError:
+            pass
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(0, weight=1)
+
+        name_var = tk.StringVar(value="")
+        kills_var = tk.StringVar(value="0")
+
+        dialog_card = card(
+            dialog,
+            "Adicionar jogador",
+            "Inclua o nick e as kills para o rank selecionado em Kills FF.",
+        )
+        dialog_card.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
+        dialog_card.columnconfigure(1, weight=1)
+
+        section_label(dialog_card, "Nick", 2)
+        name_entry = entry(dialog_card, name_var)
+        name_entry.grid(row=2, column=1, sticky="ew", padx=18, pady=5)
+        section_label(dialog_card, "Kills", 3)
+        entry(dialog_card, kills_var, width=100).grid(row=3, column=1, sticky="w", padx=18, pady=5)
+
+        dialog_actions = ctk.CTkFrame(dialog_card, fg_color=panel, corner_radius=0)
+        dialog_actions.grid(row=4, column=0, columnspan=2, sticky="ew", padx=18, pady=(16, 18))
+
+        def add_and_close() -> None:
+            clean_name = name_var.get().strip()
+            if not clean_name:
+                messagebox.showinfo("Kills FF", "Informe o nick do jogador.")
+                return
+            add_manual_row(clean_name, normalize_kill_value(kills_var.get()), notify=True)
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass
+
+        button(dialog_actions, "Adicionar", add_and_close, "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
+        button(dialog_actions, "Cancelar", dialog.destroy, "ghost", width=100).pack(side=tk.LEFT, padx=(0, 8))
+        name_entry.focus_set()
+        name_entry.bind("<Return>", lambda _event: add_and_close())
+
     def remove_manual_row(row: dict[str, Any]) -> None:
         if row not in manual_rows:
             return
@@ -6871,7 +8629,7 @@ def run_gui(config_path: Path) -> int:
             status = normalize_queue_status(entry_item.status)
             if not name or status == "Concluido":
                 continue
-            key = normalize_player_key(name)
+            key = ff_queue_merge_key(entry_item)
             if key not in grouped:
                 grouped[key] = {
                     "name": name,
@@ -6879,27 +8637,38 @@ def run_gui(config_path: Path) -> int:
                     "waiting": 0,
                     "called": 0,
                     "playing": 0,
+                    "ff_player_id": str(entry_item.ff_player_id or "").strip(),
+                    "panel_user_id": str(entry_item.panel_user_id or entry_item.user_id or "").strip(),
                 }
                 order.append(key)
             rooms = max(1, normalize_kill_value(entry_item.rooms))
             grouped[key]["rooms"] += rooms
+            if entry_item.ff_player_id and not grouped[key]["ff_player_id"]:
+                grouped[key]["ff_player_id"] = str(entry_item.ff_player_id).strip()
+            if (entry_item.panel_user_id or entry_item.user_id) and not grouped[key]["panel_user_id"]:
+                grouped[key]["panel_user_id"] = str(entry_item.panel_user_id or entry_item.user_id).strip()
             if status == "Jogando":
                 grouped[key]["playing"] += rooms
             elif status == "Chamado":
                 grouped[key]["called"] += rooms
             else:
                 grouped[key]["waiting"] += rooms
-        return [grouped[key] for key in order]
+        return sorted(
+            (grouped[key] for key in order),
+            key=lambda item: (-int(item["rooms"]), normalize_player_key(str(item["name"]))),
+        )
 
     def refresh_ff_queue_summary(entries: list[FFQueueEntry] | None = None) -> None:
         items = queue_summary_items(entries if entries is not None else collect_ff_queue_entries())
-        signature = [
+        signature = [("__totals__", ff_queue_remote_count_override, ff_queue_remote_rooms_override)] + [
             (
                 item["name"],
                 item["rooms"],
                 item["waiting"],
                 item["called"],
                 item["playing"],
+                item.get("ff_player_id", ""),
+                item.get("panel_user_id", ""),
             )
             for item in items
         ]
@@ -6914,8 +8683,72 @@ def run_gui(config_path: Path) -> int:
                 pass
         ff_queue_summary_widgets.clear()
 
-        ff_queue_summary_count_var.set(str(len(items)))
-        ff_queue_summary_rooms_var.set(str(sum(int(item["rooms"]) for item in items)))
+        summary_count = ff_queue_remote_count_override if ff_queue_remote_count_override is not None else len(items)
+        summary_rooms = ff_queue_remote_rooms_override if ff_queue_remote_rooms_override is not None else sum(int(item["rooms"]) for item in items)
+        set_text_var(ff_queue_summary_count_var, summary_count)
+        set_text_var(ff_queue_summary_rooms_var, summary_rooms)
+
+        if not items:
+            empty = ctk.CTkLabel(
+                ff_queue_summary_frame,
+                text="Nenhuma sala pendente na fila.",
+                text_color=muted,
+                font=("Segoe UI", 12),
+                anchor="w",
+            )
+            empty.grid(row=0, column=0, sticky="ew", padx=12, pady=14)
+            ff_queue_summary_widgets.append(empty)
+            return
+
+        for index, item in enumerate(items[:80], start=1):
+            row_frame = ctk.CTkFrame(
+                ff_queue_summary_frame,
+                fg_color="#171014" if index % 2 else "#0f0b0e",
+                corner_radius=10,
+            )
+            row_frame.grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
+            row_frame.columnconfigure(1, weight=1)
+            medal_color = accent if index <= 3 else muted
+            ctk.CTkLabel(
+                row_frame,
+                text=f"{index:02d}",
+                text_color=medal_color,
+                font=("Segoe UI Semibold", 12),
+                width=36,
+            ).grid(row=0, column=0, rowspan=2, sticky="w", padx=(10, 6), pady=8)
+            ctk.CTkLabel(
+                row_frame,
+                text=str(item["name"]),
+                text_color=fg,
+                font=("Segoe UI Semibold", 12),
+                anchor="w",
+            ).grid(row=0, column=1, sticky="ew", padx=4, pady=(8, 0))
+            detail_parts = []
+            if item.get("panel_user_id"):
+                detail_parts.append(f"ID {item['panel_user_id']}")
+            if item.get("ff_player_id"):
+                detail_parts.append(f"ID FF {item['ff_player_id']}")
+            if item.get("waiting"):
+                detail_parts.append(f"{item['waiting']} aguardando")
+            if item.get("called"):
+                detail_parts.append(f"{item['called']} chamado")
+            if item.get("playing"):
+                detail_parts.append(f"{item['playing']} jogando")
+            ctk.CTkLabel(
+                row_frame,
+                text=" | ".join(detail_parts) or "-",
+                text_color=muted,
+                font=("Segoe UI", 10),
+                anchor="w",
+            ).grid(row=1, column=1, sticky="ew", padx=4, pady=(0, 8))
+            ctk.CTkLabel(
+                row_frame,
+                text=str(item["rooms"]),
+                text_color=teal,
+                font=("Segoe UI Semibold", 18),
+                width=50,
+            ).grid(row=0, column=2, rowspan=2, sticky="e", padx=(8, 12), pady=8)
+            ff_queue_summary_widgets.append(row_frame)
 
     def ff_queue_signature(entries: list[FFQueueEntry]) -> str:
         return json.dumps(ff_queue_payload(entries), ensure_ascii=False, sort_keys=True)
@@ -6924,8 +8757,8 @@ def run_gui(config_path: Path) -> int:
         try:
             value = int(float(ff_queue_poll_seconds_var.get().replace(",", ".")))
         except ValueError:
-            value = 2
-        return max(1, min(60, value))
+            value = 15
+        return max(10, min(120, value))
 
     def collect_ff_queue_entries() -> list[FFQueueEntry]:
         entries: list[FFQueueEntry] = []
@@ -6948,13 +8781,19 @@ def run_gui(config_path: Path) -> int:
 
     def update_ff_queue_metrics() -> None:
         entries = collect_ff_queue_entries()
-        ff_queue_count_var.set(str(sum(1 for entry in entries if entry.status != "Concluido")))
-        ff_queue_playing_var.set(str(sum(1 for entry in entries if entry.status == "Jogando")))
+        count_value = (
+            ff_queue_remote_count_override
+            if ff_queue_remote_count_override is not None
+            else sum(1 for entry in entries if entry.status != "Concluido")
+        )
+        set_text_var(ff_queue_count_var, count_value)
+        set_text_var(ff_queue_playing_var, sum(1 for entry in entries if entry.status == "Jogando"))
         refresh_ff_queue_summary(entries)
-        try:
-            refresh_ff_overlay()
-        except NameError:
-            pass
+
+    def clear_ff_queue_metric_overrides() -> None:
+        nonlocal ff_queue_remote_count_override, ff_queue_remote_rooms_override
+        ff_queue_remote_count_override = None
+        ff_queue_remote_rooms_override = None
 
     def update_ff_queue_row_numbers() -> None:
         for index, row in enumerate(ff_queue_rows, start=1):
@@ -6978,6 +8817,7 @@ def run_gui(config_path: Path) -> int:
         nonlocal ff_queue_last_local_edit_at
         if ff_queue_applying_remote:
             return
+        clear_ff_queue_metric_overrides()
         ff_queue_last_local_edit_at = time.monotonic()
         update_ff_queue_metrics()
         ff_queue_status_var.set("Editando")
@@ -7001,6 +8841,7 @@ def run_gui(config_path: Path) -> int:
     def run_ff_queue_remote_action(
         action: str,
         row: dict[str, Any] | None = None,
+        entry: FFQueueEntry | None = None,
         credits: int | None = None,
         fallback: callable | None = None,
         label: str = "",
@@ -7021,7 +8862,7 @@ def run_gui(config_path: Path) -> int:
                 fallback()
             return False
 
-        entry_item = ff_queue_row_entry(row) if row is not None else None
+        entry_item = entry if entry is not None else (ff_queue_row_entry(row) if row is not None else None)
         ff_queue_status_var.set(label or "Aplicando")
 
         def run() -> None:
@@ -7042,6 +8883,113 @@ def run_gui(config_path: Path) -> int:
 
         threading.Thread(target=run, daemon=True).start()
         return True
+
+    def clear_ff_queue_manual_form() -> None:
+        ff_queue_manual_name_var.set("")
+        ff_queue_manual_user_id_var.set("")
+        ff_queue_manual_ff_id_var.set("")
+        ff_queue_manual_rooms_var.set("1")
+
+    def add_ff_queue_manual_member() -> None:
+        name = ff_queue_manual_name_var.get().strip()
+        user_id = ff_queue_manual_user_id_var.get().strip()
+        raw_ff_id = ff_queue_manual_ff_id_var.get().strip()
+        ff_player_id = re.sub(r"\D+", "", raw_ff_id)
+        if raw_ff_id and not re.fullmatch(r"\d{5,15}", ff_player_id):
+            messagebox.showerror("Fila FF", "ID FF inválido. Use somente números, de 5 a 15 dígitos.")
+            return
+        rooms = max(1, min(9999, normalize_kill_value(ff_queue_manual_rooms_var.get())))
+        ff_queue_manual_rooms_var.set(str(rooms))
+        if not name and not user_id and not ff_player_id:
+            messagebox.showinfo("Fila FF", "Informe pelo menos nome, ID do membro ou ID FF.")
+            return
+        display_name = name or (f"ID FF {ff_player_id}" if ff_player_id else user_id)
+        entry_item = FFQueueEntry(
+            display_name,
+            "",
+            "Na fila",
+            rooms=rooms,
+            user_id=user_id,
+            ff_player_id=ff_player_id,
+        )
+
+        def fallback() -> None:
+            add_ff_queue_row(
+                display_name,
+                "",
+                "Na fila",
+                rooms,
+                user_id=user_id,
+                ff_player_id=ff_player_id,
+            )
+            ff_queue_status_var.set("Adicionado localmente")
+            clear_ff_queue_manual_form()
+
+        if run_ff_queue_remote_action(
+            "add_member",
+            entry=entry_item,
+            credits=rooms,
+            fallback=fallback,
+            label="Adicionando jogador",
+        ):
+            clear_ff_queue_manual_form()
+
+    def open_ff_queue_manual_dialog() -> None:
+        dialog = ctk.CTkToplevel(root)
+        dialog.title("Adicionar jogador na Fila FF")
+        dialog.geometry("520x430")
+        dialog.minsize(460, 380)
+        dialog.configure(fg_color=bg)
+        try:
+            dialog.transient(root)
+            dialog.grab_set()
+            dialog.focus_force()
+        except tk.TclError:
+            pass
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(0, weight=1)
+
+        dialog_card = card(
+            dialog,
+            "Adicionar jogador",
+            "Informe os dados que serão enviados para a Fila FF do Jarvis.",
+        )
+        dialog_card.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
+        dialog_card.columnconfigure(1, weight=1)
+
+        section_label(dialog_card, "Nome", 2)
+        entry(dialog_card, ff_queue_manual_name_var).grid(row=2, column=1, sticky="ew", padx=18, pady=5)
+        section_label(dialog_card, "ID membro", 3)
+        entry(dialog_card, ff_queue_manual_user_id_var).grid(row=3, column=1, sticky="ew", padx=18, pady=5)
+        section_label(dialog_card, "ID FF", 4)
+        entry(dialog_card, ff_queue_manual_ff_id_var).grid(row=4, column=1, sticky="ew", padx=18, pady=5)
+        section_label(dialog_card, "Salas", 5)
+        entry(dialog_card, ff_queue_manual_rooms_var, width=100).grid(row=5, column=1, sticky="w", padx=18, pady=5)
+
+        dialog_actions = ctk.CTkFrame(dialog_card, fg_color=panel, corner_radius=0)
+        dialog_actions.grid(row=6, column=0, columnspan=2, sticky="ew", padx=18, pady=(16, 18))
+
+        def add_and_close() -> None:
+            before_name = ff_queue_manual_name_var.get().strip()
+            before_user_id = ff_queue_manual_user_id_var.get().strip()
+            before_ff_id = ff_queue_manual_ff_id_var.get().strip()
+            add_ff_queue_manual_member()
+            still_has_input = any(
+                (
+                    ff_queue_manual_name_var.get().strip(),
+                    ff_queue_manual_user_id_var.get().strip(),
+                    ff_queue_manual_ff_id_var.get().strip(),
+                )
+            )
+            if (before_name or before_user_id or before_ff_id) and not still_has_input:
+                try:
+                    dialog.destroy()
+                except tk.TclError:
+                    pass
+
+        button(dialog_actions, "Adicionar no Jarvis", add_and_close, "accent", width=150).pack(side=tk.LEFT, padx=(0, 8))
+        button(dialog_actions, "Limpar", clear_ff_queue_manual_form, "ghost", width=82).pack(side=tk.LEFT, padx=(0, 8))
+        button(dialog_actions, "Cancelar", dialog.destroy, "danger", width=82).pack(side=tk.LEFT)
 
     def adjust_ff_queue_rooms(row: dict[str, Any], delta: int) -> None:
         if row not in ff_queue_rows:
@@ -7175,6 +9123,7 @@ def run_gui(config_path: Path) -> int:
         note_var = tk.StringVar(value=note)
         status_var = tk.StringVar(value=normalize_queue_status(status))
         rooms_var = tk.StringVar(value=str(max(1, normalize_kill_value(rooms))))
+        panel_user_id_var = tk.StringVar(value=str(panel_user_id or user_id or "-").strip() or "-")
         ff_player_id_var = tk.StringVar(value=str(ff_player_id or "-").strip() or "-")
         entry(row_frame, name_var).grid(row=0, column=1, sticky="ew", padx=6, pady=8)
         entry(row_frame, note_var).grid(row=0, column=2, sticky="ew", padx=6, pady=8)
@@ -7189,21 +9138,35 @@ def run_gui(config_path: Path) -> int:
         action_bar = ctk.CTkFrame(row_frame, fg_color="transparent", corner_radius=0)
         action_bar.grid(row=1, column=1, columnspan=4, sticky="ew", padx=6, pady=(0, 10))
         action_bar.columnconfigure(1, weight=1)
+        action_bar.columnconfigure(3, weight=1)
         ctk.CTkLabel(
             action_bar,
-            text="ID FF",
+            text="ID membro",
             text_color=muted,
             font=("Segoe UI Semibold", 11),
         ).grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
         ctk.CTkLabel(
             action_bar,
-            textvariable=ff_player_id_var,
-            text_color=text,
+            textvariable=panel_user_id_var,
+            text_color=fg,
             font=("Segoe UI", 11),
             anchor="w",
-        ).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=2)
-        button(action_bar, "Salvar nome", lambda: save_ff_queue_row_name(row), "default", width=94).grid(row=0, column=2, padx=2, pady=2)
-        button(action_bar, "ID FF", lambda: edit_ff_queue_ff_id(row), "default", width=62).grid(row=0, column=3, padx=2, pady=2)
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=2)
+        ctk.CTkLabel(
+            action_bar,
+            text="ID FF",
+            text_color=muted,
+            font=("Segoe UI Semibold", 11),
+        ).grid(row=0, column=2, sticky="w", padx=(0, 6), pady=2)
+        ctk.CTkLabel(
+            action_bar,
+            textvariable=ff_player_id_var,
+            text_color=fg,
+            font=("Segoe UI", 11),
+            anchor="w",
+        ).grid(row=0, column=3, sticky="ew", padx=(0, 8), pady=2)
+        button(action_bar, "Salvar nome", lambda: save_ff_queue_row_name(row), "default", width=94).grid(row=0, column=4, padx=2, pady=2)
+        button(action_bar, "ID FF", lambda: edit_ff_queue_ff_id(row), "default", width=62).grid(row=0, column=5, padx=2, pady=2)
         button(action_bar, "Topo", lambda: move_ff_queue_row_to(row, "top"), "ghost", width=58).grid(row=1, column=0, padx=(0, 2), pady=2)
         button(action_bar, "↑", lambda: move_ff_queue_row(row, -1), "ghost", width=38).grid(row=1, column=1, sticky="w", padx=2, pady=2)
         button(action_bar, "↓", lambda: move_ff_queue_row(row, 1), "ghost", width=38).grid(row=1, column=2, sticky="w", padx=2, pady=2)
@@ -7223,6 +9186,7 @@ def run_gui(config_path: Path) -> int:
                 "status_var": status_var,
                 "user_id": str(user_id or "").strip(),
                 "panel_user_id": str(panel_user_id or "").strip(),
+                "panel_user_id_var": panel_user_id_var,
                 "ff_player_id": str(ff_player_id or "").strip(),
                 "ff_player_id_var": ff_player_id_var,
             }
@@ -7248,10 +9212,17 @@ def run_gui(config_path: Path) -> int:
         update_ff_queue_metrics()
         on_ff_queue_change()
 
-    def set_ff_queue_entries(entries: list[FFQueueEntry], minimum_rows: int = 0) -> None:
-        nonlocal ff_queue_applying_remote
+    def set_ff_queue_entries(
+        entries: list[FFQueueEntry],
+        minimum_rows: int = 0,
+        total_members: int | None = None,
+        total_credits: int | None = None,
+    ) -> None:
+        nonlocal ff_queue_applying_remote, ff_queue_remote_count_override, ff_queue_remote_rooms_override
         ff_queue_applying_remote = True
         try:
+            ff_queue_remote_count_override = total_members
+            ff_queue_remote_rooms_override = total_credits
             for row in ff_queue_rows:
                 row["frame"].destroy()
             ff_queue_rows.clear()
@@ -7281,14 +9252,15 @@ def run_gui(config_path: Path) -> int:
         on_ff_queue_change()
 
     def call_next_ff_queue() -> None:
-        if run_ff_queue_remote_action("serve_next", label="Chamando proximo"):
+        if run_ff_queue_remote_action("serve_next", label="Atendendo proximo"):
             return
-        for row in ff_queue_rows:
-            if row["name_var"].get().strip() and normalize_queue_status(row["status_var"].get()) == "Na fila":
-                row["status_var"].set("Chamado")
-                ff_queue_status_var.set("Próximo chamado")
-                return
-        messagebox.showinfo("Fila FF", "Nao ha jogadores aguardando na fila.")
+        next_entries, served, remaining = serve_next_queue_entries(collect_ff_queue_entries())
+        if served is None:
+            messagebox.showinfo("Fila FF", "Nao ha jogadores aguardando na fila.")
+            return
+        set_ff_queue_entries(next_entries)
+        ff_queue_status_var.set(f"Atendido: {served.name} ({remaining} sala(s) restantes)")
+        on_ff_queue_change()
 
     def mark_called_playing() -> None:
         for row in ff_queue_rows:
@@ -7309,23 +9281,494 @@ def run_gui(config_path: Path) -> int:
         else:
             messagebox.showinfo("Fila FF", "Nao ha jogador marcado como jogando.")
 
+    def ff_overlay_site_endpoint() -> str:
+        endpoint_url = normalize_endpoint_url(ff_overlay_config_url_var.get())
+        if endpoint_url:
+            return derive_ff_overlay_config_endpoint(endpoint_url)
+        realtime_url = normalize_endpoint_url(ff_overlay_url_var.get())
+        if realtime_url:
+            return derive_ff_overlay_config_endpoint(realtime_url)
+        base_url = normalize_endpoint_url(jarvis_base_url_var.get()).rstrip("/")
+        if base_url:
+            return derive_ff_overlay_config_endpoint(base_url)
+        return ""
+
+    def ff_overlay_site_int(var: tk.StringVar, default: int, min_value: int, max_value: int) -> int:
+        try:
+            value = int(float(var.get().replace(",", ".")))
+        except ValueError:
+            value = default
+        value = max(min_value, min(max_value, value))
+        var.set(str(value))
+        return value
+
+    def ff_overlay_site_color(var: tk.StringVar, default: str) -> str:
+        value = normalize_hex_color(var.get(), default)
+        var.set(value)
+        return value
+
+    def apply_ff_overlay_site_config(payload: dict[str, Any]) -> None:
+        nonlocal ff_overlay_site_profiles, ff_overlay_site_last_config
+        cfg = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+        ff_overlay_site_last_config = dict(cfg)
+        profiles = payload.get("profiles") if isinstance(payload.get("profiles"), list) else []
+        ff_overlay_site_profiles = [item for item in profiles if isinstance(item, dict)]
+        profile = str(payload.get("profile") or ff_overlay_site_profile_var.get() or "streamer1").strip() or "streamer1"
+        ff_overlay_site_profile_var.set(profile)
+        ff_overlay_site_label_var.set(str(payload.get("profile_label") or ""))
+        ff_overlay_site_obs_url_var.set(str(payload.get("overlay_url") or "-"))
+        ff_overlay_config_url_var.set(ff_overlay_site_endpoint())
+        ff_overlay_site_enabled_general_var.set(bool(cfg.get("enabled_general", True)))
+        ff_overlay_site_enabled_daily_var.set(bool(cfg.get("enabled_daily", True)))
+        ff_overlay_site_enabled_queue_var.set(bool(cfg.get("enabled_queue", True)))
+        ff_overlay_site_panel_bg_var.set(bool(cfg.get("panel_bg_enabled", True)))
+        ff_overlay_site_rank_prefix_var.set(bool(cfg.get("show_rank_prefix", True)))
+        ff_overlay_site_medals_var.set(bool(cfg.get("show_medals", True)))
+        ff_overlay_site_layout_var.set(str(cfg.get("layout") or "horizontal"))
+        ff_overlay_site_font_var.set(str(cfg.get("font_family") or "impact"))
+        ff_overlay_site_animation_var.set(str(cfg.get("animation") or "slide"))
+        ff_overlay_site_refresh_var.set(str(max(1000, normalize_kill_value(cfg.get("refresh_ms", 2500)))))
+        ff_overlay_site_switch_var.set(str(max(3, normalize_kill_value(cfg.get("switch_seconds", 10)))))
+        ff_overlay_site_limit_general_var.set(str(max(1, normalize_kill_value(cfg.get("limit_general", 10)))))
+        ff_overlay_site_limit_daily_var.set(str(max(1, normalize_kill_value(cfg.get("limit_daily", 10)))))
+        ff_overlay_site_limit_queue_var.set(str(max(1, normalize_kill_value(cfg.get("limit_queue", 8)))))
+        ff_overlay_site_panel_width_var.set(str(max(180, normalize_kill_value(cfg.get("panel_width", 360)))))
+        ff_overlay_site_gap_var.set(str(max(0, normalize_kill_value(cfg.get("gap", 14)))))
+        ff_overlay_site_padding_var.set(str(max(0, normalize_kill_value(cfg.get("wrap_padding", 8)))))
+        ff_overlay_site_title_size_var.set(str(max(14, normalize_kill_value(cfg.get("title_size", 30)))))
+        ff_overlay_site_row_size_var.set(str(max(12, normalize_kill_value(cfg.get("row_size", 22)))))
+        ff_overlay_site_value_size_var.set(str(max(12, normalize_kill_value(cfg.get("value_size", 24)))))
+        ff_overlay_site_row_height_var.set(str(max(24, normalize_kill_value(cfg.get("row_height", 40)))))
+        ff_overlay_site_panel_bg_color_var.set(normalize_hex_color(cfg.get("panel_bg_color"), "#05070D"))
+        ff_overlay_site_panel_bg_opacity_var.set(str(max(0, min(100, normalize_kill_value(cfg.get("panel_bg_opacity", 48))))))
+        ff_overlay_site_panel_radius_var.set(str(max(0, normalize_kill_value(cfg.get("panel_radius", 10)))))
+        ff_overlay_site_row_bg_color_var.set(normalize_hex_color(cfg.get("row_bg_color"), "#000000"))
+        ff_overlay_site_row_bg_opacity_var.set(str(max(0, min(100, normalize_kill_value(cfg.get("row_bg_opacity", 28))))))
+        ff_overlay_site_accent_width_var.set(str(max(0, normalize_kill_value(cfg.get("accent_width", 4)))))
+        for panel_key, defaults in ff_overlay_site_panel_defaults.items():
+            panel_cfg = cfg.get(panel_key) if isinstance(cfg.get(panel_key), dict) else {}
+            for field_key, default_value in defaults.items():
+                value = panel_cfg.get(field_key, default_value)
+                if field_key.endswith("_color"):
+                    value = normalize_hex_color(value, str(default_value))
+                else:
+                    value = str(value or default_value)
+                ff_overlay_site_panel_vars[panel_key][field_key].set(str(value))
+        label = ff_overlay_site_label_var.get().strip() or profile
+        ff_overlay_site_status_var.set(f"Config carregada: {label}")
+
+    def collect_ff_overlay_site_config() -> dict[str, Any]:
+        cfg = dict(ff_overlay_site_last_config)
+        panel_payload = {}
+        for panel_key, defaults in ff_overlay_site_panel_defaults.items():
+            panel_payload[panel_key] = {
+                "title": ff_overlay_site_panel_vars[panel_key]["title"].get().strip() or str(defaults["title"]),
+                "title_color": ff_overlay_site_color(ff_overlay_site_panel_vars[panel_key]["title_color"], str(defaults["title_color"])),
+                "rank_color": ff_overlay_site_color(ff_overlay_site_panel_vars[panel_key]["rank_color"], str(defaults["rank_color"])),
+                "name_color": ff_overlay_site_color(ff_overlay_site_panel_vars[panel_key]["name_color"], str(defaults["name_color"])),
+                "value_color": ff_overlay_site_color(ff_overlay_site_panel_vars[panel_key]["value_color"], str(defaults["value_color"])),
+                "accent_color": ff_overlay_site_color(ff_overlay_site_panel_vars[panel_key]["accent_color"], str(defaults["accent_color"])),
+            }
+        cfg.update(
+            {
+                "enabled_general": bool(ff_overlay_site_enabled_general_var.get()),
+                "enabled_daily": bool(ff_overlay_site_enabled_daily_var.get()),
+                "enabled_queue": bool(ff_overlay_site_enabled_queue_var.get()),
+                "panel_bg_enabled": bool(ff_overlay_site_panel_bg_var.get()),
+                "show_rank_prefix": bool(ff_overlay_site_rank_prefix_var.get()),
+                "show_medals": bool(ff_overlay_site_medals_var.get()),
+                "layout": ff_overlay_site_layout_var.get().strip() or "horizontal",
+                "font_family": ff_overlay_site_font_var.get().strip() or "impact",
+                "animation": ff_overlay_site_animation_var.get().strip() or "slide",
+                "refresh_ms": ff_overlay_site_int(ff_overlay_site_refresh_var, 2500, 1000, 60000),
+                "switch_seconds": ff_overlay_site_int(ff_overlay_site_switch_var, 10, 3, 120),
+                "limit_general": ff_overlay_site_int(ff_overlay_site_limit_general_var, 10, 1, 50),
+                "limit_daily": ff_overlay_site_int(ff_overlay_site_limit_daily_var, 10, 1, 50),
+                "limit_queue": ff_overlay_site_int(ff_overlay_site_limit_queue_var, 8, 1, 50),
+                "panel_width": ff_overlay_site_int(ff_overlay_site_panel_width_var, 360, 180, 900),
+                "gap": ff_overlay_site_int(ff_overlay_site_gap_var, 14, 0, 80),
+                "wrap_padding": ff_overlay_site_int(ff_overlay_site_padding_var, 8, 0, 120),
+                "title_size": ff_overlay_site_int(ff_overlay_site_title_size_var, 30, 14, 96),
+                "row_size": ff_overlay_site_int(ff_overlay_site_row_size_var, 22, 12, 72),
+                "value_size": ff_overlay_site_int(ff_overlay_site_value_size_var, 24, 12, 80),
+                "row_height": ff_overlay_site_int(ff_overlay_site_row_height_var, 40, 24, 120),
+                "panel_bg_color": ff_overlay_site_color(ff_overlay_site_panel_bg_color_var, "#05070D"),
+                "panel_bg_opacity": ff_overlay_site_int(ff_overlay_site_panel_bg_opacity_var, 48, 0, 100),
+                "panel_radius": ff_overlay_site_int(ff_overlay_site_panel_radius_var, 10, 0, 50),
+                "row_bg_color": ff_overlay_site_color(ff_overlay_site_row_bg_color_var, "#000000"),
+                "row_bg_opacity": ff_overlay_site_int(ff_overlay_site_row_bg_opacity_var, 28, 0, 100),
+                "accent_width": ff_overlay_site_int(ff_overlay_site_accent_width_var, 4, 0, 20),
+                **panel_payload,
+            }
+        )
+        return cfg
+
+    def fetch_ff_overlay_site_config(force: bool = True) -> None:
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc))
+            return
+        endpoint_url = ff_overlay_site_endpoint()
+        if not endpoint_url:
+            ff_overlay_site_status_var.set("Sem endpoint")
+            log("Configure o endpoint de config do Overlay FF.")
+            return
+        ff_overlay_config_url_var.set(endpoint_url)
+        profile = ff_overlay_site_profile_var.get().strip() or "streamer1"
+        ff_overlay_site_status_var.set("Carregando config")
+
+        def run() -> None:
+            try:
+                payload = fetch_ff_overlay_config(
+                    endpoint_url,
+                    profile=profile,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                sync_queue.put(("ff_overlay_config_fetched", {"payload": payload, "force": force}))
+            except Exception as exc:
+                sync_queue.put(("ff_overlay_config_error", {"error": str(exc), "label": "carregar config"}))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def ff_overlay_site_action(action: str, payload: dict[str, Any] | None = None, label: str = "") -> None:
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc))
+            return
+        endpoint_url = ff_overlay_site_endpoint()
+        if not endpoint_url:
+            ff_overlay_site_status_var.set("Sem endpoint")
+            log("Configure o endpoint de config do Overlay FF.")
+            return
+        ff_overlay_config_url_var.set(endpoint_url)
+        profile = ff_overlay_site_profile_var.get().strip() or "streamer1"
+        ff_overlay_site_status_var.set(label or "Salvando config")
+
+        def run() -> None:
+            try:
+                result = send_ff_overlay_config_action(
+                    endpoint_url,
+                    action,
+                    payload or {},
+                    profile=profile,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                sync_queue.put(("ff_overlay_config_saved", {"payload": result, "label": label or action}))
+            except Exception as exc:
+                sync_queue.put(("ff_overlay_config_error", {"error": str(exc), "label": label or action}))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def save_ff_overlay_site_config() -> None:
+        ff_overlay_site_action(
+            "save_config",
+            {"config": collect_ff_overlay_site_config(), "label": ff_overlay_site_label_var.get().strip()},
+            "Salvando overlay OBS",
+        )
+
+    def create_ff_overlay_site_profile() -> None:
+        label = ff_overlay_site_label_var.get().strip()
+        if not label:
+            value = simpledialog.askstring("Novo perfil", "Nome do novo perfil do Overlay FF:", parent=root)
+            label = str(value or "").strip()
+        if not label:
+            return
+        ff_overlay_site_action("create_profile", {"label": label, "source_profile": ff_overlay_site_profile_var.get().strip()}, "Criando perfil")
+
+    def copy_ff_overlay_site_url() -> None:
+        value = ff_overlay_site_obs_url_var.get().strip()
+        if not value or value == "-":
+            messagebox.showinfo("Overlay FF", "Carregue a config para obter a URL OBS.")
+            return
+        root.clipboard_clear()
+        root.clipboard_append(value)
+        ff_overlay_site_status_var.set("URL OBS copiada")
+
+    def open_ff_overlay_site_url() -> None:
+        value = ff_overlay_site_obs_url_var.get().strip()
+        if not value or value == "-":
+            messagebox.showinfo("Overlay FF", "Carregue a config para obter a URL OBS.")
+            return
+        webbrowser.open(value)
+
+    def tikfinity_ff_endpoint() -> str:
+        endpoint_url = normalize_endpoint_url(tikfinity_ff_url_var.get())
+        if endpoint_url:
+            return derive_tikfinity_ff_gifts_endpoint(endpoint_url)
+        base_url = normalize_endpoint_url(jarvis_base_url_var.get()).rstrip("/")
+        if base_url:
+            return derive_tikfinity_ff_gifts_endpoint(base_url)
+        queue_url = normalize_endpoint_url(ff_queue_url_var.get())
+        if queue_url:
+            return derive_tikfinity_ff_gifts_endpoint(queue_url)
+        return ""
+
+    def tikfinity_ff_clean_profile() -> str:
+        return tikfinity_ff_profile_var.get().strip() or "streamer1"
+
+    def tikfinity_ff_clear_widget_list(widgets: list[Any]) -> None:
+        for widget in widgets:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        widgets.clear()
+
+    def tikfinity_ff_ts_label(value: Any) -> str:
+        try:
+            ts = float(value or 0)
+        except (TypeError, ValueError):
+            ts = 0
+        if ts <= 0:
+            return "-"
+        try:
+            return datetime.fromtimestamp(ts).strftime("%d/%m %H:%M")
+        except (OSError, ValueError):
+            return "-"
+
+    def apply_tikfinity_ff_state(payload: dict[str, Any]) -> None:
+        nonlocal tikfinity_ff_profiles
+        config_payload = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+        profiles_payload = payload.get("profiles") if isinstance(payload.get("profiles"), list) else []
+        tikfinity_ff_profiles = [item for item in profiles_payload if isinstance(item, dict)]
+        profile = str(payload.get("profile") or tikfinity_ff_profile_var.get() or "streamer1").strip() or "streamer1"
+        tikfinity_ff_profile_var.set(profile)
+        tikfinity_ff_enabled_var.set(bool(config_payload.get("enabled", True)))
+        tikfinity_ff_coins_var.set(str(max(1, normalize_kill_value(config_payload.get("coins_per_room", 50)))))
+        webhook_url = str(payload.get("webhook_url") or payload.get("webhook_path_url") or "-").strip() or "-"
+        tikfinity_ff_webhook_var.set(webhook_url)
+        mappings = payload.get("mappings") if isinstance(payload.get("mappings"), list) else []
+        users = payload.get("users") if isinstance(payload.get("users"), list) else []
+        history = payload.get("history") if isinstance(payload.get("history"), list) else []
+        tikfinity_ff_summary_var.set(f"{len(mappings)} vínculos | {len(users)} usuários | {len(history)} eventos")
+
+        tikfinity_ff_clear_widget_list(tikfinity_ff_widgets)
+        if not mappings:
+            empty = ctk.CTkLabel(tikfinity_ff_mappings_frame, text="Nenhum TikTok vinculado.", text_color=muted, font=("Segoe UI", 12))
+            empty.grid(row=0, column=0, sticky="w", padx=8, pady=8)
+            tikfinity_ff_widgets.append(empty)
+        for index, item in enumerate(mappings[:20], start=1):
+            handle = str(item.get("social_user") or "-")
+            user_id = str(item.get("user_id") or "-")
+            display = str(item.get("display_name") or "")
+            ffid = str(item.get("ff_player_id") or "-")
+            row_frame = ctk.CTkFrame(tikfinity_ff_mappings_frame, fg_color="#171014", corner_radius=10)
+            row_frame.grid(row=index - 1, column=0, sticky="ew", padx=6, pady=4)
+            row_frame.columnconfigure(0, weight=1)
+            ctk.CTkLabel(row_frame, text=f"@{handle} -> {display or user_id}", text_color=fg, font=("Segoe UI Semibold", 12), anchor="w").grid(
+                row=0, column=0, sticky="ew", padx=10, pady=(8, 0)
+            )
+            ctk.CTkLabel(row_frame, text=f"ID {user_id} | FF {ffid}", text_color=muted, font=("Segoe UI", 11), anchor="w").grid(
+                row=1, column=0, sticky="ew", padx=10, pady=(0, 8)
+            )
+            button(
+                row_frame,
+                "Remover",
+                lambda target=handle: tikfinity_ff_action("remove_mapping", {"social_user": target}, "Removendo vínculo"),
+                "danger",
+                width=78,
+            ).grid(row=0, column=1, rowspan=2, padx=(4, 10), pady=8)
+            tikfinity_ff_widgets.append(row_frame)
+
+        tikfinity_ff_clear_widget_list(tikfinity_ff_user_widgets)
+        if not users:
+            empty = ctk.CTkLabel(tikfinity_ff_users_frame, text="Nenhum gift processado.", text_color=muted, font=("Segoe UI", 12))
+            empty.grid(row=0, column=0, sticky="w", padx=8, pady=8)
+            tikfinity_ff_user_widgets.append(empty)
+        for index, item in enumerate(users[:20], start=1):
+            name = str(item.get("display_name") or item.get("social_user") or item.get("user_id") or "-")
+            social = str(item.get("social_user") or "-")
+            uid = str(item.get("user_id") or "")
+            coins = normalize_kill_value(item.get("total_coins", 0))
+            pending = normalize_kill_value(item.get("pending_coins", 0))
+            rooms = normalize_kill_value(item.get("rooms_added", 0))
+            row_frame = ctk.CTkFrame(tikfinity_ff_users_frame, fg_color="#10131a", corner_radius=10)
+            row_frame.grid(row=index - 1, column=0, sticky="ew", padx=6, pady=4)
+            row_frame.columnconfigure(0, weight=1)
+            ctk.CTkLabel(row_frame, text=name, text_color=fg, font=("Segoe UI Semibold", 12), anchor="w").grid(
+                row=0, column=0, sticky="ew", padx=10, pady=(8, 0)
+            )
+            ctk.CTkLabel(
+                row_frame,
+                text=f"@{social} | {coins} moedas | resto {pending} | +{rooms} salas",
+                text_color=muted,
+                font=("Segoe UI", 11),
+                anchor="w",
+            ).grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 8))
+            button(
+                row_frame,
+                "Zerar",
+                lambda target=uid: tikfinity_ff_action("reset_user", {"user_id": target}, "Zerando usuário"),
+                "danger",
+                width=62,
+            ).grid(row=0, column=1, rowspan=2, padx=(4, 10), pady=8)
+            tikfinity_ff_user_widgets.append(row_frame)
+
+        tikfinity_ff_clear_widget_list(tikfinity_ff_history_widgets)
+        if not history:
+            empty = ctk.CTkLabel(tikfinity_ff_history_frame, text="Sem histórico de gifts.", text_color=muted, font=("Segoe UI", 12))
+            empty.grid(row=0, column=0, sticky="w", padx=8, pady=8)
+            tikfinity_ff_history_widgets.append(empty)
+        for index, item in enumerate(history[:10], start=1):
+            name = str(item.get("display_name") or item.get("social_user") or "-")
+            gift = str(item.get("gift_name") or "gift")
+            coins = normalize_kill_value(item.get("coins_added", 0))
+            rooms = normalize_kill_value(item.get("ff_room_credits_added", 0))
+            row_frame = ctk.CTkFrame(tikfinity_ff_history_frame, fg_color="#171014", corner_radius=10)
+            row_frame.grid(row=index - 1, column=0, sticky="ew", padx=6, pady=4)
+            row_frame.columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                row_frame,
+                text=f"{tikfinity_ff_ts_label(item.get('ts'))} | {name}",
+                text_color=fg,
+                font=("Segoe UI Semibold", 12),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 0))
+            ctk.CTkLabel(row_frame, text=f"{gift} | +{coins} moedas | +{rooms} salas", text_color=muted, font=("Segoe UI", 11), anchor="w").grid(
+                row=1, column=0, sticky="ew", padx=10, pady=(0, 8)
+            )
+            tikfinity_ff_history_widgets.append(row_frame)
+
+    def fetch_tikfinity_ff_panel(force: bool = True) -> None:
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc))
+            return
+        endpoint_url = local_config.get("tikfinity_ff_gifts_url", "").strip()
+        if not endpoint_url:
+            tikfinity_ff_status_var.set("Sem endpoint")
+            if force:
+                log("Configure a URL de TikFinity Gifts do Jarvis.")
+            return
+        tikfinity_ff_status_var.set("Lendo Jarvis")
+
+        def run() -> None:
+            try:
+                payload = fetch_tikfinity_ff_gifts(
+                    endpoint_url,
+                    profile=str(local_config.get("tikfinity_ff_profile", "streamer1")),
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                ff_queue_sync_queue.put(("tikfinity_ff_fetched", {"payload": payload, "force": force}))
+            except Exception as exc:
+                ff_queue_sync_queue.put(("tikfinity_ff_error", {"error": str(exc), "label": "buscar TikFinity FF"}))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def tikfinity_ff_action(action: str, payload: dict[str, Any] | None = None, label: str = "") -> None:
+        try:
+            local_config = update_config_from_form()
+            save_config(config_path, local_config)
+        except Exception as exc:
+            messagebox.showerror("Erro", str(exc))
+            return
+        endpoint_url = local_config.get("tikfinity_ff_gifts_url", "").strip()
+        if not endpoint_url:
+            tikfinity_ff_status_var.set("Sem endpoint")
+            log("Configure a URL de TikFinity Gifts do Jarvis.")
+            return
+        tikfinity_ff_status_var.set(label or "Enviando")
+
+        def run() -> None:
+            try:
+                result = send_tikfinity_ff_gifts_action(
+                    endpoint_url,
+                    action,
+                    payload or {},
+                    profile=str(local_config.get("tikfinity_ff_profile", "streamer1")),
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
+                ff_queue_sync_queue.put(("tikfinity_ff_action_done", {"payload": result, "label": label or action}))
+            except Exception as exc:
+                ff_queue_sync_queue.put(("tikfinity_ff_error", {"error": str(exc), "label": label or action}))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def save_tikfinity_ff_config() -> None:
+        tikfinity_ff_action(
+            "save_config",
+            {
+                "enabled": bool(tikfinity_ff_enabled_var.get()),
+                "coins_per_room": max(1, normalize_kill_value(tikfinity_ff_coins_var.get())),
+                "token": tikfinity_ff_token_var.get().strip(),
+            },
+            "Salvando TikFinity",
+        )
+
+    def add_tikfinity_ff_mapping() -> None:
+        handle = tikfinity_ff_map_handle_var.get().strip()
+        user_id = tikfinity_ff_map_user_id_var.get().strip()
+        if not handle or not user_id:
+            messagebox.showinfo("TikFinity FF", "Informe TikTok e ID do membro.")
+            return
+        ffid = re.sub(r"\D+", "", tikfinity_ff_map_ff_id_var.get())
+        if tikfinity_ff_map_ff_id_var.get().strip() and not re.fullmatch(r"\d{5,15}", ffid):
+            messagebox.showerror("TikFinity FF", "ID FF inválido. Use somente números, de 5 a 15 dígitos.")
+            return
+        tikfinity_ff_action(
+            "add_mapping",
+            {
+                "social_user": handle,
+                "user_id": user_id,
+                "display_name": tikfinity_ff_map_display_var.get().strip(),
+                "ff_player_id": ffid,
+            },
+            "Vinculando TikTok",
+        )
+        tikfinity_ff_map_handle_var.set("")
+        tikfinity_ff_map_user_id_var.set("")
+        tikfinity_ff_map_display_var.set("")
+        tikfinity_ff_map_ff_id_var.set("")
+
+    def clear_tikfinity_ff_history() -> None:
+        if not messagebox.askyesno("TikFinity FF", "Limpar histórico e eventos recentes de gifts?"):
+            return
+        tikfinity_ff_action("clear_history", {}, "Limpando histórico")
+
+    def copy_tikfinity_ff_webhook() -> None:
+        url = tikfinity_ff_webhook_var.get().strip()
+        if not url or url == "-":
+            url = tikfinity_ff_endpoint().replace("/api/tikfinity/ff-gifts", f"/api/tikfinity/gift?profile={tikfinity_ff_clean_profile()}")
+        if tikfinity_ff_token_var.get().strip() and "token=" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}token={quote(tikfinity_ff_token_var.get().strip())}"
+        root.clipboard_clear()
+        root.clipboard_append(url)
+        tikfinity_ff_status_var.set("Webhook copiado")
+
     def apply_jarvis_base_url() -> None:
         base_url = jarvis_base_url_var.get().strip()
         kills_url = derive_jarvis_endpoint(base_url, "kills")
         queue_url = derive_jarvis_endpoint(base_url, "queue")
-        overlay_url = derive_jarvis_endpoint(base_url, "overlay")
+        kills_style_url = derive_kills_style_endpoint(base_url)
+        kills_obs_url = derive_kills_obs_url(base_url)
+        tikfinity_url = derive_tikfinity_ff_gifts_endpoint(base_url)
         if not kills_url or not queue_url:
             messagebox.showinfo("Jarvis FF", "Informe a URL base do Jarvis ou um endpoint /api/freefire-kills.")
             return
         jarvis_base_url_var.set(normalize_endpoint_url(base_url).rstrip("/"))
         sync_url_var.set(kills_url)
+        kills_style_url_var.set(kills_style_url)
+        kills_obs_url_var.set(kills_obs_url)
         ff_queue_url_var.set(queue_url)
-        ff_overlay_url_var.set(overlay_url)
+        tikfinity_ff_url_var.set(tikfinity_url)
         manual_status_var.set("Endpoint configurado")
         ff_queue_status_var.set("Endpoint configurado")
-        ff_overlay_status_var.set("Endpoint configurado")
-        refresh_ff_overlay(force=True)
-        log("Endpoints Jarvis FF preenchidos para Kills FF, Fila FF e Overlay FF.")
+        log("Endpoints Jarvis FF preenchidos para Kills FF e Fila FF.")
 
     def test_jarvis_connection() -> None:
         try:
@@ -7338,12 +9781,14 @@ def run_gui(config_path: Path) -> int:
         kills_url = str(local_config.get("kills_realtime_url", "")).strip()
         queue_url = str(local_config.get("ff_queue_realtime_url", "")).strip()
         overlay_url = str(local_config.get("ff_overlay_realtime_url", "")).strip()
+        tikfinity_url = str(local_config.get("tikfinity_ff_gifts_url", "")).strip()
         if not kills_url or not queue_url:
             messagebox.showinfo("Jarvis FF", "Configure os endpoints de Kills FF e Fila FF antes de testar.")
             return
         manual_status_var.set("Testando Jarvis")
         ff_queue_status_var.set("Testando Jarvis")
         ff_overlay_status_var.set("Testando Jarvis")
+        tikfinity_ff_status_var.set("Testando Jarvis")
 
         def run() -> None:
             results: dict[str, str] = {}
@@ -7383,12 +9828,26 @@ def run_gui(config_path: Path) -> int:
                     results["overlay"] = str(exc)
             else:
                 results["overlay"] = "Endpoint opcional nao configurado"
+            if tikfinity_url:
+                try:
+                    fetch_tikfinity_ff_gifts(
+                        tikfinity_url,
+                        profile=str(local_config.get("tikfinity_ff_profile", "streamer1")),
+                        device_id=str(local_config.get("device_id", "")),
+                        device_name=str(local_config.get("device_name", "")),
+                        token=str(local_config.get("jarvis_api_token", "")),
+                    )
+                    results["tikfinity"] = ""
+                except Exception as exc:
+                    results["tikfinity"] = str(exc)
+            else:
+                results["tikfinity"] = "Endpoint opcional nao configurado"
             sync_queue.put(("jarvis_test", results))
 
         threading.Thread(target=run, daemon=True).start()
 
     def ff_overlay_snapshot() -> tuple[list[PlayerKill], list[dict[str, Any]], int, int]:
-        players = sorted(collect_manual_players(), key=lambda item: (-item.kills, normalize_player_key(item.name)))
+        players = overlay_rank_players(kills_daily_ranking, kills_global_ranking, collect_manual_players())
         queue_items = queue_summary_items(collect_ff_queue_entries())
         total_kills = sum(player.kills for player in players)
         active_rooms = sum(int(item["rooms"]) for item in queue_items)
@@ -7407,8 +9866,9 @@ def run_gui(config_path: Path) -> int:
         }
 
     def ff_overlay_signature() -> str:
+        players, _queue_items, _total_kills, _active_rooms = ff_overlay_snapshot()
         return json.dumps(
-            overlay_payload(collect_manual_players(), collect_ff_queue_entries(), ff_overlay_options_payload()),
+            overlay_payload(players, collect_ff_queue_entries(), ff_overlay_options_payload()),
             ensure_ascii=False,
             sort_keys=True,
         )
@@ -7452,17 +9912,6 @@ def run_gui(config_path: Path) -> int:
         ).grid(row=1, column=0, sticky="w", padx=14, pady=(0, 12))
         ctk.CTkLabel(
             header,
-            text=(
-                f"Kills: {manual_status_var.get()} ({manual_source_var.get() or '-'})  |  "
-                f"Fila: {ff_queue_status_var.get()} ({ff_queue_source_var.get() or '-'})  |  "
-                f"Overlay: {ff_overlay_status_var.get()}"
-            ),
-            text_color=muted,
-            font=("Segoe UI", 9 if compact else 10),
-            anchor="w",
-        ).grid(row=2, column=0, sticky="w", padx=14, pady=(0, 12))
-        ctk.CTkLabel(
-            header,
             text="LIVE",
             text_color="#07100d",
             fg_color=teal,
@@ -7470,7 +9919,7 @@ def run_gui(config_path: Path) -> int:
             font=("Segoe UI Semibold", 11),
             padx=12,
             pady=5,
-        ).grid(row=0, column=1, rowspan=3, sticky="e", padx=14, pady=12)
+        ).grid(row=0, column=1, rowspan=2, sticky="e", padx=14, pady=12)
 
         if show_kills:
             kills_panel = ctk.CTkFrame(shell, fg_color="#0b0d12", corner_radius=12, border_width=1, border_color=border)
@@ -9109,7 +11558,7 @@ def run_gui(config_path: Path) -> int:
                 else:
                     bot_status_var.set("Aguardando comando")
             if not app_closing:
-                root.after(400, pump_bot_send_results)
+                root.after(1000, pump_bot_send_results)
             return
 
         remaining = bot_next_allowed_at - time.time()
@@ -9713,11 +12162,13 @@ def run_gui(config_path: Path) -> int:
     def pump_livepix_queue() -> None:
         if app_closing:
             return
+        processed = False
         while True:
             try:
                 kind, payload = livepix_queue.get_nowait()
             except queue.Empty:
                 break
+            processed = True
             if kind == "webhook":
                 event = parse_livepix_event(payload, source="webhook")
                 if event is not None:
@@ -9805,7 +12256,7 @@ def run_gui(config_path: Path) -> int:
                 livepix_status_var.set("Erro")
                 log(f"Livepix erro: {payload}")
         if not app_closing:
-            root.after(160, pump_livepix_queue)
+            root.after(160 if processed else 800, pump_livepix_queue)
 
     def appearance_config_from_vars() -> dict[str, str]:
         preset = appearance_preset_var.get().strip() or DEFAULT_THEME_NAME
@@ -9831,6 +12282,15 @@ def run_gui(config_path: Path) -> int:
         config["kills_realtime_auto_sync"] = bool(sync_enabled_var.get())
         config["kills_realtime_poll_seconds"] = poll_interval_seconds()
         config["kills_sync_room"] = sync_room_var.get().strip() or "principal"
+        kills_style_url = normalize_endpoint_url(kills_style_url_var.get())
+        if not kills_style_url and endpoint_url:
+            kills_style_url = derive_kills_style_endpoint(endpoint_url)
+        elif jarvis_base_url and not kills_style_url:
+            kills_style_url = derive_kills_style_endpoint(jarvis_base_url)
+        config["freefire_kills_style_url"] = kills_style_url
+        kills_style_url_var.set(kills_style_url)
+        if kills_style_url:
+            kills_obs_url_var.set(derive_kills_obs_url(kills_style_url))
         queue_url = normalize_endpoint_url(ff_queue_url_var.get())
         if jarvis_base_url and not queue_url:
             queue_url = derive_jarvis_endpoint(jarvis_base_url, "queue")
@@ -9841,17 +12301,47 @@ def run_gui(config_path: Path) -> int:
             overlay_url = derive_jarvis_endpoint(jarvis_base_url, "overlay")
         config["ff_overlay_realtime_url"] = overlay_url
         ff_overlay_url_var.set(config["ff_overlay_realtime_url"])
+        overlay_config_url = normalize_endpoint_url(ff_overlay_config_url_var.get())
+        if not overlay_config_url and overlay_url:
+            overlay_config_url = derive_ff_overlay_config_endpoint(overlay_url)
+        if jarvis_base_url and not overlay_config_url:
+            overlay_config_url = derive_ff_overlay_config_endpoint(jarvis_base_url)
+        config["ff_overlay_config_url"] = overlay_config_url
+        ff_overlay_config_url_var.set(config["ff_overlay_config_url"])
+        config["ff_overlay_profile"] = ff_overlay_site_profile_var.get().strip() or "streamer1"
         config["ff_queue_auto_sync"] = bool(ff_queue_enabled_var.get())
         config["ff_overlay_auto_sync"] = bool(ff_overlay_enabled_var.get())
         config["ff_queue_poll_seconds"] = ff_queue_poll_interval_seconds()
         config["ff_queue_room"] = ff_queue_room_var.get().strip() or "principal"
         config["ff_queue_items"] = ff_queue_payload(collect_ff_queue_entries())
+        tikfinity_ff_url = normalize_endpoint_url(tikfinity_ff_url_var.get())
+        if jarvis_base_url and not tikfinity_ff_url:
+            tikfinity_ff_url = derive_tikfinity_ff_gifts_endpoint(jarvis_base_url)
+        elif queue_url and not tikfinity_ff_url:
+            tikfinity_ff_url = derive_tikfinity_ff_gifts_endpoint(queue_url)
+        config["tikfinity_ff_gifts_url"] = tikfinity_ff_url
+        tikfinity_ff_url_var.set(tikfinity_ff_url)
+        config["tikfinity_ff_profile"] = tikfinity_ff_profile_var.get().strip() or "streamer1"
+        config["tikfinity_ff_enabled"] = False
+        config["tikfinity_ff_coins_per_room"] = max(1, normalize_kill_value(tikfinity_ff_coins_var.get()))
+        tikfinity_ff_coins_var.set(str(config["tikfinity_ff_coins_per_room"]))
+        config["tikfinity_ff_token"] = tikfinity_ff_token_var.get().strip()
         config["device_name"] = device_name_var.get().strip() or default_device_name()
         config["jarvis_api_token"] = jarvis_token_var.get().strip()
         config["auto_update_enabled"] = bool(auto_update_var.get())
         config["updates_manifest_url"] = updates_manifest_url_var.get().strip()
         config["message_title"] = title_var.get().strip() or "Kills da partida"
-        config["manual_kills"] = player_payload(collect_manual_players())
+        manual_scope = normalize_kills_scope_value(manual_scope_var.get())
+        if manual_scope not in {"daily", "general"}:
+            manual_scope = "daily"
+        config["kills_manual_scope"] = manual_scope
+        manual_scope_var.set(kills_scope_label(config["kills_manual_scope"]))
+        manual_scope_buffers[manual_scope] = clone_player_list(collect_manual_players())
+        config["manual_kills"] = player_payload(manual_scope_buffers.get(manual_scope, []))
+        config["manual_kills_by_scope"] = {
+            "daily": player_payload(manual_scope_buffers.get("daily", [])),
+            "general": player_payload(manual_scope_buffers.get("general", [])),
+        }
         config["tikfinity_chat_url"] = tikfinity_url_var.get().strip()
         config["chat_event_source"] = chat_source_key()
         config["chat_webhook_host"] = chat_webhook_host_var.get().strip() or "127.0.0.1"
@@ -9994,11 +12484,19 @@ def run_gui(config_path: Path) -> int:
 
         endpoint_url = local_config.get("kills_realtime_url", "").strip()
         players = collect_manual_players()
-        signature = manual_signature(players)
+        manual_scope = normalize_kills_scope_value(local_config.get("kills_manual_scope", "daily"))
+        if manual_scope not in {"daily", "general"}:
+            manual_scope = "daily"
+        signature = manual_signature(players, manual_scope)
         if not endpoint_url:
             manual_status_var.set("Sem endpoint")
             if force:
                 log("Informe a URL do painel/Jarvis para sincronizar as kills.")
+            return
+        if not players:
+            manual_status_var.set("Sem jogadores")
+            if force:
+                log("Adicione pelo menos um jogador antes de enviar as kills.")
             return
         if not force and signature == manual_last_signature:
             manual_status_var.set("Sincronizado")
@@ -10011,16 +12509,30 @@ def run_gui(config_path: Path) -> int:
 
         def run() -> None:
             try:
-                response_text = send_kills_realtime_update(
-                    endpoint_url,
-                    local_config["message_title"],
-                    players,
-                    device_id=str(local_config.get("device_id", "")),
-                    device_name=str(local_config.get("device_name", "")),
-                    room=str(local_config.get("kills_sync_room", "principal")),
-                    token=str(local_config.get("jarvis_api_token", "")),
+                final_state: RealtimeState | None = None
+                for player in players:
+                    final_state = send_kills_action_update(
+                        endpoint_url,
+                        "add",
+                        player=player,
+                        kills=player.kills,
+                        scope=manual_scope,
+                        device_id=str(local_config.get("device_id", "")),
+                        device_name=str(local_config.get("device_name", "")),
+                        room=str(local_config.get("kills_sync_room", "principal")),
+                        token=str(local_config.get("jarvis_api_token", "")),
+                    )
+                sync_queue.put(
+                    (
+                        "manual_rank_sent",
+                        {
+                            "count": len(players),
+                            "signature": signature,
+                            "scope": manual_scope,
+                            "state": final_state,
+                        },
+                    )
                 )
-                sync_queue.put(("sent", {"count": len(players), "signature": signature, "response": response_text}))
             except Exception as exc:
                 sync_queue.put(("send_error", str(exc)))
 
@@ -10033,21 +12545,31 @@ def run_gui(config_path: Path) -> int:
             if force:
                 save_config(config_path, local_config)
         except Exception as exc:
+            local_config = dict(config)
+            endpoint_url = str(local_config.get("kills_realtime_url") or local_config.get("jarvis_endpoint_url") or "").strip()
+            if not endpoint_url and str(local_config.get("jarvis_base_url") or "").strip():
+                endpoint_url = derive_jarvis_endpoint(str(local_config.get("jarvis_base_url") or ""), "kills")
+                local_config["kills_realtime_url"] = endpoint_url
             if force:
                 messagebox.showerror("Erro", str(exc))
-            return
+            elif not endpoint_url:
+                log(f"Nao consegui preparar a configuracao de Kills FF: {exc}")
+                return
 
         endpoint_url = local_config.get("kills_realtime_url", "").strip()
         if not endpoint_url:
-            manual_status_var.set("Sem endpoint")
             if force:
+                set_text_var(manual_status_var, "Sem endpoint")
+                set_text_var(kills_overlay_status_var, "Configure a URL do Jarvis")
                 log("Informe a URL do painel/Jarvis para buscar as kills.")
             return
         if manual_fetching:
             return
 
         manual_fetching = True
-        manual_status_var.set("Lendo painel")
+        if force:
+            set_text_var(manual_status_var, "Lendo painel")
+            set_text_var(kills_overlay_status_var, "Lendo ranking do Jarvis")
 
         def run() -> None:
             try:
@@ -10055,7 +12577,7 @@ def run_gui(config_path: Path) -> int:
                     endpoint_url,
                     device_id=str(local_config.get("device_id", "")),
                     device_name=str(local_config.get("device_name", "")),
-                    room="",
+                    room=str(local_config.get("kills_sync_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
                 sync_queue.put(("fetched", {"state": state, "force": force}))
@@ -10120,15 +12642,16 @@ def run_gui(config_path: Path) -> int:
 
         endpoint_url = local_config.get("ff_queue_realtime_url", "").strip()
         if not endpoint_url:
-            ff_queue_status_var.set("Sem endpoint")
             if force:
+                set_text_var(ff_queue_status_var, "Sem endpoint")
                 log("Informe a URL da fila/Jarvis para buscar a Fila FF.")
             return
         if ff_queue_fetching:
             return
 
         ff_queue_fetching = True
-        ff_queue_status_var.set("Lendo Jarvis")
+        if force:
+            set_text_var(ff_queue_status_var, "Lendo Jarvis")
 
         def run() -> None:
             try:
@@ -10145,16 +12668,26 @@ def run_gui(config_path: Path) -> int:
 
         threading.Thread(target=run, daemon=True).start()
 
-    def schedule_manual_poll() -> None:
+    def schedule_manual_poll(delay_ms: int | None = None) -> None:
         nonlocal manual_poll_after_id
         if app_closing:
+            return
+        if not sync_enabled_var.get():
+            if manual_poll_after_id is not None:
+                try:
+                    root.after_cancel(manual_poll_after_id)
+                except tk.TclError:
+                    pass
+                manual_poll_after_id = None
             return
         if manual_poll_after_id is not None:
             try:
                 root.after_cancel(manual_poll_after_id)
             except tk.TclError:
                 pass
-        manual_poll_after_id = root.after(poll_interval_seconds() * 1000, run_manual_poll)
+        if delay_ms is None:
+            delay_ms = adaptive_poll_seconds(poll_interval_seconds(), manual_poll_quiet_cycles) * 1000
+        manual_poll_after_id = root.after(delay_ms, run_manual_poll)
 
     def run_manual_poll() -> None:
         nonlocal manual_poll_after_id
@@ -10165,16 +12698,26 @@ def run_gui(config_path: Path) -> int:
             fetch_panel_kills(force=False)
         schedule_manual_poll()
 
-    def schedule_ff_queue_poll() -> None:
+    def schedule_ff_queue_poll(delay_ms: int | None = None) -> None:
         nonlocal ff_queue_poll_after_id
         if app_closing:
+            return
+        if not ff_queue_enabled_var.get():
+            if ff_queue_poll_after_id is not None:
+                try:
+                    root.after_cancel(ff_queue_poll_after_id)
+                except tk.TclError:
+                    pass
+                ff_queue_poll_after_id = None
             return
         if ff_queue_poll_after_id is not None:
             try:
                 root.after_cancel(ff_queue_poll_after_id)
             except tk.TclError:
                 pass
-        ff_queue_poll_after_id = root.after(ff_queue_poll_interval_seconds() * 1000, run_ff_queue_poll)
+        if delay_ms is None:
+            delay_ms = adaptive_poll_seconds(ff_queue_poll_interval_seconds(), ff_queue_poll_quiet_cycles) * 1000
+        ff_queue_poll_after_id = root.after(delay_ms, run_ff_queue_poll)
 
     def run_ff_queue_poll() -> None:
         nonlocal ff_queue_poll_after_id
@@ -10185,16 +12728,26 @@ def run_gui(config_path: Path) -> int:
             fetch_ff_queue(force=False)
         schedule_ff_queue_poll()
 
-    def schedule_ff_overlay_poll() -> None:
+    def schedule_ff_overlay_poll(delay_ms: int | None = None) -> None:
         nonlocal ff_overlay_poll_after_id
         if app_closing:
+            return
+        if not ff_overlay_enabled_var.get():
+            if ff_overlay_poll_after_id is not None:
+                try:
+                    root.after_cancel(ff_overlay_poll_after_id)
+                except tk.TclError:
+                    pass
+                ff_overlay_poll_after_id = None
             return
         if ff_overlay_poll_after_id is not None:
             try:
                 root.after_cancel(ff_overlay_poll_after_id)
             except tk.TclError:
                 pass
-        ff_overlay_poll_after_id = root.after(ff_queue_poll_interval_seconds() * 1000, run_ff_overlay_poll)
+        if delay_ms is None:
+            delay_ms = adaptive_poll_seconds(ff_queue_poll_interval_seconds(), ff_overlay_poll_quiet_cycles, max_seconds=120) * 1000
+        ff_overlay_poll_after_id = root.after(delay_ms, run_ff_overlay_poll)
 
     def run_ff_overlay_poll() -> None:
         nonlocal ff_overlay_poll_after_id
@@ -10205,21 +12758,59 @@ def run_gui(config_path: Path) -> int:
             fetch_ff_overlay(force=False)
         schedule_ff_overlay_poll()
 
+    def retry_fetch_panel_kills_after_dns() -> None:
+        nonlocal manual_dns_retry_after_id
+        manual_dns_retry_after_id = None
+        if app_closing:
+            return
+        fetch_panel_kills(force=False)
+
     def handle_sync_event(kind: str, payload: Any) -> None:
         nonlocal manual_sending, manual_fetching, manual_last_signature, manual_last_remote_signature
-        nonlocal ff_overlay_sending, ff_overlay_fetching, ff_overlay_last_signature
+        nonlocal manual_last_rank_signature, manual_poll_quiet_cycles
+        nonlocal ff_overlay_sending, ff_overlay_fetching, ff_overlay_last_signature, ff_overlay_last_remote_signature
+        nonlocal ff_overlay_poll_quiet_cycles
         nonlocal ff_overlay_applying_remote
         nonlocal manual_last_fetch_error, manual_remote_count_override, manual_remote_total_override
+        nonlocal manual_dns_retry_after_id
         if kind == "sent":
             manual_sending = False
             manual_last_signature = payload["signature"]
-            manual_status_var.set("Sincronizado")
-            manual_source_var.set(device_name_var.get().strip() or default_device_name())
+            manual_poll_quiet_cycles = 0
+            set_text_var(manual_status_var, "Sincronizado")
+            set_text_var(manual_source_var, device_name_var.get().strip() or default_device_name())
             response_text = str(payload.get("response", "")).strip()
             if response_text:
                 log(f"Kills enviadas para o painel ({payload['count']} jogador(es)). Resposta: {response_text[:200]}")
             else:
                 log(f"Kills enviadas para o painel ({payload['count']} jogador(es)).")
+            return
+
+        if kind == "manual_rank_sent":
+            manual_sending = False
+            manual_last_signature = payload["signature"]
+            manual_poll_quiet_cycles = 0
+            sent_scope = normalize_kills_scope_value(payload.get("scope"))
+            if sent_scope in {"daily", "general"}:
+                manual_scope_dirty.discard(sent_scope)
+            state = payload.get("state")
+            if isinstance(state, RealtimeState):
+                apply_kills_rankings(state)
+                manual_last_rank_signature = kills_rank_signature_for_state(state)
+                manual_remote_count_override = state.total_players
+                manual_remote_total_override = state.total_kills
+                if state.updated_by:
+                    set_text_var(manual_source_var, state.updated_by)
+                else:
+                    set_text_var(manual_source_var, device_name_var.get().strip() or default_device_name())
+            else:
+                set_text_var(manual_source_var, device_name_var.get().strip() or default_device_name())
+            update_manual_metrics()
+            set_text_var(manual_status_var, "Sincronizado")
+            log(
+                "Kills manuais lançadas no Jarvis "
+                f"{kills_scope_description(payload.get('scope'))} ({payload['count']} jogador(es))."
+            )
             return
 
         if kind == "send_error":
@@ -10231,12 +12822,14 @@ def run_gui(config_path: Path) -> int:
         if kind == "kills_action_done":
             state: RealtimeState = payload["state"]
             apply_kills_rankings(state)
+            manual_last_rank_signature = kills_rank_signature_for_state(state)
+            manual_poll_quiet_cycles = 0
             manual_remote_count_override = state.total_players
             manual_remote_total_override = state.total_kills
             update_manual_metrics()
             if state.updated_by:
-                manual_source_var.set(state.updated_by)
-            manual_status_var.set("Ranking atualizado")
+                set_text_var(manual_source_var, state.updated_by)
+            set_text_var(manual_status_var, "Ranking atualizado")
             label = str(payload.get("label") or payload.get("action") or "acao")
             log(f"Ranking Kills FF atualizado pelo Jarvis: {label}.")
             return
@@ -10248,62 +12841,117 @@ def run_gui(config_path: Path) -> int:
             log(f"Nao consegui aplicar acao de Kills FF ({label}): {error}")
             return
 
+        if kind == "kills_style_loaded":
+            style = payload.get("style") if isinstance(payload, dict) else payload
+            if isinstance(style, dict):
+                apply_kills_style(style)
+            kills_style_status_var.set("Estilo carregado")
+            log("Estilo OBS Kills FF carregado do Jarvis.")
+            return
+
+        if kind == "kills_style_saved":
+            style = payload.get("style") if isinstance(payload, dict) else payload
+            if isinstance(style, dict):
+                apply_kills_style(style)
+            kills_style_status_var.set("Estilo salvo")
+            log("Estilo OBS Kills FF salvo no Jarvis.")
+            return
+
+        if kind == "kills_style_error":
+            label = str(payload.get("label") or "estilo") if isinstance(payload, dict) else "estilo"
+            error = str(payload.get("error") or payload) if isinstance(payload, dict) else str(payload)
+            kills_style_status_var.set("Erro")
+            log(f"Nao consegui sincronizar estilo OBS Kills FF ({label}): {error}")
+            return
+
         if kind == "fetched":
             manual_fetching = False
+            if manual_dns_retry_after_id is not None:
+                try:
+                    root.after_cancel(manual_dns_retry_after_id)
+                except tk.TclError:
+                    pass
+                manual_dns_retry_after_id = None
             state: RealtimeState = payload["state"]
             players = state.players
             force = bool(payload["force"])
             has_rankings = bool(state.daily_ranking or state.global_ranking)
             manual_last_fetch_error = ""
             if has_rankings:
+                rank_signature = kills_rank_signature_for_state(state)
+                rank_changed = rank_signature != manual_last_rank_signature
+                if not force and not rank_changed:
+                    manual_poll_quiet_cycles = min(manual_poll_quiet_cycles + 1, 8)
+                    return
+                manual_poll_quiet_cycles = 0 if rank_changed else min(manual_poll_quiet_cycles + 1, 8)
+                manual_last_rank_signature = rank_signature
                 apply_kills_rankings(state)
+                if rank_changed:
+                    save_kills_rank_cache()
                 manual_remote_count_override = state.total_players
                 manual_remote_total_override = state.total_kills
                 update_manual_metrics()
                 if state.updated_by:
-                    manual_source_var.set(state.updated_by)
-                manual_status_var.set("Ranking atualizado")
+                    set_text_var(manual_source_var, state.updated_by)
+                if force:
+                    set_text_var(manual_status_var, "Ranking atualizado")
                 source_suffix = f" por {state.updated_by}" if state.updated_by else ""
                 display_count = state.total_players if state.total_players is not None else len(state.global_ranking or players)
                 display_total = state.total_kills if state.total_kills is not None else sum(player.kills for player in state.global_ranking or players)
-                if force:
+                if force or rank_changed:
                     log(
                         f"Ranking Kills FF atualizado ({len(state.daily_ranking or [])} diario, "
                         f"{display_count} geral, {display_total} kills){source_suffix}."
                     )
                 return
+            if force:
+                set_text_var(kills_overlay_status_var, "Jarvis respondeu sem rank do dia/geral")
             signature = manual_signature(players)
             current_signature = manual_signature(collect_manual_players())
             if signature != current_signature:
                 if time.monotonic() - manual_last_local_edit_at < 1.2 and not force:
-                    manual_status_var.set("Editando")
+                    manual_poll_quiet_cycles = min(manual_poll_quiet_cycles + 1, 8)
                     return
+                manual_poll_quiet_cycles = 0
                 manual_last_remote_signature = signature
                 set_manual_players(players, total_players=state.total_players, total_kills=state.total_kills)
                 if state.updated_by:
-                    manual_source_var.set(state.updated_by)
-                manual_status_var.set("Atualizado pelo painel")
+                    set_text_var(manual_source_var, state.updated_by)
+                if force:
+                    set_text_var(manual_status_var, "Atualizado pelo painel")
                 source_suffix = f" por {state.updated_by}" if state.updated_by else ""
                 display_count = state.total_players if state.total_players is not None else len(players)
                 display_total = state.total_kills if state.total_kills is not None else sum(player.kills for player in players)
                 log(f"Painel lido em tempo real ({display_count} jogador(es), {display_total} kills){source_suffix}.")
             elif force:
+                manual_poll_quiet_cycles = min(manual_poll_quiet_cycles + 1, 8)
                 manual_remote_count_override = state.total_players
                 manual_remote_total_override = state.total_kills
                 update_manual_metrics()
                 if state.updated_by:
-                    manual_source_var.set(state.updated_by)
-                manual_status_var.set("Painel sem mudanças")
+                    set_text_var(manual_source_var, state.updated_by)
                 log("Painel lido, sem mudanças na lista de kills.")
             else:
-                manual_status_var.set("Sincronizado" if manual_last_signature else "Manual")
+                manual_poll_quiet_cycles = min(manual_poll_quiet_cycles + 1, 8)
             return
 
         if kind == "fetch_error":
             manual_fetching = False
             error = str(payload["error"])
             force = bool(payload["force"])
-            manual_status_var.set("Painel sem leitura")
+            manual_poll_quiet_cycles = min(manual_poll_quiet_cycles + 1, 8)
+            if force:
+                set_text_var(manual_status_var, "Painel sem leitura")
+            dns_error = "NameResolutionError" in error or "getaddrinfo failed" in error or "Failed to resolve" in error
+            if dns_error:
+                cache_loaded = apply_kills_rank_cache()
+                if force:
+                    set_text_var(kills_overlay_status_var, "DNS falhou; usando último rank salvo" if cache_loaded else "DNS falhou; aguardando reconexão")
+                if manual_dns_retry_after_id is None and not app_closing:
+                    manual_dns_retry_after_id = root.after(15000, retry_fetch_panel_kills_after_dns)
+            else:
+                if force:
+                    set_text_var(kills_overlay_status_var, "Erro ao ler ranking")
             if force or error != manual_last_fetch_error:
                 log(f"Nao consegui ler o painel via GET: {error}")
                 manual_last_fetch_error = error
@@ -10314,12 +12962,17 @@ def run_gui(config_path: Path) -> int:
                 kills_error = str(payload.get("kills") or "")
                 queue_error = str(payload.get("queue") or "")
                 overlay_error = str(payload.get("overlay") or "")
+                tikfinity_error = str(payload.get("tikfinity") or "")
                 manual_status_var.set("Jarvis conectado" if not kills_error else "Jarvis com erro")
                 ff_queue_status_var.set("Jarvis conectado" if not queue_error else "Jarvis com erro")
                 if overlay_error == "Endpoint opcional nao configurado":
                     ff_overlay_status_var.set("Opcional")
                 else:
                     ff_overlay_status_var.set("Jarvis conectado" if not overlay_error else "Jarvis com erro")
+                if tikfinity_error == "Endpoint opcional nao configurado":
+                    tikfinity_ff_status_var.set("Opcional")
+                else:
+                    tikfinity_ff_status_var.set("Jarvis conectado" if not tikfinity_error else "Jarvis com erro")
                 errors = []
                 if kills_error:
                     errors.append(f"Kills FF: {kills_error}")
@@ -10327,12 +12980,15 @@ def run_gui(config_path: Path) -> int:
                     errors.append(f"Fila FF: {queue_error}")
                 if overlay_error and overlay_error != "Endpoint opcional nao configurado":
                     errors.append(f"Overlay FF: {overlay_error}")
+                if tikfinity_error and tikfinity_error != "Endpoint opcional nao configurado":
+                    errors.append(f"TikFinity FF: {tikfinity_error}")
             else:
                 errors = payload if isinstance(payload, list) else [str(payload)]
                 if errors:
                     manual_status_var.set("Jarvis com erro")
                     ff_queue_status_var.set("Jarvis com erro")
                     ff_overlay_status_var.set("Jarvis com erro")
+                    tikfinity_ff_status_var.set("Jarvis com erro")
             if errors:
                 log("Teste Jarvis FF falhou: " + " | ".join(str(error) for error in errors))
             else:
@@ -10340,13 +12996,13 @@ def run_gui(config_path: Path) -> int:
                     log("Teste Jarvis FF concluido: Kills FF e Fila FF responderam via GET; Overlay FF esta opcional.")
                 else:
                     log("Teste Jarvis FF concluido: endpoints configurados responderam via GET.")
-            refresh_ff_overlay(force=True)
             return
 
         if kind == "overlay_sent":
             ff_overlay_sending = False
             ff_overlay_last_signature = str(payload.get("signature", ""))
-            ff_overlay_status_var.set("Sincronizado")
+            ff_overlay_poll_quiet_cycles = 0
+            set_text_var(ff_overlay_status_var, "Sincronizado")
             response_text = str(payload.get("response", "")).strip()
             if response_text:
                 log(f"Overlay FF enviado para o Jarvis. Resposta: {response_text[:200]}")
@@ -10371,19 +13027,26 @@ def run_gui(config_path: Path) -> int:
             current_kills_signature = manual_signature([] if kills_has_rankings else collect_manual_players())
             current_queue_signature = ff_queue_signature(collect_ff_queue_entries())
             if kills_has_rankings:
-                apply_kills_rankings(kills_state)
+                rank_signature = kills_rank_signature_for_state(kills_state)
+                if force or rank_signature != manual_last_rank_signature:
+                    apply_kills_rankings(kills_state)
+                    manual_last_rank_signature = rank_signature
+                    ff_overlay_poll_quiet_cycles = 0
+                else:
+                    ff_overlay_poll_quiet_cycles = min(ff_overlay_poll_quiet_cycles + 1, 8)
                 manual_remote_count_override = kills_state.total_players
                 manual_remote_total_override = kills_state.total_kills
                 update_manual_metrics()
                 if kills_state.updated_by:
-                    manual_source_var.set(kills_state.updated_by)
-                manual_status_var.set("Ranking atualizado")
+                    set_text_var(manual_source_var, kills_state.updated_by)
+                if force:
+                    set_text_var(manual_status_var, "Ranking atualizado")
             if (
                 not force
                 and remote_kills_signature == current_kills_signature
                 and remote_queue_signature == current_queue_signature
             ):
-                ff_overlay_status_var.set("Sincronizado" if ff_overlay_last_signature else "Local")
+                ff_overlay_poll_quiet_cycles = min(ff_overlay_poll_quiet_cycles + 1, 8)
                 return
             if (
                 not force
@@ -10392,8 +13055,9 @@ def run_gui(config_path: Path) -> int:
                     or time.monotonic() - ff_queue_last_local_edit_at < 1.2
                 )
             ):
-                ff_overlay_status_var.set("Editando")
+                ff_overlay_poll_quiet_cycles = min(ff_overlay_poll_quiet_cycles + 1, 8)
                 return
+            ff_overlay_poll_quiet_cycles = 0
             ff_overlay_applying_remote = True
             try:
                 if kills_state.players and not kills_has_rankings:
@@ -10403,39 +13067,75 @@ def run_gui(config_path: Path) -> int:
                         total_kills=kills_state.total_kills,
                     )
                     if kills_state.updated_by:
-                        manual_source_var.set(kills_state.updated_by)
-                    manual_status_var.set("Overlay lido")
+                        set_text_var(manual_source_var, kills_state.updated_by)
+                    if force:
+                        set_text_var(manual_status_var, "Overlay lido")
                 if queue_state.entries:
-                    set_ff_queue_entries(queue_state.entries)
+                    set_ff_queue_entries(
+                        queue_state.entries,
+                        total_members=queue_state.total_members,
+                        total_credits=queue_state.total_credits,
+                    )
                     if queue_state.updated_by:
-                        ff_queue_source_var.set(queue_state.updated_by)
-                    ff_queue_status_var.set("Overlay lido")
-                ff_overlay_status_var.set("Atualizado pelo Jarvis")
+                        set_text_var(ff_queue_source_var, queue_state.updated_by)
+                    if force:
+                        set_text_var(ff_queue_status_var, "Overlay lido")
+                if force:
+                    set_text_var(ff_overlay_status_var, "Atualizado pelo Jarvis")
                 refresh_ff_overlay(force=True)
                 ff_overlay_last_signature = ff_overlay_signature()
             finally:
                 ff_overlay_applying_remote = False
-            log(
-                "Overlay FF lido do Jarvis "
-                f"({len(kills_state.players)} jogador(es), {len(queue_state.entries)} item(ns) de fila)."
-            )
+            if force:
+                log(
+                    "Overlay FF lido do Jarvis "
+                    f"({len(kills_state.players)} jogador(es), {len(queue_state.entries)} item(ns) de fila)."
+                )
             return
 
         if kind == "overlay_fetch_error":
             ff_overlay_fetching = False
             error = str(payload.get("error", payload))
             force = bool(payload.get("force", False)) if isinstance(payload, dict) else False
-            ff_overlay_status_var.set("Jarvis sem leitura")
+            ff_overlay_poll_quiet_cycles = min(ff_overlay_poll_quiet_cycles + 1, 8)
+            if force:
+                set_text_var(ff_overlay_status_var, "Jarvis sem leitura")
             if force:
                 log(f"Nao consegui ler o Overlay FF via GET: {error}")
+            return
+
+        if kind == "ff_overlay_config_fetched":
+            data = payload.get("payload") if isinstance(payload, dict) else payload
+            if isinstance(data, dict):
+                apply_ff_overlay_site_config(data)
+            log("Configuracao OBS do Overlay FF carregada do Jarvis.")
+            return
+
+        if kind == "ff_overlay_config_saved":
+            data = payload.get("payload") if isinstance(payload, dict) else payload
+            if isinstance(data, dict):
+                apply_ff_overlay_site_config(data)
+            label = str(payload.get("label") or "config") if isinstance(payload, dict) else "config"
+            ff_overlay_site_status_var.set("Config sincronizada")
+            log(f"Configuracao OBS do Overlay FF atualizada pelo Jarvis: {label}.")
+            return
+
+        if kind == "ff_overlay_config_error":
+            label = str(payload.get("label") or "Overlay FF") if isinstance(payload, dict) else "Overlay FF"
+            error = str(payload.get("error") or payload) if isinstance(payload, dict) else str(payload)
+            ff_overlay_site_status_var.set("Erro")
+            log(f"Nao consegui sincronizar config do Overlay FF ({label}): {error}")
+            return
 
     def handle_ff_queue_sync_event(kind: str, payload: Any) -> None:
         nonlocal ff_queue_sending, ff_queue_fetching, ff_queue_last_signature, ff_queue_last_fetch_error
+        nonlocal ff_queue_poll_quiet_cycles
         if kind == "sent":
             ff_queue_sending = False
             ff_queue_last_signature = payload["signature"]
-            ff_queue_status_var.set("Sincronizado")
-            ff_queue_source_var.set(device_name_var.get().strip() or default_device_name())
+            ff_queue_poll_quiet_cycles = 0
+            set_text_var(ff_queue_status_var, "Sincronizado")
+            set_text_var(ff_queue_source_var, device_name_var.get().strip() or default_device_name())
             response_text = str(payload.get("response", "")).strip()
             if response_text:
                 log(f"Fila FF enviada para o Jarvis ({payload['count']} jogador(es)). Resposta: {response_text[:200]}")
@@ -10452,13 +13152,14 @@ def run_gui(config_path: Path) -> int:
         if kind == "action_done":
             state: FFQueueState = payload["state"]
             entries = state.entries
-            set_ff_queue_entries(entries)
+            set_ff_queue_entries(entries, total_members=state.total_members, total_credits=state.total_credits)
             ff_queue_last_signature = ff_queue_signature(entries)
             ff_queue_last_fetch_error = ""
+            ff_queue_poll_quiet_cycles = 0
             if state.updated_by:
-                ff_queue_source_var.set(state.updated_by)
+                set_text_var(ff_queue_source_var, state.updated_by)
             label = str(payload.get("label") or payload.get("action") or "acao")
-            ff_queue_status_var.set("Sincronizado")
+            set_text_var(ff_queue_status_var, "Sincronizado")
             log(f"Fila FF atualizada pelo Jarvis: {label} ({len(entries)} jogador(es)).")
             return
 
@@ -10469,6 +13170,31 @@ def run_gui(config_path: Path) -> int:
             log(f"Nao consegui aplicar acao da Fila FF ({label}): {error}")
             return
 
+        if kind == "tikfinity_ff_fetched":
+            data = payload.get("payload") if isinstance(payload, dict) else payload
+            if isinstance(data, dict):
+                apply_tikfinity_ff_state(data)
+            tikfinity_ff_status_var.set("TikFinity carregado")
+            log("TikFinity Gifts FF lido do Jarvis.")
+            return
+
+        if kind == "tikfinity_ff_action_done":
+            data = payload.get("payload") if isinstance(payload, dict) else payload
+            if isinstance(data, dict):
+                apply_tikfinity_ff_state(data)
+            label = str(payload.get("label") or "acao") if isinstance(payload, dict) else "acao"
+            tikfinity_ff_status_var.set("Sincronizado")
+            log(f"TikFinity Gifts FF atualizado pelo Jarvis: {label}.")
+            fetch_ff_queue(force=True)
+            return
+
+        if kind == "tikfinity_ff_error":
+            label = str(payload.get("label") or "TikFinity FF") if isinstance(payload, dict) else "TikFinity FF"
+            error = str(payload.get("error") or payload) if isinstance(payload, dict) else str(payload)
+            tikfinity_ff_status_var.set("Erro")
+            log(f"Nao consegui sincronizar {label}: {error}")
+            return
+
         if kind == "fetched":
             ff_queue_fetching = False
             state: FFQueueState = payload["state"]
@@ -10477,30 +13203,50 @@ def run_gui(config_path: Path) -> int:
             signature = ff_queue_signature(entries)
             current_signature = ff_queue_signature(collect_ff_queue_entries())
             ff_queue_last_fetch_error = ""
+            remote_totals_changed = (
+                state.total_members is not None
+                and state.total_members != ff_queue_remote_count_override
+            ) or (
+                state.total_credits is not None
+                and state.total_credits != ff_queue_remote_rooms_override
+            )
             if signature != current_signature:
                 if time.monotonic() - ff_queue_last_local_edit_at < 1.2 and not force:
-                    ff_queue_status_var.set("Editando")
+                    ff_queue_poll_quiet_cycles = min(ff_queue_poll_quiet_cycles + 1, 8)
                     return
-                set_ff_queue_entries(entries)
+                ff_queue_poll_quiet_cycles = 0
+                set_ff_queue_entries(entries, total_members=state.total_members, total_credits=state.total_credits)
                 if state.updated_by:
-                    ff_queue_source_var.set(state.updated_by)
-                ff_queue_status_var.set("Atualizado pelo Jarvis")
+                    set_text_var(ff_queue_source_var, state.updated_by)
+                if force:
+                    set_text_var(ff_queue_status_var, "Atualizado pelo Jarvis")
                 source_suffix = f" por {state.updated_by}" if state.updated_by else ""
                 log(f"Fila FF lida em tempo real ({len(entries)} jogador(es)){source_suffix}.")
-            elif force:
+            elif remote_totals_changed:
+                ff_queue_poll_quiet_cycles = 0
+                set_ff_queue_entries(entries, total_members=state.total_members, total_credits=state.total_credits)
                 if state.updated_by:
-                    ff_queue_source_var.set(state.updated_by)
-                ff_queue_status_var.set("Fila sem mudanças")
+                    set_text_var(ff_queue_source_var, state.updated_by)
+                if force:
+                    set_text_var(ff_queue_status_var, "Resumo atualizado")
+                if force:
+                    log("Resumo da Fila FF atualizado pelo Jarvis.")
+            elif force:
+                ff_queue_poll_quiet_cycles = min(ff_queue_poll_quiet_cycles + 1, 8)
+                if state.updated_by:
+                    set_text_var(ff_queue_source_var, state.updated_by)
                 log("Fila FF lida, sem mudanças.")
             else:
-                ff_queue_status_var.set("Sincronizado" if ff_queue_last_signature else "Manual")
+                ff_queue_poll_quiet_cycles = min(ff_queue_poll_quiet_cycles + 1, 8)
             return
 
         if kind == "fetch_error":
             ff_queue_fetching = False
             error = str(payload["error"])
             force = bool(payload["force"])
-            ff_queue_status_var.set("Jarvis sem leitura")
+            ff_queue_poll_quiet_cycles = min(ff_queue_poll_quiet_cycles + 1, 8)
+            if force:
+                set_text_var(ff_queue_status_var, "Jarvis sem leitura")
             if force or error != ff_queue_last_fetch_error:
                 log(f"Nao consegui ler a Fila FF via GET: {error}")
                 ff_queue_last_fetch_error = error
@@ -10508,26 +13254,30 @@ def run_gui(config_path: Path) -> int:
     def pump_sync_queue() -> None:
         if app_closing:
             return
+        processed = False
         while True:
             try:
                 kind, payload = sync_queue.get_nowait()
             except queue.Empty:
                 break
+            processed = True
             handle_sync_event(kind, payload)
         if not app_closing:
-            root.after(150, pump_sync_queue)
+            root.after(120 if processed else 500, pump_sync_queue)
 
     def pump_ff_queue_sync_queue() -> None:
         if app_closing:
             return
+        processed = False
         while True:
             try:
                 kind, payload = ff_queue_sync_queue.get_nowait()
             except queue.Empty:
                 break
+            processed = True
             handle_ff_queue_sync_event(kind, payload)
         if not app_closing:
-            root.after(150, pump_ff_queue_sync_queue)
+            root.after(120 if processed else 500, pump_ff_queue_sync_queue)
 
     def open_layout_window() -> None:
         window = ctk.CTkToplevel(root)
@@ -11483,11 +14233,39 @@ def run_gui(config_path: Path) -> int:
             )
 
     grid_action_buttons(
+        kills_admin_actions,
+        [
+            ("Somar", lambda: apply_kills_admin_action("add"), "accent"),
+            ("Remover kill", lambda: apply_kills_admin_action("remove"), "ghost"),
+            ("Definir kills", lambda: apply_kills_admin_action("set"), "default"),
+            ("Salvar nome", lambda: apply_kills_admin_action("set_name"), "default"),
+            ("Salvar ID FF", lambda: apply_kills_admin_action("set_ff_id"), "default"),
+            ("Ignorar", lambda: apply_kills_admin_action("ignore"), "danger"),
+            ("Reexibir", lambda: apply_kills_admin_action("unignore"), "accent"),
+            ("Remover rank", lambda: apply_kills_admin_action("delete"), "danger"),
+            ("Reset tudo", lambda: apply_kills_admin_action("reset"), "danger"),
+            ("Reset diario", lambda: apply_kills_admin_action("reset_daily"), "danger"),
+            ("Reset geral", lambda: apply_kills_admin_action("reset_general"), "danger"),
+            ("Buscar Jarvis", lambda: fetch_panel_kills(force=True), "default"),
+            ("Limpar campos", clear_kills_admin_fields, "ghost"),
+        ],
+        columns=4,
+    )
+
+    for label, command, style_name, width in (
+        ("Carregar", lambda: load_kills_style(force=True), "accent", 92),
+        ("Salvar", save_kills_style, "accent", 86),
+        ("Padrão", reset_kills_style_form, "default", 82),
+        ("Copiar OBS", copy_kills_obs_url, "default", 104),
+        ("Abrir", open_kills_obs_url, "ghost", 72),
+    ):
+        button(kills_style_actions, label, command, style_name, width=width).pack(side=tk.LEFT, padx=(0, 6))
+
+    grid_action_buttons(
         manual_actions,
         [
-            ("Adicionar jogador", lambda: add_manual_row(), "accent"),
+            ("Adicionar jogador", open_manual_kill_dialog, "accent"),
             ("Enviar agora", lambda: send_manual_kills(force=True), "accent"),
-            ("Buscar painel", lambda: fetch_panel_kills(force=True), "default"),
             ("Zerar", reset_manual_kills, "ghost"),
             ("Limpar", clear_manual_table, "danger"),
             ("Salvar", save_form, "ghost"),
@@ -11499,8 +14277,8 @@ def run_gui(config_path: Path) -> int:
     grid_action_buttons(
         ff_queue_actions,
         [
-            ("Adicionar jogador", lambda: add_ff_queue_row(), "accent"),
-            ("Chamar próximo", call_next_ff_queue, "accent"),
+            ("Adicionar jogador", open_ff_queue_manual_dialog, "accent"),
+            ("Atender próximo", call_next_ff_queue, "accent"),
             ("Marcar jogando", mark_called_playing, "default"),
             ("Finalizar partida", finish_playing_ff_queue, "ghost"),
             ("Enviar agora", lambda: send_ff_queue(force=True), "accent"),
@@ -11509,6 +14287,19 @@ def run_gui(config_path: Path) -> int:
             ("Limpar", clear_ff_queue, "danger"),
             ("Salvar", save_form, "ghost"),
         ],
+    )
+
+    grid_action_buttons(
+        ff_overlay_site_actions,
+        [
+            ("Carregar config", lambda: fetch_ff_overlay_site_config(force=True), "accent"),
+            ("Salvar no Jarvis", save_ff_overlay_site_config, "accent"),
+            ("Criar perfil", create_ff_overlay_site_profile, "default"),
+            ("Copiar URL OBS", copy_ff_overlay_site_url, "default"),
+            ("Abrir OBS", open_ff_overlay_site_url, "default"),
+            ("Salvar local", save_form, "ghost"),
+        ],
+        columns=3,
     )
 
     grid_action_buttons(
@@ -11525,6 +14316,10 @@ def run_gui(config_path: Path) -> int:
         ],
         columns=4,
     )
+    try:
+        tabview.delete("Overlay FF")
+    except (AttributeError, tk.TclError):
+        pass
 
     button(chat_actions, "Iniciar chat", start_chat_listener, "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
     button(chat_actions, "Abrir janela", open_chat_monitor_window, "default", width=112).pack(side=tk.LEFT, padx=(0, 8))
@@ -11539,31 +14334,37 @@ def run_gui(config_path: Path) -> int:
     def pump_log() -> None:
         if app_closing:
             return
+        processed = False
         while True:
             try:
                 message = log_queue.get_nowait()
             except queue.Empty:
                 break
+            processed = True
             log_text.configure(state="normal")
             log_text.insert(tk.END, message + "\n")
             log_text.see(tk.END)
             log_text.configure(state="disabled")
         if not app_closing:
-            root.after(150, pump_log)
+            root.after(150 if processed else 900, pump_log)
 
     saved_manual_players = parse_players_payload(config.get("manual_kills", []))
-    set_manual_players(saved_manual_players)
-    manual_last_signature = manual_signature(collect_manual_players())
+    saved_manual_by_scope = config.get("manual_kills_by_scope")
+    if isinstance(saved_manual_by_scope, dict):
+        manual_scope_buffers["daily"] = parse_players_payload(saved_manual_by_scope.get("daily", []))
+        manual_scope_buffers["general"] = parse_players_payload(saved_manual_by_scope.get("general", []))
+    if not (manual_scope_buffers["daily"] or manual_scope_buffers["general"]):
+        manual_scope_buffers[manual_active_scope] = clone_player_list(saved_manual_players)
+    set_manual_players(manual_scope_display_players(manual_active_scope, prefer_remote=False))
+    sync_kills_rank_tab_with_manual_scope(manual_active_scope)
+    manual_last_signature = manual_signature(collect_manual_players(), manual_active_scope)
     saved_ff_queue_entries = parse_ff_queue_payload(config.get("ff_queue_items", []))
     set_ff_queue_entries(saved_ff_queue_entries)
     ff_queue_last_signature = ff_queue_signature(collect_ff_queue_entries())
     set_custom_commands(parse_chat_commands_payload(config.get("chat_commands", [])))
     set_chat_timers(parse_chat_timers_payload(config.get("chat_timers", [])))
-    sync_enabled_var.trace_add("write", lambda *_args: schedule_manual_sync(100))
-    poll_seconds_var.trace_add("write", lambda *_args: schedule_manual_poll())
     ff_queue_enabled_var.trace_add("write", lambda *_args: schedule_ff_queue_sync(100))
     ff_queue_poll_seconds_var.trace_add("write", lambda *_args: schedule_ff_queue_poll())
-    ff_overlay_enabled_var.trace_add("write", lambda *_args: schedule_ff_overlay_poll())
     auto_update_var.trace_add(
         "write",
         lambda *_args: general_update_state_var.set("Ativa" if auto_update_var.get() else "Desativada"),
@@ -11592,17 +14393,20 @@ def run_gui(config_path: Path) -> int:
     pump_bot_send_results()
     pump_chat_timers()
     pump_avatar_results()
-    schedule_manual_poll()
+    root.after(900, lambda: fetch_panel_kills(force=False))
+    root.after(1400, lambda: fetch_ff_queue(force=False))
+    if sync_enabled_var.get():
+        schedule_manual_poll()
     schedule_ff_queue_poll()
-    schedule_ff_overlay_poll()
     update_chat_endpoint_text()
     apply_chat_overlay_settings()
-    apply_ff_overlay_settings(refresh=True)
     refresh_chat_messages(force=True)
     refresh_participant_list([])
-    refresh_kills_rank_table()
-    refresh_kills_ignored_list()
-    log("Kills em modo manual. Edite a tabela e use Enviar agora, ou ative a sincronizacao automatica.")
+    if not apply_kills_rank_cache():
+        refresh_kills_rank_table()
+        refresh_kills_ignored_list()
+    apply_tikfinity_ff_state({})
+    log("Kills em modo manual. Edite a tabela e use Enviar agora para lancar as kills no Jarvis.")
     root.mainloop()
     return 0
 

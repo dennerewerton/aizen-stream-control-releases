@@ -2,11 +2,11 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$DownloadUrl,
 
-  [string]$Version = "2.6.24",
+  [string]$Version = "2.6.52",
 
   [string]$Output = "dist\updates.json",
 
-  [string]$Notes = "Fila FF ganha controles iguais ao site: topo, subir, descer, final, salvar nome, salvar ID FF e definir salas por jogador."
+  [string]$Notes = "Faz o seletor Diario/Geral do Kills FF trocar a tabela manual e o overlay de ranking juntos."
 )
 
 $ErrorActionPreference = 'Stop'

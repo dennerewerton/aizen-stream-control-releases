@@ -1,8 +1,8 @@
 # Aizen Stream Control
 
-Aplicativo Windows para lives, kills manuais em tempo real e sorteios multi-plataforma.
+Aplicativo Windows para lives, lançamento manual de kills, filas Free Fire e sorteios multi-plataforma.
 
-As opcoes gerais ficam na aba `Geral`. Os paineis `Kills FF`, `Fila FF` e `Overlay FF` ficam sincronizados com o painel admin do Jarvis, podem rodar em varios PCs ao mesmo tempo e tem atualizacao automatica por manifesto remoto.
+As opcoes gerais ficam na aba `Geral`. `Kills FF` serve para lancar kills manualmente no Jarvis e mostra um overlay interno de ranking na lateral direita. `Fila FF` sincroniza a fila em tempo real com o site. O app pode rodar em varios PCs ao mesmo tempo e tem atualizacao automatica por manifesto remoto.
 
 ## Instalar
 
@@ -42,15 +42,15 @@ python freefire_kill_sender.py --gui
 
 ## Multi-PC
 
-Todos os PCs devem usar:
+Para usar Fila FF em varios PCs, todos devem usar:
 
 - a mesma `URL base do Jarvis` ou os mesmos endpoints de `Kills FF` e `Fila FF`;
 - a mesma `Sala`, por exemplo `principal`;
 - nomes diferentes em `Geral > Nome deste PC`.
 
-Quando um PC altera a tabela, ele envia o estado para o painel. Os outros PCs leem o painel no intervalo configurado em `Ler painel a cada` e atualizam a tela.
+Quando um PC altera a Fila FF, ele envia o estado para o painel. Os outros PCs leem o painel no intervalo configurado em `Ler fila a cada` e atualizam a tela.
 
-Na aba `Geral`, o card `Jarvis FF` permite informar a URL base do site, preencher automaticamente `/api/freefire-kills`, `/api/freefire-queue` e `/api/freefire-overlay`, e testar se Kills/Fila/Overlay respondem via `GET`.
+Na aba `Geral`, o card `Jarvis FF` permite informar a URL base do site, preencher automaticamente `/api/freefire-kills` e `/api/freefire-queue`, e testar se Kills/Fila respondem.
 Pode colar a raiz do site ou a URL do painel administrativo, como `https://seu-jarvis.squareweb.app/admin`; o app deriva os endpoints na raiz `/api`. Se a URL base estiver preenchida e algum endpoint estiver vazio, salvar ou testar tambem completa o endpoint ausente automaticamente.
 
 ## Fila FF
@@ -95,26 +95,24 @@ X-Aizen-Client-Name: PC LIVE
 X-Aizen-Room: principal
 ```
 
-O painel deve aceitar `POST` para receber o estado:
+Para `Kills FF`, o app lança as kills como ação de soma. A URL configurada pode ser `/api/freefire-kills`; o app deriva automaticamente `/api/freefire-kills/action` e envia:
 
 ```json
 {
   "source": "aizen-stream-control",
-  "mode": "manual",
-  "app_version": "2.6.0",
-  "sync_version": 2,
+  "mode": "kills_action",
+  "action": "add",
+  "scope": "daily",
+  "app_version": "2.6.52",
   "room": "principal",
   "client_id": "id-unico-do-pc",
   "client_name": "PC LIVE",
-  "updated_by": "PC LIVE",
-  "updated_at": "2026-06-22T19:30:00",
-  "players": [
-    { "name": "AIZEN OFC", "kills": 7 }
-  ]
+  "player": { "name": "AIZEN OFC", "kills": 7 },
+  "kills": 7
 }
 ```
 
-Para refletir edicoes feitas no painel ou em outro PC, o mesmo endpoint deve aceitar `GET` e responder:
+`scope` pode ser `daily`, `general` ou `both`. A resposta pode devolver o ranking atualizado:
 
 ```json
 {
@@ -225,10 +223,10 @@ Formato do manifesto:
 
 ```json
 {
-  "version": "2.6.24",
-  "notes": "Fila FF ganha controles iguais ao site: topo, subir, descer, final, salvar nome, salvar ID FF e definir salas por jogador.",
+  "version": "2.6.41",
+  "notes": "Corrige falha ao abrir a Fila FF quando o tema reaproveitava o texto Medalhas como cor.",
   "windows": {
-    "portable_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.24/AizenStreamControl.exe",
+    "portable_url": "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.41/AizenStreamControl.exe",
     "sha256": "hash-sha256-do-exe"
   }
 }
@@ -237,7 +235,7 @@ Formato do manifesto:
 Para gerar o manifesto depois de publicar o exe:
 
 ```powershell
-.\build_update_manifest.ps1 -Version "2.6.24" -DownloadUrl "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.24/AizenStreamControl.exe"
+.\build_update_manifest.ps1 -Version "2.6.41" -DownloadUrl "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.41/AizenStreamControl.exe"
 ```
 
 Envie para o servidor:
@@ -246,6 +244,127 @@ Envie para o servidor:
 - `dist\updates.json`
 
 Depois cole a URL do `updates.json` no campo `Manifesto de atualização`.
+
+Para publicar direto no GitHub Releases, configure uma vez um token com permissao de escrita no repositorio `dennerewerton/aizen-stream-control-releases`:
+
+```powershell
+$env:GITHUB_TOKEN="cole_o_token_aqui"
+.\publish_github_release.ps1 -Version "2.6.52" -Notes "Faz o seletor Diario/Geral do Kills FF trocar a tabela manual e o overlay de ranking juntos."
+```
+
+Esse script cria ou atualiza a release informada, envia `AizenStreamControl.exe` e `updates.json`, e marca a release como latest para todos os apps instalados receberem a atualizacao.
+
+### Revisão 2.6.52
+
+A versão `2.6.52` faz o seletor `Diario/Geral` da aba `Kills FF` trocar também a tabela manual abaixo, usando o ranking correspondente recebido do Jarvis. O seletor da esquerda agora acompanha a aba de ranking da direita e mantém buffers separados para edição diária e geral.
+
+### Revisão 2.6.51
+
+A versão `2.6.51` simplifica o card `Kills FF`: remove o `Rank Jarvis` interno e remove a opção `Ambos`. O lançamento manual agora escolhe diretamente entre as abas `Diario` e `Geral`, enviando as kills somente para o rank selecionado.
+
+### Revisão 2.6.50
+
+A versão `2.6.50` melhora a aba `Kills FF`: o card principal agora tem abas internas para alternar entre `Lançar Kills` e `Rank Jarvis`, com seleção `Diário`/`Geral` no ranking igual ao overlay. O botão `Adicionar jogador` agora abre uma janela dedicada para informar nick, kills e escopo antes de inserir a linha.
+
+### Revisão 2.6.49
+
+A versão `2.6.49` deixa o app mais leve para uso em live: Kills FF e Fila FF usam polling adaptativo, leituras automáticas sem mudança não redesenham tabelas nem alteram textos de status, o Overlay FF não faz leitura remota contínua sem necessidade e a aba `Eventos` foi renomeada para `Logs` para concentrar mensagens técnicas fora das telas principais.
+
+### Revisão 2.6.48
+
+A versão `2.6.48` melhora a estabilidade quando o Windows falha ao resolver `jarvis-da-shopee.squareweb.app`: o app guarda o último ranking válido em cache local, mostra esse ranking no overlay se o DNS cair e agenda uma nova tentativa automática em seguida. Isso evita que o card da lateral direita fique vazio durante oscilações de DNS/internet.
+
+### Revisão 2.6.47
+
+A versão `2.6.47` reforça o overlay da lateral direita em `Kills FF`: o card agora tem botão `Atualizar rank`, mostra o status da leitura no próprio overlay e tenta carregar o ranking ao abrir mesmo quando a URL precisa ser derivada da URL base do Jarvis. Se algum campo da tela impedir salvar a configuração, a leitura usa a última configuração válida em vez de parar silenciosamente.
+
+### Revisão 2.6.46
+
+A versão `2.6.46` corrige o overlay que ainda ficava vazio: o `Overlay FF` agora monta o rank usando o ranking real carregado do Jarvis, priorizando o `Rank do Dia` e usando o `Rank Geral` como fallback. A aba `Kills FF` também faz uma leitura inicial do ranking ao abrir o app e volta a preservar corretamente a opção `Sincronizar automaticamente`.
+
+### Revisão 2.6.45
+
+A versão `2.6.45` corrige a leitura real do ranking do Jarvis: quando `/api/freefire-kills` devolver apenas `players`, o app busca automaticamente `/api/freefire-kills/rank` para carregar `Rank do Dia` e `Rank Geral`. Isso faz a lateral direita de `Kills FF` preencher o overlay com os mesmos dados separados que aparecem no site.
+
+### Revisão 2.6.44
+
+A versão `2.6.44` corrige o overlay de ranking em `Kills FF` para respeitar os dados separados do Jarvis entre `Rank do Dia` e `Rank Geral`, sem preencher uma aba com a mesma prévia da outra. O overlay também ficou maior, removendo estatísticas totais e a observação inferior.
+
+### Revisão 2.6.43
+
+A versão `2.6.43` troca a lateral direita de `Kills FF`: em vez de mostrar link do site, ela exibe um overlay interno de ranking com colunas de rank, jogador e kills, além de abas para alternar entre `Diário` e `Geral`.
+
+### Revisão 2.6.42
+
+A versão `2.6.42` simplifica `Kills FF` para lançamento manual: o app soma as kills digitadas usando a ação `add`, remove a administração/overlay local da aba e deixa a URL oficial do overlay do Jarvis fixa na lateral direita. A `Fila FF` agora coloca o `Resumo de salas` na direita ocupando a altura da aba, move `Adicionar jogador` para uma janela modal e esconde a opção antiga de salas por gifts TikFinity.
+
+### Revisão 2.6.41
+
+A versão `2.6.41` corrige uma falha ao abrir a `Fila FF`: os campos de `ID membro` e `ID FF` agora usam a cor de texto do tema corretamente, sem reaproveitar o último texto de opções como nome de cor.
+
+### Revisão 2.6.40
+
+A versão `2.6.40` adiciona o seletor `Aplicar em` na aba `Kills FF`: ao enviar as kills manuais, o app pode definir os valores somente no rank do dia, somente no rank geral ou nos dois ao mesmo tempo, usando o mesmo endpoint de ações do painel Jarvis.
+
+### Revisão 2.6.39
+
+A versão `2.6.39` aproxima o `Overlay OBS do site` do painel Jarvis: o app agora edita os campos avançados do overlay `/freefire/overlay`, incluindo gap, padding, tamanhos de título/linha/valor, altura da linha, cores e opacidades de fundo, raio, largura do acento e os títulos/cores dos painéis `Geral`, `Dia` e `Fila`.
+
+### Revisão 2.6.38
+
+A versão `2.6.38` melhora a conferência da `Fila FF`: cada linha da lista principal agora mostra `ID membro` e `ID FF`, aproximando a visualização do painel do site e facilitando identificar o cadastro exato que está sendo alterado no Jarvis. O verificador local também cobre a sequência completa das ações de salas do site: limpar, adicionar, renomear, salvar ID FF, somar/remover/definir salas, ordenar, atender e remover.
+
+### Revisão 2.6.37
+
+A versão `2.6.37` melhora a aba `Kills FF`: cada linha das tabelas visuais `Kills Diárias` e `Kills Geral` ganhou a ação `Usar`, que preenche o card `Administrar ranking Jarvis` com jogador, ID FF, chave interna e escopo correto. A tabela da direita continua somente visual, mas fica mais rápida para administrar sem digitar o nick manualmente.
+
+### Revisão 2.6.36
+
+A versão `2.6.36` alinha o botão `Atender próximo` da `Fila FF` ao comportamento do site: ele consome 1 sala do primeiro jogador da fila e, se ainda restarem salas, reenfileira o jogador no final. Isso vale para o fluxo remoto do Jarvis e também para o fallback local.
+
+### Revisão 2.6.35
+
+A versão `2.6.35` deixa `Fila FF` mais fiel ao contrato do Jarvis: o app agora lê `queue.entries`, `summary.total_members` e `summary.total_credits`, usando os totais remotos de membros e salas no painel quando o site enviar esses valores. Isso evita diferença entre os números do app e os números do site.
+
+### Revisão 2.6.34
+
+A versão `2.6.34` deixa a `Fila FF` mais alinhada ao painel do site: entradas são agrupadas primeiro por ID do membro e ID FF, reduzindo duplicidade quando o mesmo jogador aparece com nomes diferentes. O `Resumo de salas` também mostra o ID do membro junto com o ID FF para facilitar conferência.
+
+### Revisão 2.6.33
+
+A versão `2.6.33` melhora `Fila FF`/`Salas FF` com o card `Resumo de salas`, mostrando jogadores únicos, total de salas e separação por aguardando, chamado e jogando. A lista é ordenada por quem tem mais salas, evita duplicidade por nome/ID FF e deixa a tabela principal da direita focada na gestão da fila.
+
+### Revisão 2.6.32
+
+A versão `2.6.32` mantém `Kills FF` dividido como no site, com `Kills Diárias` e `Kills Geral` em tabelas visuais fixas na direita, e completa o card `OBS Kills FF` com os controles avançados do overlay legado: peso, largura máxima, gap, padding, troca automática, sombra, fundo, borda e raio.
+
+### Revisão 2.6.31
+
+A versão `2.6.31` adiciona em `Kills FF` o card `OBS Kills FF`, para editar pelo app o estilo do overlay legado `/freefire-kills/obs`: título, fonte, alinhamento, tamanhos, cores, título/#/medalhas/fundo/borda, além de carregar/salvar no Jarvis e copiar/abrir a URL OBS. O Jarvis recebe a rota segura `/api/freefire-kills/style` com `X-Aizen-Token`.
+
+### Revisão 2.6.30
+
+A versão `2.6.30` adiciona na aba `Fila FF` o card `Adicionar jogador manualmente`, igual ao painel do site, com campos para `Nome`, `ID membro`, `ID FF` e `Salas`, enviando direto para a ação `add_member` do Jarvis.
+
+### Revisão 2.6.29
+
+A versão `2.6.29` adiciona o botão `Reset tudo` em `Kills FF > Administrar ranking Jarvis`, usando a ação `reset` do site para zerar ranking diário e geral ao mesmo tempo, mantendo os jogadores ignorados.
+
+### Revisão 2.6.28
+
+A versão `2.6.28` deixa a aba `Kills FF` igual ao site: ranking diário e ranking geral separados, ambos somente visuais em uma tabela fixa na direita. O app também aceita aliases extras do Jarvis para evitar falha caso o backend envie `general_ranking`/`daily_rank`.
+
+### Revisão 2.6.27
+
+A versão `2.6.27` adiciona na aba `Kills FF` o card `Administrar ranking Jarvis`, com ações equivalentes ao painel do site: somar, remover, definir kills, salvar nome, salvar ID FF, ignorar, reexibir, remover do ranking e resetar diário/geral. O rank da direita permanece somente visual.
+
+### Revisão 2.6.26
+
+A versão `2.6.26` separa o rank da aba `Kills FF` em duas tabelas fixas na direita: `Kills Diárias` e `Kills Geral`. As tabelas sao somente visuais e continuam sendo atualizadas pelo Jarvis.
+
+### Revisão 2.6.25
+
+A versão `2.6.25` adiciona ao app o painel `Salas por Gifts TikFinity` dentro da aba `Fila FF`: configuração de webhook, token, moedas por sala, vínculos TikTok -> membro, moedas acumuladas e histórico recente, usando a rota segura `/api/tikfinity/ff-gifts` do Jarvis.
 
 ### Revisão 2.6.24
 
@@ -287,20 +406,17 @@ A versão `2.6.16` adiciona a aba `Temporizador`, para mensagens automaticas do 
 
 A versão `2.6.15` reforça o fechamento do app, fecha overlays e janelas auxiliares de forma centralizada, cancela polls em segundo plano ao sair, melhora o instalador quando já existe uma instância aberta, ajusta o cabeçalho premium e deixa o autocomplete de nicks mais claro no painel `Kills FF`.
 
-## Overlay FF
+## Overlay Kills FF
 
-Na aba `Overlay FF`, o app combina em uma unica tela os dados sincronizados de `Kills FF` e `Fila FF`. O preview mostra o mesmo layout da janela de overlay, com ranking de kills, resumo da fila, total de kills, jogadores e salas ativas.
+Na aba `Kills FF`, a lateral direita mostra um overlay interno de ranking. Ele tem:
 
-Botoes principais:
+- coluna de rank;
+- nome do jogador;
+- quantidade de kills;
+- aba `Diário`;
+- aba `Geral`.
 
-- `Abrir overlay`: abre uma janela sempre visivel para usar no jogo ou no OBS;
-- `Atualizar Jarvis`: busca Kills FF, Fila FF e Overlay FF imediatamente;
-- `Buscar overlay`, `Buscar kills` e `Buscar fila`: atualizam cada fonte separadamente;
-- `Salvar`: guarda opacidade, tamanho e opcoes do overlay.
-
-O overlay usa as mesmas URLs configuradas nas abas `Kills FF` e `Fila FF`, entao qualquer mudanca lida ou enviada para o Jarvis atualiza tambem a janela do overlay.
-
-Se o site tiver o endpoint `/api/freefire-overlay`, o app tambem envia e busca continuamente um snapshot combinado com `players`, `queue`, `summary` e `options`. Se esse endpoint ficar vazio, o Overlay FF continua sincronizado localmente a partir de Kills FF e Fila FF.
+Quando o Jarvis devolve os rankings depois do lançamento das kills, o overlay usa esses dados separados por aba. Se uma aba ainda não foi retornada pelo Jarvis, ela fica vazia em vez de reaproveitar os dados da outra.
 
 Para validar os contratos localmente:
 

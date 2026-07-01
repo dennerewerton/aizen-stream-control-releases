@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.24",
-    "notes":  "Fila FF ganha controles iguais ao site: topo, subir, descer, final, salvar nome, salvar ID FF e definir salas por jogador.",
+    "version":  "2.6.52",
+    "notes":  "Faz o seletor Diario/Geral do Kills FF trocar a tabela manual e o overlay de ranking juntos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.24/AizenStreamControl.exe",
-                    "sha256":  "cd558c0f8a8878f09799eb7f30fbeced5888db824f6f63d47cbe35201a43a232"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.52/AizenStreamControl.exe",
+                    "sha256":  "23858de97e1c334593978808170ca3a262987ed271d9b2624e6abf478e237cf4"
                 }
 }
