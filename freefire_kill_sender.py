@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.54"
+APP_VERSION = "2.6.55"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1021,6 +1021,66 @@ def format_livepix_amount(amount: int, currency: str = "BRL") -> str:
     return f"{value:.2f} {symbol}"
 
 
+LIVEPIX_DNS_FALLBACK_IPS = {
+    "oauth.livepix.gg": ("104.20.20.235", "172.66.174.70"),
+    "api.livepix.gg": ("104.20.20.235", "172.66.174.70"),
+}
+LIVEPIX_DNS_FALLBACK_LOCK = threading.Lock()
+
+
+def livepix_is_dns_error(exc: Exception) -> bool:
+    error_text = str(exc)
+    return (
+        "NameResolutionError" in error_text
+        or "Failed to resolve" in error_text
+        or "getaddrinfo failed" in error_text
+    )
+
+
+def livepix_request_with_dns_fallback(
+    method: str,
+    url: str,
+    log: callable | None = None,
+    **kwargs: Any,
+) -> requests.Response:
+    try:
+        return requests.request(method, url, **kwargs)
+    except requests.ConnectionError as exc:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        fallback_ips = LIVEPIX_DNS_FALLBACK_IPS.get(host)
+        if not fallback_ips or not livepix_is_dns_error(exc):
+            raise
+        if log is not None:
+            log(f"Livepix DNS local falhou para {host}; usando fallback interno.")
+        original_getaddrinfo = socket.getaddrinfo
+
+        def fallback_getaddrinfo(
+            query_host: Any,
+            port: Any,
+            family: int = 0,
+            socktype: int = 0,
+            proto: int = 0,
+            flags: int = 0,
+        ) -> list[Any]:
+            clean_host = str(query_host).strip("[]").lower()
+            if clean_host == host:
+                resolved_socktype = socktype or socket.SOCK_STREAM
+                resolved_proto = proto or socket.IPPROTO_TCP
+                return [
+                    (socket.AF_INET, resolved_socktype, resolved_proto, "", (ip_address, int(port or 443)))
+                    for ip_address in fallback_ips
+                ]
+            return original_getaddrinfo(query_host, port, family, socktype, proto, flags)
+
+        with LIVEPIX_DNS_FALLBACK_LOCK:
+            socket.getaddrinfo = fallback_getaddrinfo
+            try:
+                return requests.request(method, url, **kwargs)
+            finally:
+                socket.getaddrinfo = original_getaddrinfo
+
+
 class LivepixApiClient:
     api_base_url = "https://api.livepix.gg/v2"
     token_url = "https://oauth.livepix.gg/oauth2/token"
@@ -1050,8 +1110,10 @@ class LivepixApiClient:
         response: requests.Response | None = None
         for attempt in range(3):
             try:
-                response = requests.post(
+                response = livepix_request_with_dns_fallback(
+                    "POST",
                     self.token_url,
+                    log=self.log,
                     data=token_payload,
                     headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"},
                     timeout=20,
@@ -1077,7 +1139,14 @@ class LivepixApiClient:
         headers = dict(kwargs.pop("headers", {}) or {})
         headers["Authorization"] = f"Bearer {self.token()}"
         headers["User-Agent"] = f"{APP_NAME}/{APP_VERSION}"
-        response = requests.request(method, f"{self.api_base_url}{path}", headers=headers, timeout=25, **kwargs)
+        response = livepix_request_with_dns_fallback(
+            method,
+            f"{self.api_base_url}{path}",
+            log=self.log,
+            headers=headers,
+            timeout=25,
+            **kwargs,
+        )
         response.raise_for_status()
         if response.status_code == 204 or not response.content:
             return {}
