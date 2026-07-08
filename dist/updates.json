@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.52",
-    "notes":  "Faz o seletor Diario/Geral do Kills FF trocar a tabela manual e o overlay de ranking juntos.",
+    "version":  "2.6.53",
+    "notes":  "Oculta abas FF/Chat, desativa sincronizacoes dessas areas e salva configuracoes automaticamente.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.52/AizenStreamControl.exe",
-                    "sha256":  "23858de97e1c334593978808170ca3a262987ed271d9b2624e6abf478e237cf4"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.53/AizenStreamControl.exe",
+                    "sha256":  "40595a6f9d284fdd1e7155b0e80eb9ed6d3ca7c3a9366546d53510bb06c7dc6f"
                 }
 }

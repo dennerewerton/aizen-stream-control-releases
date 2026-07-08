@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.52"
+APP_VERSION = "2.6.53"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -484,6 +484,9 @@ def load_config(path: Path) -> dict[str, Any]:
     data.setdefault("livepix_goal_amount", 50000)
     data.setdefault("livepix_goal_label", "Meta da live")
     data.setdefault("livepix_currency", "BRL")
+    data.setdefault("livepix_checkout_amount", 1000)
+    data.setdefault("livepix_checkout_user", "Apoiador")
+    data.setdefault("livepix_checkout_message", "Apoio para a live!")
     data.setdefault("livepix_plan_id", "")
     data.setdefault("livepix_plan_slug", "vip-live")
     data.setdefault("livepix_plan_name", "VIP da live")
@@ -4761,6 +4764,13 @@ def run_gui(config_path: Path) -> int:
     bot_sending = False
     bot_next_allowed_at = 0.0
     app_closing = False
+    hidden_main_tabs = {"Kills FF", "Fila FF", "Chat Ao Vivo"}
+    kills_ff_site_sync_hidden = "Kills FF" in hidden_main_tabs
+    ff_queue_site_sync_hidden = "Fila FF" in hidden_main_tabs
+    chat_listener_hidden = "Chat Ao Vivo" in hidden_main_tabs
+    ff_overlay_site_sync_hidden = kills_ff_site_sync_hidden and ff_queue_site_sync_hidden
+    config_auto_save_after_id: str | None = None
+    config_auto_save_running = False
     livepix_events = load_livepix_events(livepix_events_path(config_path))
     livepix_overlay_window: Any | None = None
     livepix_overlay_frame: Any | None = None
@@ -4954,7 +4964,7 @@ def run_gui(config_path: Path) -> int:
     }
     tikfinity_ff_url_var = tk.StringVar(value=initial_tikfinity_ff_url)
     tikfinity_ff_profile_var = tk.StringVar(value=str(config.get("tikfinity_ff_profile", "streamer1") or "streamer1"))
-    tikfinity_ff_enabled_var = tk.BooleanVar(value=False)
+    tikfinity_ff_enabled_var = tk.BooleanVar(value=bool(config.get("tikfinity_ff_enabled", False)) and not ff_queue_site_sync_hidden)
     tikfinity_ff_coins_var = tk.StringVar(value=str(config.get("tikfinity_ff_coins_per_room", 50)))
     tikfinity_ff_token_var = tk.StringVar(value=str(config.get("tikfinity_ff_token", "")))
     tikfinity_ff_status_var = tk.StringVar(value="Não carregado")
@@ -4966,8 +4976,8 @@ def run_gui(config_path: Path) -> int:
     tikfinity_ff_map_ff_id_var = tk.StringVar(value="")
     ff_queue_room_var = tk.StringVar(value=config.get("ff_queue_room", "principal"))
     jarvis_base_url_var = tk.StringVar(value=initial_jarvis_base_url)
-    ff_queue_enabled_var = tk.BooleanVar(value=bool(config.get("ff_queue_auto_sync", True)))
-    ff_overlay_enabled_var = tk.BooleanVar(value=bool(config.get("ff_overlay_auto_sync", True)))
+    ff_queue_enabled_var = tk.BooleanVar(value=bool(config.get("ff_queue_auto_sync", True)) and not ff_queue_site_sync_hidden)
+    ff_overlay_enabled_var = tk.BooleanVar(value=bool(config.get("ff_overlay_auto_sync", True)) and not ff_overlay_site_sync_hidden)
     ff_queue_poll_seconds_var = tk.StringVar(value=str(max(10, normalize_kill_value(config.get("ff_queue_poll_seconds", 15)))))
     ff_queue_status_var = tk.StringVar(value="Manual")
     ff_overlay_status_var = tk.StringVar(value="Local")
@@ -4982,7 +4992,7 @@ def run_gui(config_path: Path) -> int:
     ff_queue_manual_rooms_var = tk.StringVar(value="1")
     device_name_var = tk.StringVar(value=config.get("device_name", default_device_name()))
     jarvis_token_var = tk.StringVar(value=str(config.get("jarvis_api_token", "")))
-    sync_enabled_var = tk.BooleanVar(value=bool(config.get("kills_realtime_auto_sync", True)))
+    sync_enabled_var = tk.BooleanVar(value=bool(config.get("kills_realtime_auto_sync", True)) and not kills_ff_site_sync_hidden)
     poll_seconds_var = tk.StringVar(value=str(max(10, normalize_kill_value(config.get("kills_realtime_poll_seconds", 15)))))
     initial_manual_scope = manual_active_scope
     manual_scope_var = tk.StringVar(value="Geral" if initial_manual_scope == "general" else "Diario")
@@ -5068,9 +5078,11 @@ def run_gui(config_path: Path) -> int:
     livepix_extra_var = tk.StringVar(value="-")
     livepix_ranking_var = tk.StringVar(value="-")
     livepix_endpoint_var = tk.StringVar(value="")
-    livepix_checkout_amount_var = tk.StringVar(value="10,00")
-    livepix_checkout_user_var = tk.StringVar(value="Apoiador")
-    livepix_checkout_message_var = tk.StringVar(value="Apoio para a live!")
+    livepix_checkout_amount_var = tk.StringVar(
+        value=str(int(config.get("livepix_checkout_amount", 1000)) / 100).replace(".", ",")
+    )
+    livepix_checkout_user_var = tk.StringVar(value=str(config.get("livepix_checkout_user", "Apoiador")))
+    livepix_checkout_message_var = tk.StringVar(value=str(config.get("livepix_checkout_message", "Apoio para a live!")))
     livepix_plan_id_var = tk.StringVar(value=str(config.get("livepix_plan_id", "")))
     livepix_plan_slug_var = tk.StringVar(value=str(config.get("livepix_plan_slug", "vip-live")))
     livepix_plan_name_var = tk.StringVar(value=str(config.get("livepix_plan_name", "VIP da live")))
@@ -5443,6 +5455,11 @@ def run_gui(config_path: Path) -> int:
     ):
         tab_root.columnconfigure(0, weight=1)
         tab_root.rowconfigure(0, weight=1)
+    for hidden_tab_name in hidden_main_tabs:
+        try:
+            tabview._segmented_button.delete(hidden_tab_name)
+        except (AttributeError, ValueError, tk.TclError):
+            pass
 
     general_tab = ctk.CTkScrollableFrame(
         general_tab_root,
@@ -5610,6 +5627,8 @@ def run_gui(config_path: Path) -> int:
     button(jarvis_connection_actions, "Testar Jarvis", lambda: test_jarvis_connection(), "default", width=120).pack(
         side=tk.LEFT, padx=(0, 8)
     )
+    if kills_ff_site_sync_hidden and ff_queue_site_sync_hidden:
+        jarvis_connection_card.grid_remove()
     ff_dashboard_card = ctk.CTkFrame(
         general_tab,
         fg_color=panel_alt,
@@ -5660,6 +5679,8 @@ def run_gui(config_path: Path) -> int:
         button(panel_frame, "Abrir", lambda tab_name=target_tab: tabview.set(tab_name), "ghost", width=84).grid(
             row=2, column=0, sticky="ew", padx=14, pady=(8, 14)
         )
+    if {"Kills FF", "Fila FF"}.issubset(hidden_main_tabs):
+        ff_dashboard_card.grid_remove()
 
     general_info_card = ctk.CTkFrame(general_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
     general_info_card.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
@@ -6401,6 +6422,7 @@ def run_gui(config_path: Path) -> int:
         corner_radius=12,
         border_width=1,
         border_color=border,
+        height=430,
         scrollbar_button_color=border,
         scrollbar_button_hover_color=accent,
     )
@@ -7558,6 +7580,11 @@ def run_gui(config_path: Path) -> int:
         return derive_kills_style_endpoint(base_url) if base_url else ""
 
     def load_kills_style(force: bool = True) -> None:
+        if kills_ff_site_sync_hidden:
+            kills_style_status_var.set("Desativado")
+            if force:
+                log("Estilo OBS Kills FF desativado porque a aba Kills FF esta oculta.")
+            return
         endpoint_url = kills_style_endpoint()
         if not endpoint_url:
             kills_style_status_var.set("Sem endpoint")
@@ -7581,6 +7608,10 @@ def run_gui(config_path: Path) -> int:
         threading.Thread(target=run, daemon=True).start()
 
     def save_kills_style() -> None:
+        if kills_ff_site_sync_hidden:
+            kills_style_status_var.set("Desativado")
+            log("Estilo OBS Kills FF desativado porque a aba Kills FF esta oculta.")
+            return
         endpoint_url = kills_style_endpoint()
         if not endpoint_url:
             kills_style_status_var.set("Sem endpoint")
@@ -7741,6 +7772,10 @@ def run_gui(config_path: Path) -> int:
         new_name: str = "",
         ff_player_id: str = "",
     ) -> bool:
+        if kills_ff_site_sync_hidden:
+            manual_status_var.set("Desativado")
+            log("Acoes remotas de Kills FF desativadas porque a aba Kills FF esta oculta.")
+            return False
         if confirm_text and not messagebox.askyesno("Kills FF", confirm_text):
             return False
         try:
@@ -8293,7 +8328,7 @@ def run_gui(config_path: Path) -> int:
 
     def schedule_manual_sync(delay_ms: int = 700) -> None:
         nonlocal manual_sync_after_id
-        if app_closing:
+        if app_closing or kills_ff_site_sync_hidden:
             return
         if manual_applying_remote or not sync_enabled_var.get():
             return
@@ -8315,6 +8350,10 @@ def run_gui(config_path: Path) -> int:
         manual_last_local_edit_at = time.monotonic()
         update_manual_metrics()
         manual_status_var.set("Editando")
+        try:
+            schedule_config_autosave()
+        except NameError:
+            pass
         schedule_manual_sync()
 
     def manual_autocomplete_key(value: str) -> str:
@@ -8802,7 +8841,7 @@ def run_gui(config_path: Path) -> int:
 
     def schedule_ff_queue_sync(delay_ms: int = 700) -> None:
         nonlocal ff_queue_sync_after_id
-        if app_closing:
+        if app_closing or ff_queue_site_sync_hidden:
             return
         if ff_queue_applying_remote or not ff_queue_enabled_var.get():
             return
@@ -8821,6 +8860,10 @@ def run_gui(config_path: Path) -> int:
         ff_queue_last_local_edit_at = time.monotonic()
         update_ff_queue_metrics()
         ff_queue_status_var.set("Editando")
+        try:
+            schedule_config_autosave()
+        except NameError:
+            pass
         schedule_ff_queue_sync()
 
     def ff_queue_row_entry(row: dict[str, Any]) -> FFQueueEntry:
@@ -8846,6 +8889,10 @@ def run_gui(config_path: Path) -> int:
         fallback: callable | None = None,
         label: str = "",
     ) -> bool:
+        if ff_queue_site_sync_hidden:
+            if fallback is not None:
+                fallback()
+            return False
         if row is not None and not ff_queue_row_has_remote_identity(row):
             if fallback is not None:
                 fallback()
@@ -8997,12 +9044,12 @@ def run_gui(config_path: Path) -> int:
         current = max(1, normalize_kill_value(row["rooms_var"].get()))
         next_value = max(0, current + delta)
         action = "add_credit" if delta > 0 else "remove_credit"
-        if run_ff_queue_remote_action(action, row=row, credits=abs(delta), label="Atualizando salas"):
-            return
         if next_value <= 0:
-            remove_ff_queue_row(row)
+            run_ff_queue_remote_action(action, row=row, credits=abs(delta), label="Atualizando salas")
+            remove_ff_queue_row_local(row)
             return
         row["rooms_var"].set(str(next_value))
+        run_ff_queue_remote_action(action, row=row, credits=abs(delta), label="Atualizando salas")
 
     def move_ff_queue_row(row: dict[str, Any], delta: int) -> None:
         if row not in ff_queue_rows:
@@ -9084,12 +9131,12 @@ def run_gui(config_path: Path) -> int:
         )
         if value is None:
             return
-        if run_ff_queue_remote_action("set_credit", row=row, credits=value, label="Definindo salas"):
-            return
         if value <= 0:
-            remove_ff_queue_row(row)
+            run_ff_queue_remote_action("set_credit", row=row, credits=value, label="Definindo salas")
+            remove_ff_queue_row_local(row)
             return
         row["rooms_var"].set(str(value))
+        run_ff_queue_remote_action("set_credit", row=row, credits=value, label="Definindo salas")
 
     def add_ff_queue_row(
         name: str = "",
@@ -9201,16 +9248,21 @@ def run_gui(config_path: Path) -> int:
         if notify:
             on_ff_queue_change()
 
-    def remove_ff_queue_row(row: dict[str, Any]) -> None:
+    def remove_ff_queue_row_local(row: dict[str, Any]) -> None:
         if row not in ff_queue_rows:
-            return
-        if run_ff_queue_remote_action("remove_member", row=row, label="Removendo jogador"):
             return
         ff_queue_rows.remove(row)
         row["frame"].destroy()
         update_ff_queue_row_numbers()
         update_ff_queue_metrics()
         on_ff_queue_change()
+
+    def remove_ff_queue_row(row: dict[str, Any]) -> None:
+        if row not in ff_queue_rows:
+            return
+        if run_ff_queue_remote_action("remove_member", row=row, label="Removendo jogador"):
+            return
+        remove_ff_queue_row_local(row)
 
     def set_ff_queue_entries(
         entries: list[FFQueueEntry],
@@ -9404,6 +9456,10 @@ def run_gui(config_path: Path) -> int:
         return cfg
 
     def fetch_ff_overlay_site_config(force: bool = True) -> None:
+        if ff_overlay_site_sync_hidden:
+            ff_overlay_site_status_var.set("Desativado")
+            log("Config do Overlay FF desativada porque Kills FF e Fila FF estao ocultas.")
+            return
         try:
             local_config = update_config_from_form()
             save_config(config_path, local_config)
@@ -9435,6 +9491,10 @@ def run_gui(config_path: Path) -> int:
         threading.Thread(target=run, daemon=True).start()
 
     def ff_overlay_site_action(action: str, payload: dict[str, Any] | None = None, label: str = "") -> None:
+        if ff_overlay_site_sync_hidden:
+            ff_overlay_site_status_var.set("Desativado")
+            log("Config do Overlay FF desativada porque Kills FF e Fila FF estao ocultas.")
+            return
         try:
             local_config = update_config_from_form()
             save_config(config_path, local_config)
@@ -9638,6 +9698,11 @@ def run_gui(config_path: Path) -> int:
             tikfinity_ff_history_widgets.append(row_frame)
 
     def fetch_tikfinity_ff_panel(force: bool = True) -> None:
+        if ff_queue_site_sync_hidden:
+            tikfinity_ff_status_var.set("Desativado")
+            if force:
+                log("TikFinity Gifts FF desativado porque a aba Fila FF esta oculta.")
+            return
         try:
             local_config = update_config_from_form()
             save_config(config_path, local_config)
@@ -9668,6 +9733,10 @@ def run_gui(config_path: Path) -> int:
         threading.Thread(target=run, daemon=True).start()
 
     def tikfinity_ff_action(action: str, payload: dict[str, Any] | None = None, label: str = "") -> None:
+        if ff_queue_site_sync_hidden:
+            tikfinity_ff_status_var.set("Desativado")
+            log("TikFinity Gifts FF desativado porque a aba Fila FF esta oculta.")
+            return
         try:
             local_config = update_config_from_form()
             save_config(config_path, local_config)
@@ -9771,6 +9840,13 @@ def run_gui(config_path: Path) -> int:
         log("Endpoints Jarvis FF preenchidos para Kills FF e Fila FF.")
 
     def test_jarvis_connection() -> None:
+        if kills_ff_site_sync_hidden and ff_queue_site_sync_hidden:
+            manual_status_var.set("Desativado")
+            ff_queue_status_var.set("Desativado")
+            ff_overlay_status_var.set("Desativado")
+            tikfinity_ff_status_var.set("Desativado")
+            log("Teste Jarvis FF desativado porque Kills FF e Fila FF estao ocultas.")
+            return
         try:
             local_config = update_config_from_form()
             save_config(config_path, local_config)
@@ -10050,7 +10126,13 @@ def run_gui(config_path: Path) -> int:
 
     def schedule_ff_overlay_sync(delay_ms: int = 900) -> None:
         nonlocal ff_overlay_sync_after_id
-        if ff_overlay_applying_remote or not ff_overlay_enabled_var.get():
+        if app_closing or ff_overlay_site_sync_hidden or ff_overlay_applying_remote or not ff_overlay_enabled_var.get():
+            if ff_overlay_sync_after_id is not None:
+                try:
+                    root.after_cancel(ff_overlay_sync_after_id)
+                except tk.TclError:
+                    pass
+                ff_overlay_sync_after_id = None
             return
         if ff_overlay_sync_after_id is not None:
             try:
@@ -10062,6 +10144,11 @@ def run_gui(config_path: Path) -> int:
     def send_ff_overlay(force: bool = True) -> None:
         nonlocal ff_overlay_sending, ff_overlay_last_signature, ff_overlay_sync_after_id
         ff_overlay_sync_after_id = None
+        if ff_overlay_site_sync_hidden:
+            if force:
+                ff_overlay_status_var.set("Desativado")
+                log("Overlay FF nao foi enviado porque Kills FF e Fila FF estao ocultas.")
+            return
         try:
             local_config = update_config_from_form()
             if force:
@@ -10104,6 +10191,11 @@ def run_gui(config_path: Path) -> int:
 
     def fetch_ff_overlay(force: bool = True) -> None:
         nonlocal ff_overlay_fetching
+        if ff_overlay_site_sync_hidden:
+            if force:
+                ff_overlay_status_var.set("Desativado")
+                log("Overlay FF nao foi buscado porque Kills FF e Fila FF estao ocultas.")
+            return
         try:
             local_config = update_config_from_form()
             if force:
@@ -10241,6 +10333,11 @@ def run_gui(config_path: Path) -> int:
         log("Overlay FF aberto e sincronizado com Kills FF/Fila FF.")
 
     def refresh_overlay_from_jarvis() -> None:
+        if ff_overlay_site_sync_hidden:
+            ff_overlay_status_var.set("Desativado")
+            log("Atualizacao do Overlay FF pelo Jarvis desativada porque Kills FF e Fila FF estao ocultas.")
+            refresh_ff_overlay(force=True)
+            return
         fetch_panel_kills(force=True)
         fetch_ff_queue(force=True)
         fetch_ff_overlay(force=True)
@@ -10313,6 +10410,10 @@ def run_gui(config_path: Path) -> int:
 
     def start_chat_listener() -> None:
         nonlocal chat_webhook_server, chat_websocket_worker
+        if chat_listener_hidden:
+            chat_status_var.set("Desativado")
+            log("Leitor de chat desativado porque a aba Chat Ao Vivo esta oculta.")
+            return
         try:
             local_config = update_config_from_form()
             save_config(config_path, local_config)
@@ -11128,6 +11229,10 @@ def run_gui(config_path: Path) -> int:
         except tk.TclError:
             pass
         reindex_custom_command_rows()
+        try:
+            schedule_config_autosave()
+        except NameError:
+            pass
 
     def add_custom_command_row(
         command: str = "",
@@ -11171,6 +11276,8 @@ def run_gui(config_path: Path) -> int:
             row=0, column=5, sticky="e", padx=(0, 10), pady=10
         )
         custom_command_rows.append(row)
+        for variable in (enabled_var, command_var, response_var, cooldown_var):
+            variable.trace_add("write", lambda *_args: schedule_config_autosave())
         reindex_custom_command_rows()
 
     def collect_custom_commands() -> list[ChatCommand]:
@@ -11226,6 +11333,10 @@ def run_gui(config_path: Path) -> int:
         except tk.TclError:
             pass
         reindex_chat_timer_rows()
+        try:
+            schedule_config_autosave()
+        except NameError:
+            pass
 
     def add_chat_timer_row(
         name: str = "",
@@ -11276,6 +11387,8 @@ def run_gui(config_path: Path) -> int:
             row=0, column=6, sticky="e", padx=(0, 10), pady=10
         )
         chat_timer_rows.append(row)
+        for variable in (enabled_var, name_var, message_var, interval_var, min_messages_var):
+            variable.trace_add("write", lambda *_args: schedule_config_autosave())
         reindex_chat_timer_rows()
 
     def timer_row_interval_seconds(row: dict[str, Any]) -> int:
@@ -11638,6 +11751,25 @@ def run_gui(config_path: Path) -> int:
             log,
         )
 
+    def livepix_error_detail(exc: Exception) -> str:
+        if isinstance(exc, requests.HTTPError) and exc.response is not None:
+            response = exc.response
+            body = ""
+            try:
+                payload = response.json()
+                body = str(payload.get("message") or payload.get("error_description") or payload.get("error") or "")
+            except ValueError:
+                body = response.text.strip()
+            body = body[:180].strip()
+            if response.status_code == 401:
+                return "401 credenciais invalidas ou sem permissao"
+            if response.status_code == 403:
+                return "403 escopos/permissoes insuficientes"
+            if response.status_code == 429:
+                return "429 limite de requisicoes da Livepix; aguarde um pouco e teste de novo"
+            return f"{response.status_code} {body or response.reason}".strip()
+        return str(exc)[:220]
+
     def merge_livepix_events(new_events: list[LivepixEvent]) -> int:
         existing = {(event.kind, event.event_id or event.reference) for event in livepix_events}
         added = 0
@@ -11880,9 +12012,18 @@ def run_gui(config_path: Path) -> int:
         def run() -> None:
             try:
                 account = client.account()
-                payments = client.payments(limit=80)
-                messages = client.messages(limit=80)
-                wallet = client.wallet()
+                sync_errors: list[str] = []
+
+                def try_livepix(label: str, getter: callable, fallback: Any) -> Any:
+                    try:
+                        return getter()
+                    except Exception as exc:
+                        sync_errors.append(f"{label}: {livepix_error_detail(exc)}")
+                        return fallback
+
+                payments = try_livepix("pagamentos", lambda: client.payments(limit=40), [])
+                messages = try_livepix("mensagens", lambda: client.messages(limit=40), [])
+                wallet = try_livepix("carteira", client.wallet, [])
                 selected_currency = livepix_currency_var.get().strip().upper() or "BRL"
                 extras: dict[str, Any] = {}
                 for name, getter in (
@@ -11897,7 +12038,9 @@ def run_gui(config_path: Path) -> int:
                     try:
                         extras[name] = getter()
                     except Exception as exc:
-                        extras[name] = f"erro: {exc}"
+                        detail = livepix_error_detail(exc)
+                        extras[name] = f"erro: {detail}"
+                        sync_errors.append(f"{name}: {detail}")
                 reward_grants: list[dict[str, Any]] = []
                 if isinstance(extras.get("rewards"), list):
                     for reward in extras["rewards"]:
@@ -11907,7 +12050,9 @@ def run_gui(config_path: Path) -> int:
                         try:
                             reward_grants.extend(client.reward_grants(reward_id))
                         except Exception as exc:
-                            reward_grants.append({"rewardId": reward_id, "error": str(exc)})
+                            detail = livepix_error_detail(exc)
+                            reward_grants.append({"rewardId": reward_id, "error": detail})
+                            sync_errors.append(f"reward_grants: {detail}")
                 extras["reward_grants"] = reward_grants
                 subscription_events = [
                     event
@@ -11922,11 +12067,12 @@ def run_gui(config_path: Path) -> int:
                             "events": payments + messages + subscription_events,
                             "wallet": wallet,
                             "extras": extras,
+                            "errors": sync_errors,
                         },
                     )
                 )
             except Exception as exc:
-                livepix_queue.put(("error", str(exc)))
+                livepix_queue.put(("error", livepix_error_detail(exc)))
 
         threading.Thread(target=run, name="AizenLivepixSync", daemon=True).start()
 
@@ -12193,6 +12339,7 @@ def run_gui(config_path: Path) -> int:
                 events = payload.get("events", []) if isinstance(payload, dict) else []
                 wallet = payload.get("wallet", []) if isinstance(payload, dict) else []
                 extras = payload.get("extras", {}) if isinstance(payload, dict) else {}
+                errors = payload.get("errors", []) if isinstance(payload, dict) else []
                 display = _first_text(account.get("displayName"), account.get("username"), account.get("email"), "-") if isinstance(account, dict) else "-"
                 livepix_account_var.set(display)
                 if isinstance(wallet, list):
@@ -12232,9 +12379,15 @@ def run_gui(config_path: Path) -> int:
                         value = extras.get(key)
                         if isinstance(value, list):
                             parts.append(f"{len(value)} {label}")
+                    if isinstance(errors, list) and errors:
+                        parts.append(f"avisos: {'; '.join(str(item) for item in errors[:3])}")
                     livepix_extra_var.set(" | ".join(parts) if parts else "-")
                 added = merge_livepix_events(events if isinstance(events, list) else [])
-                livepix_status_var.set(f"Sincronizado (+{added})")
+                if isinstance(errors, list) and errors:
+                    livepix_status_var.set("Parcial")
+                    log(f"Livepix sincronizado parcialmente: {'; '.join(str(item) for item in errors[:6])}")
+                else:
+                    livepix_status_var.set(f"Sincronizado (+{added})")
             elif kind == "checkout":
                 url = _first_text(payload.get("redirectUrl"), payload.get("url")) if isinstance(payload, dict) else ""
                 if url:
@@ -12253,7 +12406,12 @@ def run_gui(config_path: Path) -> int:
             elif kind == "status":
                 livepix_status_var.set(str(payload))
             elif kind == "error":
-                livepix_status_var.set("Erro")
+                detail = str(payload)
+                if detail:
+                    livepix_status_var.set(detail[:34])
+                    livepix_extra_var.set(detail)
+                else:
+                    livepix_status_var.set("Erro")
                 log(f"Livepix erro: {payload}")
         if not app_closing:
             root.after(160 if processed else 800, pump_livepix_queue)
@@ -12279,7 +12437,7 @@ def run_gui(config_path: Path) -> int:
         config["jarvis_endpoint_url"] = endpoint_url
         config["jarvis_base_url"] = jarvis_base_url
         jarvis_base_url_var.set(jarvis_base_url)
-        config["kills_realtime_auto_sync"] = bool(sync_enabled_var.get())
+        config["kills_realtime_auto_sync"] = bool(sync_enabled_var.get()) and not kills_ff_site_sync_hidden
         config["kills_realtime_poll_seconds"] = poll_interval_seconds()
         config["kills_sync_room"] = sync_room_var.get().strip() or "principal"
         kills_style_url = normalize_endpoint_url(kills_style_url_var.get())
@@ -12309,8 +12467,8 @@ def run_gui(config_path: Path) -> int:
         config["ff_overlay_config_url"] = overlay_config_url
         ff_overlay_config_url_var.set(config["ff_overlay_config_url"])
         config["ff_overlay_profile"] = ff_overlay_site_profile_var.get().strip() or "streamer1"
-        config["ff_queue_auto_sync"] = bool(ff_queue_enabled_var.get())
-        config["ff_overlay_auto_sync"] = bool(ff_overlay_enabled_var.get())
+        config["ff_queue_auto_sync"] = bool(ff_queue_enabled_var.get()) and not ff_queue_site_sync_hidden
+        config["ff_overlay_auto_sync"] = bool(ff_overlay_enabled_var.get()) and not ff_overlay_site_sync_hidden
         config["ff_queue_poll_seconds"] = ff_queue_poll_interval_seconds()
         config["ff_queue_room"] = ff_queue_room_var.get().strip() or "principal"
         config["ff_queue_items"] = ff_queue_payload(collect_ff_queue_entries())
@@ -12322,7 +12480,7 @@ def run_gui(config_path: Path) -> int:
         config["tikfinity_ff_gifts_url"] = tikfinity_ff_url
         tikfinity_ff_url_var.set(tikfinity_ff_url)
         config["tikfinity_ff_profile"] = tikfinity_ff_profile_var.get().strip() or "streamer1"
-        config["tikfinity_ff_enabled"] = False
+        config["tikfinity_ff_enabled"] = bool(tikfinity_ff_enabled_var.get()) and not ff_queue_site_sync_hidden
         config["tikfinity_ff_coins_per_room"] = max(1, normalize_kill_value(tikfinity_ff_coins_var.get()))
         tikfinity_ff_coins_var.set(str(config["tikfinity_ff_coins_per_room"]))
         config["tikfinity_ff_token"] = tikfinity_ff_token_var.get().strip()
@@ -12383,6 +12541,9 @@ def run_gui(config_path: Path) -> int:
         config["livepix_goal_amount"] = livepix_goal_amount_cents()
         config["livepix_goal_label"] = livepix_goal_label_var.get().strip() or "Meta da live"
         config["livepix_currency"] = livepix_currency_var.get().strip().upper() or "BRL"
+        config["livepix_checkout_amount"] = livepix_checkout_amount_cents()
+        config["livepix_checkout_user"] = livepix_checkout_user_var.get().strip() or "Apoiador"
+        config["livepix_checkout_message"] = livepix_checkout_message_var.get().strip() or "Apoio para a live!"
         config["livepix_plan_id"] = livepix_plan_id_var.get().strip()
         config["livepix_plan_slug"] = livepix_plan_slug_var.get().strip() or "vip-live"
         config["livepix_plan_name"] = livepix_plan_name_var.get().strip() or "VIP da live"
@@ -12429,12 +12590,45 @@ def run_gui(config_path: Path) -> int:
         config["ui_theme"] = appearance_config_from_vars()
         return config
 
-    def save_form() -> None:
+    def save_current_config_silent() -> bool:
+        nonlocal config_auto_save_running
         try:
+            config_auto_save_running = True
             save_config(config_path, update_config_from_form())
-            log(f"Configuracao salva em {config_path}")
+            return True
         except Exception as exc:
-            messagebox.showerror("Erro", str(exc))
+            log(f"Auto-save aguardando configuração válida: {exc}")
+            return False
+        finally:
+            config_auto_save_running = False
+
+    def run_config_autosave() -> None:
+        nonlocal config_auto_save_after_id
+        config_auto_save_after_id = None
+        if app_closing:
+            return
+        save_current_config_silent()
+
+    def schedule_config_autosave(delay_ms: int = 900) -> None:
+        nonlocal config_auto_save_after_id
+        if app_closing or config_auto_save_running:
+            return
+        if config_auto_save_after_id is not None:
+            try:
+                root.after_cancel(config_auto_save_after_id)
+            except tk.TclError:
+                pass
+        config_auto_save_after_id = root.after(delay_ms, run_config_autosave)
+
+    def bind_config_autosave(*variables: Any) -> None:
+        for variable in variables:
+            variable.trace_add("write", lambda *_args: schedule_config_autosave())
+
+    def save_form() -> None:
+        if save_current_config_silent():
+            log(f"Configuracao salva em {config_path}")
+        else:
+            messagebox.showerror("Erro", "Nao consegui salvar agora. Verifique se algum campo numerico esta incompleto.")
 
     def restart_app() -> None:
         save_config(config_path, update_config_from_form())
@@ -12475,6 +12669,10 @@ def run_gui(config_path: Path) -> int:
     def send_manual_kills(force: bool = True) -> None:
         nonlocal manual_sending, manual_sync_after_id, manual_last_signature
         manual_sync_after_id = None
+        if kills_ff_site_sync_hidden:
+            if force:
+                log("Sincronizacao Kills FF desativada porque a aba esta oculta.")
+            return
         try:
             local_config = update_config_from_form()
             save_config(config_path, local_config)
@@ -12540,6 +12738,10 @@ def run_gui(config_path: Path) -> int:
 
     def fetch_panel_kills(force: bool = True) -> None:
         nonlocal manual_fetching
+        if kills_ff_site_sync_hidden:
+            if force:
+                log("Leitura Kills FF desativada porque a aba esta oculta.")
+            return
         try:
             local_config = update_config_from_form()
             if force:
@@ -12589,6 +12791,10 @@ def run_gui(config_path: Path) -> int:
     def send_ff_queue(force: bool = True) -> None:
         nonlocal ff_queue_sending, ff_queue_sync_after_id, ff_queue_last_signature
         ff_queue_sync_after_id = None
+        if ff_queue_site_sync_hidden:
+            if force:
+                log("Sincronizacao Fila FF desativada porque a aba esta oculta.")
+            return
         try:
             local_config = update_config_from_form()
             save_config(config_path, local_config)
@@ -12631,6 +12837,10 @@ def run_gui(config_path: Path) -> int:
 
     def fetch_ff_queue(force: bool = True) -> None:
         nonlocal ff_queue_fetching
+        if ff_queue_site_sync_hidden:
+            if force:
+                log("Leitura Fila FF desativada porque a aba esta oculta.")
+            return
         try:
             local_config = update_config_from_form()
             if force:
@@ -12670,7 +12880,13 @@ def run_gui(config_path: Path) -> int:
 
     def schedule_manual_poll(delay_ms: int | None = None) -> None:
         nonlocal manual_poll_after_id
-        if app_closing:
+        if app_closing or kills_ff_site_sync_hidden:
+            if manual_poll_after_id is not None:
+                try:
+                    root.after_cancel(manual_poll_after_id)
+                except tk.TclError:
+                    pass
+                manual_poll_after_id = None
             return
         if not sync_enabled_var.get():
             if manual_poll_after_id is not None:
@@ -12694,13 +12910,20 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         manual_poll_after_id = None
-        if sync_enabled_var.get():
+        if sync_enabled_var.get() and not kills_ff_site_sync_hidden:
             fetch_panel_kills(force=False)
-        schedule_manual_poll()
+        if not kills_ff_site_sync_hidden:
+            schedule_manual_poll()
 
     def schedule_ff_queue_poll(delay_ms: int | None = None) -> None:
         nonlocal ff_queue_poll_after_id
-        if app_closing:
+        if app_closing or ff_queue_site_sync_hidden:
+            if ff_queue_poll_after_id is not None:
+                try:
+                    root.after_cancel(ff_queue_poll_after_id)
+                except tk.TclError:
+                    pass
+                ff_queue_poll_after_id = None
             return
         if not ff_queue_enabled_var.get():
             if ff_queue_poll_after_id is not None:
@@ -12724,13 +12947,20 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         ff_queue_poll_after_id = None
-        if ff_queue_enabled_var.get():
+        if ff_queue_enabled_var.get() and not ff_queue_site_sync_hidden:
             fetch_ff_queue(force=False)
-        schedule_ff_queue_poll()
+        if not ff_queue_site_sync_hidden:
+            schedule_ff_queue_poll()
 
     def schedule_ff_overlay_poll(delay_ms: int | None = None) -> None:
         nonlocal ff_overlay_poll_after_id
-        if app_closing:
+        if app_closing or ff_overlay_site_sync_hidden:
+            if ff_overlay_poll_after_id is not None:
+                try:
+                    root.after_cancel(ff_overlay_poll_after_id)
+                except tk.TclError:
+                    pass
+                ff_overlay_poll_after_id = None
             return
         if not ff_overlay_enabled_var.get():
             if ff_overlay_poll_after_id is not None:
@@ -12751,17 +12981,18 @@ def run_gui(config_path: Path) -> int:
 
     def run_ff_overlay_poll() -> None:
         nonlocal ff_overlay_poll_after_id
-        if app_closing:
+        if app_closing or ff_overlay_site_sync_hidden:
             return
         ff_overlay_poll_after_id = None
-        if ff_overlay_enabled_var.get():
+        if ff_overlay_enabled_var.get() and not ff_overlay_site_sync_hidden:
             fetch_ff_overlay(force=False)
-        schedule_ff_overlay_poll()
+        if not ff_overlay_site_sync_hidden:
+            schedule_ff_overlay_poll()
 
     def retry_fetch_panel_kills_after_dns() -> None:
         nonlocal manual_dns_retry_after_id
         manual_dns_retry_after_id = None
-        if app_closing:
+        if app_closing or kills_ff_site_sync_hidden:
             return
         fetch_panel_kills(force=False)
 
@@ -13152,6 +13383,28 @@ def run_gui(config_path: Path) -> int:
         if kind == "action_done":
             state: FFQueueState = payload["state"]
             entries = state.entries
+            action = str(payload.get("action") or "")
+            current_entries = collect_ff_queue_entries()
+            if action in {"add_credit", "remove_credit", "set_credit"} and time.monotonic() - ff_queue_last_local_edit_at < 3.0:
+                ff_queue_last_signature = ff_queue_signature(current_entries)
+                ff_queue_last_fetch_error = ""
+                ff_queue_poll_quiet_cycles = 0
+                if state.updated_by:
+                    set_text_var(ff_queue_source_var, state.updated_by)
+                set_text_var(ff_queue_status_var, "Sincronizado")
+                label = str(payload.get("label") or action or "acao")
+                log(f"Fila FF atualizada: {label} ({len(current_entries)} jogador(es)).")
+                return
+            if not entries and current_entries:
+                ff_queue_last_signature = ff_queue_signature(current_entries)
+                ff_queue_last_fetch_error = ""
+                ff_queue_poll_quiet_cycles = 0
+                if state.updated_by:
+                    set_text_var(ff_queue_source_var, state.updated_by)
+                label = str(payload.get("label") or payload.get("action") or "acao")
+                set_text_var(ff_queue_status_var, "Sincronizado")
+                log(f"Fila FF confirmou a acao sem devolver lista completa: {label}.")
+                return
             set_ff_queue_entries(entries, total_members=state.total_members, total_credits=state.total_credits)
             ff_queue_last_signature = ff_queue_signature(entries)
             ff_queue_last_fetch_error = ""
@@ -13577,6 +13830,12 @@ def run_gui(config_path: Path) -> int:
             duration_seconds = int(local_config.get("raffle_duration_seconds", 600))
             source_mode = str(local_config.get("raffle_source_mode", "events"))
             if source_mode == "events" and chat_webhook_server is None and chat_websocket_worker is None:
+                if chat_listener_hidden:
+                    messagebox.showinfo(
+                        "Sorteio",
+                        "A captura de eventos do app esta desativada porque a aba Chat Ao Vivo esta oculta.",
+                    )
+                    return
                 start_chat_listener()
                 if chat_webhook_server is None and chat_websocket_worker is None:
                     return
@@ -13765,8 +14024,10 @@ def run_gui(config_path: Path) -> int:
         nonlocal manual_sync_after_id, manual_poll_after_id
         nonlocal ff_queue_sync_after_id, ff_queue_poll_after_id
         nonlocal ff_overlay_sync_after_id, ff_overlay_poll_after_id
+        nonlocal config_auto_save_after_id
         if app_closing:
             return
+        save_current_config_silent()
         app_closing = True
         for after_id in (
             manual_sync_after_id,
@@ -13775,6 +14036,7 @@ def run_gui(config_path: Path) -> int:
             ff_queue_poll_after_id,
             ff_overlay_sync_after_id,
             ff_overlay_poll_after_id,
+            config_auto_save_after_id,
         ):
             if after_id is not None:
                 try:
@@ -13787,6 +14049,7 @@ def run_gui(config_path: Path) -> int:
         ff_queue_poll_after_id = None
         ff_overlay_sync_after_id = None
         ff_overlay_poll_after_id = None
+        config_auto_save_after_id = None
         try:
             if raffle_worker is not None:
                 raffle_worker.stop()
@@ -14363,8 +14626,9 @@ def run_gui(config_path: Path) -> int:
     ff_queue_last_signature = ff_queue_signature(collect_ff_queue_entries())
     set_custom_commands(parse_chat_commands_payload(config.get("chat_commands", [])))
     set_chat_timers(parse_chat_timers_payload(config.get("chat_timers", [])))
-    ff_queue_enabled_var.trace_add("write", lambda *_args: schedule_ff_queue_sync(100))
-    ff_queue_poll_seconds_var.trace_add("write", lambda *_args: schedule_ff_queue_poll())
+    if not ff_queue_site_sync_hidden:
+        ff_queue_enabled_var.trace_add("write", lambda *_args: schedule_ff_queue_sync(100))
+        ff_queue_poll_seconds_var.trace_add("write", lambda *_args: schedule_ff_queue_poll())
     auto_update_var.trace_add(
         "write",
         lambda *_args: general_update_state_var.set("Ativa" if auto_update_var.get() else "Desativada"),
@@ -14379,6 +14643,106 @@ def run_gui(config_path: Path) -> int:
     livepix_webhook_token_var.trace_add("write", lambda *_args: update_livepix_endpoint_text())
     livepix_goal_amount_var.trace_add("write", lambda *_args: refresh_livepix_dashboard())
     livepix_currency_var.trace_add("write", lambda *_args: refresh_livepix_dashboard())
+
+    bind_config_autosave(
+        sync_url_var,
+        title_var,
+        kills_style_url_var,
+        sync_room_var,
+        ff_queue_url_var,
+        ff_overlay_url_var,
+        ff_overlay_config_url_var,
+        ff_overlay_site_profile_var,
+        tikfinity_ff_url_var,
+        tikfinity_ff_profile_var,
+        tikfinity_ff_enabled_var,
+        tikfinity_ff_coins_var,
+        tikfinity_ff_token_var,
+        ff_queue_room_var,
+        jarvis_base_url_var,
+        ff_queue_enabled_var,
+        ff_overlay_enabled_var,
+        ff_queue_poll_seconds_var,
+        device_name_var,
+        jarvis_token_var,
+        sync_enabled_var,
+        poll_seconds_var,
+        manual_scope_var,
+        auto_update_var,
+        updates_manifest_url_var,
+        tikfinity_url_var,
+        chat_source_var,
+        chat_webhook_host_var,
+        chat_webhook_port_var,
+        chat_webhook_token_var,
+        chat_websocket_url_var,
+        chat_commands_enabled_var,
+        chat_timers_enabled_var,
+        bot_delivery_method_var,
+        bot_streamerbot_ws_url_var,
+        bot_streamerbot_http_url_var,
+        bot_streamerbot_password_var,
+        bot_streamerbot_action_name_var,
+        bot_streamerbot_action_id_var,
+        bot_safe_delay_var,
+        bot_default_cooldown_var,
+        bot_default_timer_interval_var,
+        bot_default_timer_min_messages_var,
+        bot_ignore_usernames_var,
+        livepix_enabled_var,
+        livepix_client_id_var,
+        livepix_client_secret_var,
+        livepix_scopes_var,
+        livepix_webhook_host_var,
+        livepix_webhook_port_var,
+        livepix_webhook_token_var,
+        livepix_redirect_url_var,
+        livepix_goal_amount_var,
+        livepix_goal_label_var,
+        livepix_currency_var,
+        livepix_checkout_amount_var,
+        livepix_checkout_user_var,
+        livepix_checkout_message_var,
+        livepix_plan_id_var,
+        livepix_plan_slug_var,
+        livepix_plan_name_var,
+        livepix_plan_description_var,
+        livepix_subscription_recurrence_var,
+        livepix_subscriber_email_var,
+        livepix_announce_in_chat_var,
+        livepix_public_page_file_var,
+        raffle_source_mode_var,
+        raffle_command_var,
+        raffle_minutes_var,
+        raffle_entries_normal_var,
+        raffle_entries_fan_var,
+        raffle_entries_super_fan_var,
+        raffle_entries_gift_var,
+        raffle_entries_sub_var,
+        raffle_cooldown_var,
+        raffle_include_moderators_var,
+        participants_height_var,
+        events_height_var,
+        winner_width_var,
+        raffle_font_size_var,
+        chat_overlay_opacity_var,
+        chat_overlay_font_size_var,
+        chat_overlay_width_var,
+        chat_overlay_height_var,
+        chat_overlay_compact_var,
+        chat_overlay_controls_var,
+        chat_overlay_clickthrough_var,
+        ff_overlay_opacity_var,
+        ff_overlay_width_var,
+        ff_overlay_height_var,
+        ff_overlay_compact_var,
+        ff_overlay_show_queue_var,
+        ff_overlay_show_kills_var,
+        appearance_preset_var,
+        logo_path_var,
+        *theme_color_vars.values(),
+    )
+
     def update_local_source_labels(*_args: Any) -> None:
         local_name = device_name_var.get().strip() or default_device_name()
         manual_source_var.set(local_name)
@@ -14386,27 +14750,34 @@ def run_gui(config_path: Path) -> int:
 
     device_name_var.trace_add("write", update_local_source_labels)
     pump_log()
-    pump_sync_queue()
-    pump_ff_queue_sync_queue()
-    pump_chat_event_queue()
+    if not (kills_ff_site_sync_hidden and ff_overlay_site_sync_hidden):
+        pump_sync_queue()
+    if not ff_queue_site_sync_hidden:
+        pump_ff_queue_sync_queue()
+    if not chat_listener_hidden:
+        pump_chat_event_queue()
     pump_livepix_queue()
     pump_bot_send_results()
     pump_chat_timers()
     pump_avatar_results()
-    root.after(900, lambda: fetch_panel_kills(force=False))
-    root.after(1400, lambda: fetch_ff_queue(force=False))
-    if sync_enabled_var.get():
+    if not kills_ff_site_sync_hidden:
+        root.after(900, lambda: fetch_panel_kills(force=False))
+    if not ff_queue_site_sync_hidden:
+        root.after(1400, lambda: fetch_ff_queue(force=False))
+    if sync_enabled_var.get() and not kills_ff_site_sync_hidden:
         schedule_manual_poll()
-    schedule_ff_queue_poll()
+    if not ff_queue_site_sync_hidden:
+        schedule_ff_queue_poll()
     update_chat_endpoint_text()
     apply_chat_overlay_settings()
     refresh_chat_messages(force=True)
     refresh_participant_list([])
-    if not apply_kills_rank_cache():
+    if not kills_ff_site_sync_hidden and not apply_kills_rank_cache():
         refresh_kills_rank_table()
         refresh_kills_ignored_list()
-    apply_tikfinity_ff_state({})
-    log("Kills em modo manual. Edite a tabela e use Enviar agora para lancar as kills no Jarvis.")
+    if not ff_queue_site_sync_hidden:
+        apply_tikfinity_ff_state({})
+    log("Sincronizacoes de Kills FF, Fila FF e Chat Ao Vivo desativadas por abas ocultas.")
     root.mainloop()
     return 0
 
