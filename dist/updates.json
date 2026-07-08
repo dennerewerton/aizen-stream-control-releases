@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.53",
-    "notes":  "Oculta abas FF/Chat, desativa sincronizacoes dessas areas e salva configuracoes automaticamente.",
+    "version":  "2.6.54",
+    "notes":  "Melhora retry e diagnostico de rede/DNS no LivePix.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.53/AizenStreamControl.exe",
-                    "sha256":  "40595a6f9d284fdd1e7155b0e80eb9ed6d3ca7c3a9366546d53510bb06c7dc6f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.54/AizenStreamControl.exe",
+                    "sha256":  "0c97ca74e22099a02b59eddbbba2ee94aa0f03d168fc98086ddad6d350a1bb11"
                 }
 }

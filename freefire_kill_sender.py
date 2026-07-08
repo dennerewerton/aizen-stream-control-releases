@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.53"
+APP_VERSION = "2.6.54"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1041,16 +1041,30 @@ class LivepixApiClient:
             raise ValueError("Informe client_id e client_secret da Livepix.")
         if self.access_token and time.time() < self.expires_at - 60:
             return self.access_token
-        response = requests.post(
-            self.token_url,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "scope": self.scopes,
-            },
-            timeout=20,
-        )
+        token_payload = {
+            "grant_type": "client_credentials",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "scope": self.scopes,
+        }
+        response: requests.Response | None = None
+        for attempt in range(3):
+            try:
+                response = requests.post(
+                    self.token_url,
+                    data=token_payload,
+                    headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"},
+                    timeout=20,
+                )
+                break
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                if attempt >= 2:
+                    raise
+                if self.log is not None:
+                    self.log(f"Livepix rede instavel ao gerar token; tentando novamente ({attempt + 2}/3): {exc}")
+                time.sleep(1.5 * (attempt + 1))
+        if response is None:
+            raise RuntimeError("Livepix nao retornou resposta ao gerar token.")
         response.raise_for_status()
         payload = response.json()
         self.access_token = str(payload.get("access_token", ""))
@@ -11752,6 +11766,15 @@ def run_gui(config_path: Path) -> int:
         )
 
     def livepix_error_detail(exc: Exception) -> str:
+        error_text = str(exc)
+        if isinstance(exc, requests.Timeout):
+            return "Tempo esgotado ao conectar na Livepix; verifique internet/firewall e tente de novo"
+        if isinstance(exc, requests.ConnectionError):
+            if "NameResolutionError" in error_text or "Failed to resolve" in error_text or "getaddrinfo failed" in error_text:
+                return "DNS falhou ao resolver oauth.livepix.gg; troque o DNS/reinicie a internet e teste novamente"
+            if "Max retries exceeded" in error_text:
+                return "Nao consegui conectar na Livepix; verifique internet, firewall, proxy ou bloqueio de DNS"
+            return f"Falha de conexao com a Livepix: {error_text[:160]}"
         if isinstance(exc, requests.HTTPError) and exc.response is not None:
             response = exc.response
             body = ""
@@ -11768,7 +11791,7 @@ def run_gui(config_path: Path) -> int:
             if response.status_code == 429:
                 return "429 limite de requisicoes da Livepix; aguarde um pouco e teste de novo"
             return f"{response.status_code} {body or response.reason}".strip()
-        return str(exc)[:220]
+        return error_text[:220]
 
     def merge_livepix_events(new_events: list[LivepixEvent]) -> int:
         existing = {(event.kind, event.event_id or event.reference) for event in livepix_events}
@@ -11969,7 +11992,7 @@ def run_gui(config_path: Path) -> int:
         except Exception as exc:
             fallback = parse_livepix_event(payload, source="webhook")
             livepix_queue.put(("webhook_detail", fallback))
-            livepix_queue.put(("status", f"Webhook recebido; detalhe API falhou: {exc}"))
+            livepix_queue.put(("status", f"Webhook recebido; detalhe API falhou: {livepix_error_detail(exc)}"))
 
     def start_livepix_webhook() -> None:
         nonlocal livepix_webhook_server
@@ -12105,7 +12128,7 @@ def run_gui(config_path: Path) -> int:
                     data = client.create_payment(amount, currency, redirect_url)
                 livepix_queue.put(("checkout", data))
             except Exception as exc:
-                livepix_queue.put(("error", str(exc)))
+                livepix_queue.put(("error", livepix_error_detail(exc)))
 
         threading.Thread(target=run, name="AizenLivepixCheckout", daemon=True).start()
 
@@ -12127,7 +12150,7 @@ def run_gui(config_path: Path) -> int:
                 data = client.create_plan(slug, name, description, amount)
                 livepix_queue.put(("plan_created", data))
             except Exception as exc:
-                livepix_queue.put(("error", str(exc)))
+                livepix_queue.put(("error", livepix_error_detail(exc)))
 
         threading.Thread(target=run, name="AizenLivepixPlan", daemon=True).start()
 
@@ -12152,7 +12175,7 @@ def run_gui(config_path: Path) -> int:
                 data = client.create_subscription(plan_id, recurrence, username, email, redirect_url)
                 livepix_queue.put(("checkout", data))
             except Exception as exc:
-                livepix_queue.put(("error", str(exc)))
+                livepix_queue.put(("error", livepix_error_detail(exc)))
 
         threading.Thread(target=run, name="AizenLivepixSubscription", daemon=True).start()
 
@@ -12177,7 +12200,7 @@ def run_gui(config_path: Path) -> int:
                 data = client.create_webhook(url)
                 livepix_queue.put(("status", f"Webhook cadastrado {data.get('id', '')}".strip()))
             except Exception as exc:
-                livepix_queue.put(("error", str(exc)))
+                livepix_queue.put(("error", livepix_error_detail(exc)))
 
         threading.Thread(target=run, name="AizenLivepixWebhookCreate", daemon=True).start()
 
