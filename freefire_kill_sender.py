@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.64"
+APP_VERSION = "2.6.65"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4643,16 +4643,16 @@ def launch_self_replacement(new_exe: Path) -> None:
                 "}",
                 "$started = $false",
                 "try {",
-                "  Start-Process -FilePath $Target -WorkingDirectory $TargetDir -UseNewEnvironment -ErrorAction Stop",
+                "  Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -ArgumentList ('\"' + $Target + '\"') -ErrorAction Stop",
                 "  $started = $true",
-                "  Write-AizenLog 'App reiniciado com UseNewEnvironment.'",
-                "} catch { Write-AizenLog ('Falha UseNewEnvironment: ' + $_.Exception.Message) }",
+                "  Write-AizenLog 'App reiniciado via explorer.exe.'",
+                "} catch { Write-AizenLog ('Falha explorer.exe: ' + $_.Exception.Message) }",
                 "if (-not $started) {",
                 "  try {",
-                "    Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -ArgumentList ('\"' + $Target + '\"') -ErrorAction Stop",
+                "    Start-Process -FilePath $Target -WorkingDirectory $TargetDir -UseNewEnvironment -ErrorAction Stop",
                 "    $started = $true",
-                "    Write-AizenLog 'App reiniciado via explorer.exe.'",
-                "  } catch { Write-AizenLog ('Falha explorer.exe: ' + $_.Exception.Message) }",
+                "    Write-AizenLog 'App reiniciado com UseNewEnvironment.'",
+                "  } catch { Write-AizenLog ('Falha UseNewEnvironment: ' + $_.Exception.Message) }",
                 "}",
                 "if (-not $started) {",
                 "  try { Start-Process -FilePath $Target -WorkingDirectory $TargetDir -ErrorAction Stop; Write-AizenLog 'App reiniciado por Start-Process padrao.' } catch { Write-AizenLog ('Falha final ao reiniciar: ' + $_.Exception.Message) }",
@@ -15657,16 +15657,52 @@ def probe_local_winsock() -> tuple[bool, str]:
                 pass
 
 
+def winsock_restart_marker_path() -> Path:
+    return APP_DIR / "winsock_restart.json"
+
+
+def read_winsock_restart_stage() -> int:
+    try:
+        data = json.loads(winsock_restart_marker_path().read_text(encoding="utf-8-sig"))
+    except Exception:
+        return 0
+    if not isinstance(data, dict) or str(data.get("version") or "") != APP_VERSION:
+        return 0
+    try:
+        return max(0, int(data.get("stage") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def write_winsock_restart_stage(stage: int) -> None:
+    try:
+        winsock_restart_marker_path().write_text(
+            json.dumps({"version": APP_VERSION, "stage": stage, "updated_at": datetime.now().isoformat(timespec="seconds")}),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def clear_winsock_restart_stage() -> None:
+    try:
+        winsock_restart_marker_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def maybe_relaunch_clean_for_winsock(config_path: Path) -> bool:
     if not IS_FROZEN or os.name != "nt":
         return False
     try:
-        restart_stage = int(os.environ.get(WINSOCK_CLEAN_RESTART_ENV, "0") or "0")
+        env_restart_stage = int(os.environ.get(WINSOCK_CLEAN_RESTART_ENV, "0") or "0")
     except ValueError:
-        restart_stage = 0
+        env_restart_stage = 0
+    restart_stage = max(env_restart_stage, read_winsock_restart_stage())
     ok, detail = probe_local_winsock()
     if ok:
         if restart_stage:
+            clear_winsock_restart_stage()
             write_update_log(f"Winsock OK apos relancamento limpo etapa {restart_stage}.")
         return False
     if not is_winsock_provider_error(detail):
@@ -15679,22 +15715,36 @@ def maybe_relaunch_clean_for_winsock(config_path: Path) -> bool:
         return False
 
     clean_env = clean_pyinstaller_subprocess_env()
-    clean_env[WINSOCK_CLEAN_RESTART_ENV] = str(restart_stage + 1)
+    next_stage = restart_stage + 1
+    write_winsock_restart_stage(next_stage)
+    clean_env[WINSOCK_CLEAN_RESTART_ENV] = str(next_stage)
     launch_args = [sys.executable]
-    if config_path.resolve() != DEFAULT_CONFIG.resolve():
+    default_config = config_path.resolve() == DEFAULT_CONFIG.resolve()
+    if not default_config:
         launch_args.extend(["--config", str(config_path)])
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
     try:
-        subprocess.Popen(
-            launch_args,
-            cwd=str(APP_DIR),
-            env=clean_env,
-            creationflags=creationflags,
-            close_fds=True,
-        )
+        if default_config:
+            explorer = Path(os.environ.get("WINDIR", r"C:\Windows")) / "explorer.exe"
+            subprocess.Popen(
+                [str(explorer if explorer.exists() else "explorer.exe"), sys.executable],
+                cwd=str(APP_DIR),
+                creationflags=creationflags,
+                close_fds=True,
+            )
+            launch_mode = "explorer"
+        else:
+            subprocess.Popen(
+                launch_args,
+                cwd=str(APP_DIR),
+                env=clean_env,
+                creationflags=creationflags,
+                close_fds=True,
+            )
+            launch_mode = "ambiente limpo"
         write_update_log(
             f"Winsock falhou no processo atual ({detail}); "
-            f"app relancado com ambiente limpo etapa {restart_stage + 1}."
+            f"app relancado via {launch_mode} etapa {next_stage}."
         )
         return True
     except Exception as exc:
