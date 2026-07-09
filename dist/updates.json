@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.63",
-    "notes":  "Atualizacao v2.6.63: reforca a recuperacao do Winsock local, captura o erro da ponte direta desde a criacao do socket e desativa o fallback PowerShell quando o Windows retorna 80090010.",
+    "version":  "2.6.64",
+    "notes":  "Atualizacao v2.6.64: reconhece o erro 80090010 do Windows PowerShell mesmo quando o log vem com letras e numeros espacados, evitando repetir o leitor auxiliar do TikFinity em loop.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.63/AizenStreamControl.exe",
-                    "sha256":  "7dd468dc14d5b75ad13c16ee0863af6909e5025d8a948813d6b1c27be4448ad2"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.64/AizenStreamControl.exe",
+                    "sha256":  "6ffca2663cc19f260634d3cd313098fa0f0ba52069d2274f8ee0bae60c5e2659"
                 }
 }

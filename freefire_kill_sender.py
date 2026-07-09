@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.63"
+APP_VERSION = "2.6.64"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1641,11 +1641,16 @@ def is_winsock_provider_error(error: Any) -> bool:
 
 def is_windows_powershell_loader_error(error: Any) -> bool:
     text = str(error).casefold()
+    normalized = re.sub(r"\s+", " ", text)
+    compact = re.sub(r"[\s\x00]+", "", text)
     return (
-        "80090010" in text
-        or "erro interno do windows powershell" in text
-        or "falha no carregamento do windows powershell" in text
-        or "windows powershell" in text and "falha no carregamento" in text
+        "80090010" in normalized
+        or "80090010" in compact
+        or "erro interno do windows powershell" in normalized
+        or "falha no carregamento do windows powershell" in normalized
+        or "errointernodowindowspowershell" in compact
+        or "falhanocarregamentodowindowspowershell" in compact
+        or "windowspowershell" in compact and "falhanocarregamento" in compact
     )
 
 
