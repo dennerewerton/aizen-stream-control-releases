@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.77"
+APP_VERSION = "2.6.78"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -614,10 +614,13 @@ def _chat_payload_candidates(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, dict):
         return []
     candidates = [payload]
-    for key in ("data", "payload", "eventData", "chat", "message", "commentData"):
+    for key in ("data", "payload", "eventData", "chat", "message", "commentData", "commentInfo"):
         value = payload.get(key)
         if isinstance(value, dict):
             candidates.append(value)
+            nested = value.get("data")
+            if isinstance(nested, dict):
+                candidates.append(nested)
     return candidates
 
 
@@ -634,6 +637,9 @@ def is_live_chat_event_payload(payload: Any) -> bool:
         return True
     for candidate in _chat_payload_candidates(payload):
         if any(_first_text(candidate.get(field)) for field in LIVE_CHAT_TEXT_FIELDS):
+            return True
+        emotes = candidate.get("emotes")
+        if isinstance(emotes, list) and emotes:
             return True
     return False
 
@@ -724,6 +730,19 @@ def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessa
         return None
 
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    candidates = _chat_payload_candidates(payload)
+
+    def candidate_values(*fields: str) -> list[Any]:
+        return [candidate.get(field) for candidate in candidates for field in fields]
+
+    def first_candidate_dict(*fields: str) -> dict[str, Any]:
+        for candidate in candidates:
+            for field in fields:
+                value = candidate.get(field)
+                if isinstance(value, dict):
+                    return value
+        return {}
+
     author = data.get("authorMeta") if isinstance(data.get("authorMeta"), dict) else {}
     user_details = data.get("userDetails") if isinstance(data.get("userDetails"), dict) else {}
     user = (
@@ -733,19 +752,16 @@ def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessa
         if isinstance(payload.get("user"), dict)
         else {}
     )
+    author = author or first_candidate_dict("authorMeta")
+    user_details = user_details or first_candidate_dict("userDetails", "userInfo")
+    user = user or first_candidate_dict("user", "author", "sender")
     event_name = _first_text(payload.get("event"), payload.get("type"), data.get("event"), data.get("type"))
     lower_event = event_name.casefold()
     if lower_event and lower_event not in LIVE_CHAT_EVENT_NAMES:
         has_comment = any(
             _first_text(value)
             for value in (
-                payload.get("comment"),
-                payload.get("message"),
-                payload.get("text"),
-                payload.get("commandParams"),
-                data.get("comment"),
-                data.get("message"),
-                data.get("text"),
+                *candidate_values("comment", "chatmessage", "message", "msg", "text", "content", "commandParams"),
                 live_chat_emote_comment(payload),
             )
         )
@@ -753,46 +769,21 @@ def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessa
             return None
 
     comment = _first_text(
-        payload.get("comment"),
-        payload.get("chatmessage"),
-        payload.get("message"),
-        payload.get("msg"),
-        payload.get("text"),
-        payload.get("content"),
-        payload.get("commentText"),
-        payload.get("messageText"),
-        payload.get("commandParams"),
-        payload.get("command"),
-        data.get("comment"),
-        data.get("chatmessage"),
-        data.get("message"),
-        data.get("msg"),
-        data.get("text"),
-        data.get("content"),
-        data.get("commentText"),
-        data.get("messageText"),
-        data.get("commandParams"),
-        data.get("command"),
+        *candidate_values(*LIVE_CHAT_TEXT_FIELDS),
     )
     if not comment:
         comment = live_chat_emote_comment(payload)
     username = _first_text(
-        payload.get("nickname"),
-        payload.get("displayName"),
-        payload.get("chatname"),
-        payload.get("name"),
-        payload.get("username"),
-        payload.get("uniqueId"),
-        payload.get("unique_id"),
-        payload.get("userName"),
-        data.get("nickname"),
-        data.get("displayName"),
-        data.get("chatname"),
-        data.get("name"),
-        data.get("username"),
-        data.get("uniqueId"),
-        data.get("unique_id"),
-        data.get("userName"),
+        *candidate_values(
+            "nickname",
+            "displayName",
+            "chatname",
+            "name",
+            "username",
+            "uniqueId",
+            "unique_id",
+            "userName",
+        ),
         user.get("nickname"),
         user.get("displayName"),
         user.get("name"),
@@ -813,12 +804,7 @@ def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessa
         return None
     if not username:
         username = _first_text(
-            payload.get("userId"),
-            payload.get("userid"),
-            payload.get("user_id"),
-            data.get("userId"),
-            data.get("userid"),
-            data.get("user_id"),
+            *candidate_values("userId", "userid", "user_id"),
             user.get("userId"),
             user.get("userid"),
             user.get("id"),
@@ -830,13 +816,7 @@ def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessa
         )
 
     user_id = _first_text(
-        payload.get("userId"),
-        payload.get("userid"),
-        payload.get("user_id"),
-        payload.get("id"),
-        data.get("userId"),
-        data.get("userid"),
-        data.get("user_id"),
+        *candidate_values("userId", "userid", "user_id", "id"),
         user.get("userId"),
         user.get("userid"),
         user.get("id"),
@@ -846,21 +826,17 @@ def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessa
         user_details.get("id"),
     )
     avatar_url = _first_text(
-        payload.get("profilePicturUrl"),
-        payload.get("profilePictureUrl"),
-        payload.get("profilePicture"),
-        payload.get("profileImageUrl"),
-        payload.get("avatarUrl"),
-        payload.get("avatar"),
-        payload.get("imageUrl"),
-        payload.get("image"),
-        payload.get("photo"),
-        data.get("profilePicturUrl"),
-        data.get("profilePictureUrl"),
-        data.get("profilePicture"),
-        data.get("profileImageUrl"),
-        data.get("avatarUrl"),
-        data.get("avatar"),
+        *candidate_values(
+            "profilePicturUrl",
+            "profilePictureUrl",
+            "profilePicture",
+            "profileImageUrl",
+            "avatarUrl",
+            "avatar",
+            "imageUrl",
+            "image",
+            "photo",
+        ),
         user.get("profilePicturUrl"),
         user.get("profilePictureUrl"),
         user.get("profilePicture"),
@@ -874,26 +850,11 @@ def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessa
         user_details.get("avatar"),
     )
     platform = _first_text(
-        payload.get("platform"),
-        payload.get("source"),
-        payload.get("network"),
-        data.get("platform"),
-        data.get("source"),
+        *candidate_values("platform", "source", "network"),
         event_name if event_name and "tiktok" in source.casefold() else "",
     )
     message_id = _first_text(
-        payload.get("messageId"),
-        payload.get("msgId"),
-        payload.get("mid"),
-        payload.get("id"),
-        payload.get("timestamp"),
-        payload.get("ts"),
-        data.get("messageId"),
-        data.get("msgId"),
-        data.get("mid"),
-        data.get("id"),
-        data.get("timestamp"),
-        data.get("ts"),
+        *candidate_values("messageId", "msgId", "mid", "id", "timestamp", "ts"),
     )
     return LiveChatMessage(
         username=username,
@@ -2468,6 +2429,7 @@ class ChatWebSocketWorker:
         self.other_event_count = 0
         self.config_event_logged = False
         self.last_chat_at = 0.0
+        self.opened_at = 0.0
         self.windows_helper_unavailable_reason = ""
 
     def start(self) -> None:
@@ -2478,6 +2440,7 @@ class ChatWebSocketWorker:
         self.other_event_count = 0
         self.config_event_logged = False
         self.last_chat_at = 0.0
+        self.opened_at = 0.0
         self.thread = threading.Thread(target=self._run, name="AizenChatWebSocket", daemon=True)
         self.thread.start()
 
@@ -2512,10 +2475,13 @@ class ChatWebSocketWorker:
         while not self.stop_event.is_set():
             try:
                 def on_open(_ws: Any) -> None:
+                    if self.stop_event.is_set():
+                        return
                     self.chat_event_count = 0
                     self.other_event_count = 0
                     self.config_event_logged = False
                     self.last_chat_at = 0.0
+                    self.opened_at = time.time()
                     self.log("WebSocket do TikFinity conectado. Aguardando mensagens do chat.")
 
                     def warn_if_no_chat() -> None:
@@ -2529,12 +2495,16 @@ class ChatWebSocketWorker:
                     threading.Thread(target=warn_if_no_chat, name="AizenChatWebSocketWatch", daemon=True).start()
 
                 def on_message(_ws: Any, raw_message: str) -> None:
+                    if self.stop_event.is_set():
+                        return
                     try:
                         parsed = json.loads(raw_message)
                     except Exception:
                         return
                     events = parsed if isinstance(parsed, list) else [parsed]
                     for event in events:
+                        if self.stop_event.is_set():
+                            return
                         if isinstance(event, dict):
                             event_name = live_chat_event_name(event)
                             if event_name == "config" and not self.config_event_logged:
@@ -2543,21 +2513,26 @@ class ChatWebSocketWorker:
                                 continue
                             if not is_live_chat_event_payload(event):
                                 self.other_event_count += 1
-                                if self.other_event_count in {1, 50, 200}:
-                                    if self.chat_event_count == 0:
-                                        self.log(
-                                            "Recebendo eventos do TikFinity, mas ainda sem chat "
-                                            f"({self.other_event_count} eventos de live ignorados)."
-                                        )
-                                    else:
-                                        self.log(
-                                            "Chat TikFinity segue conectado; "
-                                            f"{self.other_event_count} eventos de live sem mensagem foram ignorados."
-                                        )
+                                connected_for = time.time() - self.opened_at if self.opened_at else 0.0
+                                quiet_for = time.time() - self.last_chat_at if self.last_chat_at else 0.0
+                                if self.chat_event_count == 0 and (
+                                    self.other_event_count == 1
+                                    or (self.other_event_count in {200, 1000} and connected_for >= 60)
+                                ):
+                                    self.log(
+                                        "TikFinity conectado; eventos da live chegaram, mas nenhum chat legivel ainda. "
+                                        "Envie uma mensagem de teste se os comandos nao responderem."
+                                    )
+                                elif self.chat_event_count > 0 and quiet_for >= 120 and self.other_event_count in {500, 1500}:
+                                    self.log(
+                                        "TikFinity segue conectado; eventos da live continuam chegando, "
+                                        "mas nao houve chat novo nos ultimos minutos."
+                                    )
                                 continue
 
                             was_waiting_for_first_chat = self.chat_event_count == 0
                             self.chat_event_count += 1
+                            self.other_event_count = 0
                             self.last_chat_at = time.time()
                             message = normalize_live_chat_payload(event, "TikFinity WebSocket")
                             if message is None:
@@ -11882,7 +11857,11 @@ def run_gui(config_path: Path) -> int:
             chat_webhook_server.stop()
             chat_webhook_server = None
         if chat_websocket_worker is not None:
+            worker = chat_websocket_worker
             chat_websocket_worker.stop()
+            worker_thread = worker.thread
+            if worker_thread is not None and worker_thread is not threading.current_thread():
+                worker_thread.join(timeout=0.8)
             chat_websocket_worker = None
         chat_status_var.set("Desligado")
         if not silent:

@@ -27,8 +27,10 @@ from freefire_kill_sender import (  # noqa: E402
     fetch_kills_style,
     fetch_kills_realtime,
     fetch_tikfinity_ff_gifts,
+    is_live_chat_event_payload,
     kills_scope_label,
     merge_ff_queue_entries,
+    normalize_live_chat_payload,
     normalize_kills_scope_value,
     overlay_rank_players,
     parse_ff_queue_state,
@@ -725,6 +727,28 @@ def verify_contracts() -> None:
         raise RuntimeError(f"Parser Overlay/Kills divergente: {overlay_kills.players!r}")
     if [(item.name, item.status, item.rooms) for item in overlay_queue.entries] != [("Overlay", "Na fila", 1)]:
         raise RuntimeError(f"Parser Overlay/Fila divergente: {overlay_queue.entries!r}")
+
+    text_chat = {"event": "chat", "data": {"nickname": "Teste", "comment": "boa noite"}}
+    emote_chat = {
+        "event": "chat",
+        "data": {
+            "user": {"uniqueId": "pedro", "nickname": "Pedro"},
+            "emotes": [{"emoteId": "1", "emoteImageUrl": "https://example.test/emote.webp"}],
+        },
+    }
+    command_chat = {"event": "chat", "data": {"userDetails": {"username": "maria"}, "messageText": "!teste"}}
+    like_event = {"event": "like", "data": {"nickname": "Teste", "likeCount": 1}}
+    parsed_text_chat = normalize_live_chat_payload(text_chat, "TikFinity WebSocket")
+    parsed_emote_chat = normalize_live_chat_payload(emote_chat, "TikFinity WebSocket")
+    parsed_command_chat = normalize_live_chat_payload(command_chat, "TikFinity WebSocket")
+    if not is_live_chat_event_payload(text_chat) or not parsed_text_chat or parsed_text_chat.comment != "boa noite":
+        raise RuntimeError(f"Chat TikFinity com texto nao foi reconhecido: {parsed_text_chat!r}")
+    if not is_live_chat_event_payload(emote_chat) or not parsed_emote_chat or parsed_emote_chat.comment != "[emote]":
+        raise RuntimeError(f"Chat TikFinity com emote nao foi reconhecido: {parsed_emote_chat!r}")
+    if not is_live_chat_event_payload(command_chat) or not parsed_command_chat or parsed_command_chat.comment != "!teste":
+        raise RuntimeError(f"Comando TikFinity em messageText nao foi reconhecido: {parsed_command_chat!r}")
+    if is_live_chat_event_payload(like_event) or normalize_live_chat_payload(like_event, "TikFinity WebSocket") is not None:
+        raise RuntimeError("Evento de like do TikFinity foi tratado como chat.")
 
     print("Contratos Jarvis FF OK: endpoints e parsers locais validados.")
 
