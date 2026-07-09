@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.65",
-    "notes":  "Atualizacao v2.6.65: relanca o app via Explorer apos update ou WinError 10106, evitando herdar o ambiente que quebra o Winsock local.",
+    "version":  "2.6.66",
+    "notes":  "Atualizacao v2.6.66: corrige o handshake da ponte direta TikFinity/Streamer.bot para manter a conexao e enviar respostas do bot sem Streamer.bot.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.65/AizenStreamControl.exe",
-                    "sha256":  "1d31c613df49f6e0dfbe93f584b84341e0be5be0a64a6c815366b156ac8373d7"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.66/AizenStreamControl.exe",
+                    "sha256":  "972988ff552dd699c99e9b936f5796fbb9042a41c327487301f299fbf3c7ae4b"
                 }
 }

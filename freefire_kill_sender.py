@@ -8,6 +8,7 @@ import hashlib
 import html
 import json
 import os
+import platform
 import queue
 import re
 import secrets
@@ -48,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.65"
+APP_VERSION = "2.6.66"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1802,20 +1803,52 @@ class TikfinityDirectBridgeServer:
     def send_json_to_client(self, client: socket.socket, payload: dict[str, Any]) -> None:
         client.sendall(websocket_frame(0x1, json.dumps(payload, ensure_ascii=False)))
 
+    def streamerbot_info_payload(self) -> dict[str, Any]:
+        return {
+            "instanceId": "aizen-tikfinity-direct",
+            "name": APP_NAME,
+            "os": "windows" if os.name == "nt" else sys.platform,
+            "osVersion": platform.version(),
+            "version": "0.2.5",
+            "source": "websocketServer",
+        }
+
     def streamerbot_hello_payload(self) -> dict[str, Any]:
         return {
-            "timeStamp": datetime.now().isoformat(timespec="seconds"),
-            "event": {
-                "source": "Streamer.bot",
-                "type": "General",
-            },
-            "data": {
-                "name": "Streamer.bot",
-                "version": APP_VERSION,
-                "instanceId": "aizen-tikfinity-direct",
-                "source": APP_NAME,
-            },
+            "request": "Hello",
+            "info": self.streamerbot_info_payload(),
         }
+
+    def streamerbot_supported_events(self) -> dict[str, list[str]]:
+        return {
+            "General": ["Custom"],
+            "Custom": ["Event", "CodeEvent"],
+            "Raw": ["Action", "SubAction", "ActionCompleted"],
+            "WebsocketClient": ["Open", "Close", "Message"],
+            "YouTube": ["Message", "MessageDeleted", "FirstWords", "PresentViewers"],
+            "Twitch": ["ChatMessage", "ChatMessageDeleted", "FirstWord", "PresentViewers"],
+            "Kick": ["ChatMessage", "FirstWords", "PresentViewers"],
+        }
+
+    def streamerbot_response_for_request(self, message: dict[str, Any]) -> dict[str, Any]:
+        request_id = str(message.get("id") or message.get("requestId") or "")
+        request = str(message.get("request") or message.get("event") or message.get("action") or "").strip()
+        request_key = request.casefold()
+        response: dict[str, Any] = {"id": request_id, "status": "ok"}
+        if request_key in {"getinfo", "getinforequest", "hello"}:
+            response["info"] = self.streamerbot_info_payload()
+        elif request_key == "getevents":
+            response["events"] = self.streamerbot_supported_events()
+        elif request_key == "getactions":
+            response["actions"] = []
+            response["count"] = 0
+        elif request_key in {"subscribe", "unsubscribe"}:
+            response["events"] = message.get("events") or {}
+        elif request_key == "authenticate":
+            pass
+        elif request_key == "sendmessage":
+            response["message"] = message.get("message") or ""
+        return response
 
     def broadcast_json(self, payload: dict[str, Any]) -> int:
         message = json.dumps(payload, ensure_ascii=False)
@@ -1918,19 +1951,11 @@ class TikfinityDirectBridgeServer:
             return
         request_id = str(message.get("id") or message.get("requestId") or "")
         request = str(message.get("request") or message.get("event") or message.get("action") or "").strip()
-        if request.casefold() in {"getinfo", "getinforequest", "hello"}:
-            response = self.streamerbot_hello_payload()
-            if request_id:
-                response["id"] = request_id
-                response["status"] = "ok"
-            try:
-                self.send_json_to_client(client, response)
-            except OSError:
-                pass
-            return
+        if request:
+            self._log(f"TikFinity ponte recebeu request Streamer.bot: {request}.")
         if request_id:
             try:
-                self.send_json_to_client(client, {"id": request_id, "status": "ok"})
+                self.send_json_to_client(client, self.streamerbot_response_for_request(message))
             except OSError:
                 pass
 
