@@ -38,6 +38,7 @@ from freefire_kill_sender import (  # noqa: E402
     send_ff_queue_action_update,
     send_ff_queue_realtime_update,
     send_kills_action_update,
+    send_kills_snapshot_update,
     send_kills_style_update,
     send_kills_realtime_update,
     send_tikfinity_ff_gifts_action,
@@ -954,6 +955,32 @@ def verify(
         )
         if reset_state.daily_ranking or reset_state.global_ranking:
             raise RuntimeError(f"Reset total Kills FF divergente: {reset_state!r}")
+        snapshot_state = send_kills_snapshot_update(
+            kills_url,
+            [PlayerKill("Pedro", 2), PlayerKill("pedro", 3), PlayerKill("Ana", 1)],
+            [PlayerKill("Pedro", 5)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        daily_snapshot = {item.name.casefold(): item.kills for item in snapshot_state.daily_ranking or []}
+        global_snapshot = {item.name.casefold(): item.kills for item in snapshot_state.global_ranking or []}
+        if daily_snapshot != {"pedro": 5, "ana": 1} or global_snapshot != {"pedro": 5}:
+            raise RuntimeError(f"Snapshot Kills FF nao substituiu corretamente: {snapshot_state!r}")
+        replaced_snapshot = send_kills_snapshot_update(
+            kills_url,
+            [PlayerKill("Pedro", 1)],
+            [],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        replaced_daily = {item.name.casefold(): item.kills for item in replaced_snapshot.daily_ranking or []}
+        replaced_global = {item.name.casefold(): item.kills for item in replaced_snapshot.global_ranking or []}
+        if replaced_daily != {"pedro": 1} or replaced_global:
+            raise RuntimeError(f"Snapshot Kills FF somou ou manteve dados antigos: {replaced_snapshot!r}")
 
     send_ff_queue_realtime_update(queue_url, queue, device_id, device_name, room, token)
     if queue_url.startswith("http://127.0.0.1:"):

@@ -95,24 +95,28 @@ X-Aizen-Client-Name: PC LIVE
 X-Aizen-Room: principal
 ```
 
-Para `Kills FF`, o app lança as kills como ação de soma. A URL configurada pode ser `/api/freefire-kills`; o app deriva automaticamente `/api/freefire-kills/action` e envia:
+Para `Kills FF`, o botão `Salvar` envia um snapshot completo do que está no app. A URL configurada pode ser `/api/freefire-kills`; o app deriva automaticamente `/api/freefire-kills/action` e tenta substituir o rank diário e o rank geral sem somar com valores antigos do site:
 
 ```json
 {
   "source": "aizen-stream-control",
-  "mode": "kills_action",
-  "action": "add",
-  "scope": "daily",
-  "app_version": "2.6.52",
+  "mode": "kills_snapshot",
+  "action": "replace",
+  "scope": "both",
+  "app_version": "2.6.77",
   "room": "principal",
   "client_id": "id-unico-do-pc",
   "client_name": "PC LIVE",
-  "player": { "name": "AIZEN OFC", "kills": 7 },
-  "kills": 7
+  "daily_ranking": [
+    { "name": "AIZEN OFC", "kills": 7 }
+  ],
+  "global_ranking": [
+    { "name": "AIZEN OFC", "kills": 7 }
+  ]
 }
 ```
 
-`scope` pode ser `daily`, `general` ou `both`. A resposta pode devolver o ranking atualizado:
+Se o Jarvis ainda não aceitar `action: "replace"`, o app usa fallback seguro: zera `daily` e `general` e recria os jogadores com ação `set`, evitando duplicar ou somar com o ranking que já estava no site. As ações administrativas continuam usando `scope` `daily`, `general` ou `both`. A resposta pode devolver o ranking atualizado:
 
 ```json
 {

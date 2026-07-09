@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.76"
+APP_VERSION = "2.6.77"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3247,6 +3247,37 @@ def player_payload(players: list[PlayerKill]) -> list[dict[str, Any]]:
     return [{"name": player.name, "kills": int(player.kills)} for player in players]
 
 
+def merged_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
+    merged: dict[str, PlayerKill] = {}
+    order: list[str] = []
+    for player in players:
+        name = player.name.strip()
+        if not name:
+            continue
+        key = normalize_player_key(name)
+        if key not in merged:
+            merged[key] = PlayerKill(
+                name=name,
+                kills=max(0, normalize_kill_value(player.kills)),
+                key=player.key,
+                ff_player_id=player.ff_player_id,
+                entries=normalize_kill_value(player.entries),
+            )
+            order.append(key)
+            continue
+        merged[key].kills += max(0, normalize_kill_value(player.kills))
+        if player.key and not merged[key].key:
+            merged[key].key = player.key
+        if player.ff_player_id and not merged[key].ff_player_id:
+            merged[key].ff_player_id = player.ff_player_id
+        merged[key].entries = max(merged[key].entries, normalize_kill_value(player.entries))
+    return [merged[key] for key in order]
+
+
+def sorted_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
+    return sorted(merged_player_kills(players), key=lambda item: (-item.kills, normalize_player_key(item.name)))
+
+
 def overlay_rank_players(
     daily_ranking: list[PlayerKill] | None,
     global_ranking: list[PlayerKill] | None,
@@ -4214,6 +4245,148 @@ def send_kills_action_update(
         raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
     response.raise_for_status()
     return parse_realtime_state(response.text)
+
+
+def player_kill_map(players: list[PlayerKill]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for player in players:
+        name = player.name.strip()
+        if not name:
+            continue
+        key = normalize_player_key(name)
+        result[key] = result.get(key, 0) + normalize_kill_value(player.kills)
+    return result
+
+
+def kills_snapshot_matches_state(
+    state: RealtimeState,
+    daily_players: list[PlayerKill],
+    general_players: list[PlayerKill],
+) -> bool:
+    expected_daily = player_kill_map(daily_players)
+    expected_general = player_kill_map(general_players)
+    actual_daily = player_kill_map(state.daily_ranking or [])
+    actual_general = player_kill_map(state.global_ranking or state.players or [])
+    return actual_daily == expected_daily and actual_general == expected_general
+
+
+def send_kills_snapshot_update(
+    endpoint_url: str,
+    daily_players: list[PlayerKill],
+    general_players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> RealtimeState:
+    daily_players = sorted_player_kills(daily_players)
+    general_players = sorted_player_kills(general_players)
+    now = datetime.now().isoformat(timespec="seconds")
+    payload: dict[str, Any] = {
+        "source": "aizen-stream-control",
+        "mode": "kills_snapshot",
+        "app_version": APP_VERSION,
+        "sync_version": 3,
+        "room": room,
+        "client_id": device_id,
+        "client_name": device_name,
+        "updated_by": device_name,
+        "updated_at": now,
+        "revision": int(time.time() * 1000),
+        "action": "replace",
+        "scope": "both",
+        "replace": True,
+        "players": player_payload(general_players),
+        "ranking": player_payload(general_players),
+        "global_ranking": player_payload(general_players),
+        "daily_ranking": player_payload(daily_players),
+        "totals": {
+            "total_players": len(general_players),
+            "total_kills": sum(player.kills for player in general_players),
+            "daily_total_players": len(daily_players),
+            "daily_total_kills": sum(player.kills for player in daily_players),
+        },
+    }
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-Room": room,
+        "X-Aizen-App-Version": APP_VERSION,
+        "X-Aizen-Mode": "kills_snapshot",
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+
+    response = requests.post(
+        derive_kills_action_endpoint(endpoint_url),
+        json=payload,
+        headers=headers,
+        timeout=20,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    state = parse_realtime_state(response.text)
+    if kills_snapshot_matches_state(state, daily_players, general_players):
+        return state
+
+    final_state: RealtimeState | None = None
+    final_state = send_kills_action_update(
+        endpoint_url,
+        "reset_daily",
+        scope="daily",
+        device_id=device_id,
+        device_name=device_name,
+        room=room,
+        token=token,
+    )
+    final_state = send_kills_action_update(
+        endpoint_url,
+        "reset_general",
+        scope="general",
+        device_id=device_id,
+        device_name=device_name,
+        room=room,
+        token=token,
+    )
+    for player in daily_players:
+        final_state = send_kills_action_update(
+            endpoint_url,
+            "set",
+            player=player,
+            kills=player.kills,
+            scope="daily",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+    for player in general_players:
+        final_state = send_kills_action_update(
+            endpoint_url,
+            "set",
+            player=player,
+            kills=player.kills,
+            scope="general",
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+    try:
+        return fetch_kills_realtime(
+            endpoint_url,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+    except Exception:
+        if final_state is not None:
+            return final_state
+        return RealtimeState(players=general_players, daily_ranking=daily_players, global_ranking=general_players)
 
 
 def send_ff_queue_realtime_update(
@@ -8807,6 +8980,32 @@ def run_gui(config_path: Path) -> int:
             for player in players
         ]
 
+    def merge_manual_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
+        merged: dict[str, PlayerKill] = {}
+        order: list[str] = []
+        for player in players:
+            name = player.name.strip()
+            if not name:
+                continue
+            key = normalize_player_key(name)
+            if key not in merged:
+                merged[key] = PlayerKill(
+                    name=name,
+                    kills=normalize_kill_value(player.kills),
+                    key=player.key,
+                    ff_player_id=player.ff_player_id,
+                    entries=normalize_kill_value(player.entries),
+                )
+                order.append(key)
+                continue
+            merged[key].kills += normalize_kill_value(player.kills)
+            if player.key and not merged[key].key:
+                merged[key].key = player.key
+            if player.ff_player_id and not merged[key].ff_player_id:
+                merged[key].ff_player_id = player.ff_player_id
+            merged[key].entries = max(merged[key].entries, normalize_kill_value(player.entries))
+        return [merged[key] for key in order]
+
     def current_manual_scope() -> str:
         scope = normalize_kills_scope_value(manual_scope_var.get())
         return scope if scope in {"daily", "general"} else "daily"
@@ -9390,6 +9589,14 @@ def run_gui(config_path: Path) -> int:
             payload = {"scope": normalize_kills_scope_value(scope), "players": payload}
         return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
+    def manual_snapshot_signature(daily_players: list[PlayerKill], general_players: list[PlayerKill]) -> str:
+        payload = {
+            "scope": "both",
+            "daily": player_payload(sorted_player_kills(daily_players)),
+            "general": player_payload(sorted_player_kills(general_players)),
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
     def poll_interval_seconds() -> int:
         try:
             value = int(float(poll_seconds_var.get().replace(",", ".")))
@@ -9399,17 +9606,12 @@ def run_gui(config_path: Path) -> int:
 
     def collect_manual_players() -> list[PlayerKill]:
         players: list[PlayerKill] = []
-        seen: set[str] = set()
         for row in manual_rows:
             name = row["name_var"].get().strip()
             if not name:
                 continue
-            key = normalize_player_key(name)
-            if key in seen:
-                continue
-            seen.add(key)
             players.append(PlayerKill(name=name, kills=normalize_kill_value(row["kills_var"].get())))
-        return players
+        return merge_manual_player_kills(players)
 
     def update_manual_metrics() -> None:
         players = collect_manual_players()
@@ -9679,6 +9881,37 @@ def run_gui(config_path: Path) -> int:
         if notify:
             on_manual_change()
 
+    def add_or_increment_manual_player_all_scopes(name: str, kills: int) -> None:
+        nonlocal manual_last_local_edit_at
+        clean_name = re.sub(r"\s+", " ", str(name or "").strip())
+        if not clean_name:
+            return
+        add_kills = normalize_kill_value(kills)
+        active_scope = current_manual_scope()
+        if active_scope not in {"daily", "general"}:
+            active_scope = "daily"
+        manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players())
+
+        for scope_key in ("daily", "general"):
+            if scope_key == active_scope:
+                players = clone_player_list(manual_scope_buffers.get(scope_key, []))
+            else:
+                players = manual_scope_display_players(scope_key, prefer_remote=True)
+            players.append(PlayerKill(clean_name, add_kills, key=normalize_player_key(clean_name)))
+            manual_scope_buffers[scope_key] = merge_manual_player_kills(players)
+            manual_scope_dirty.add(scope_key)
+
+        set_manual_players(manual_scope_buffers[active_scope])
+        sync_kills_rank_tab_with_manual_scope(active_scope)
+        clear_manual_metric_overrides()
+        manual_last_local_edit_at = time.monotonic()
+        update_manual_metrics()
+        manual_status_var.set("Adicionado no diario e geral")
+        try:
+            schedule_config_autosave()
+        except NameError:
+            pass
+
     def open_manual_kill_dialog() -> None:
         dialog = ctk.CTkToplevel(root)
         dialog.title("Adicionar jogador em Kills FF")
@@ -9815,7 +10048,7 @@ def run_gui(config_path: Path) -> int:
             if not clean_name:
                 messagebox.showinfo("Kills FF", "Informe o nick do jogador.")
                 return
-            add_manual_row(clean_name, normalize_kill_value(kills_var.get()), notify=True)
+            add_or_increment_manual_player_all_scopes(clean_name, normalize_kill_value(kills_var.get()))
             try:
                 dialog.destroy()
             except tk.TclError:
@@ -14235,17 +14468,21 @@ def run_gui(config_path: Path) -> int:
             return
 
         endpoint_url = local_config.get("kills_realtime_url", "").strip()
-        players = collect_manual_players()
-        manual_scope = normalize_kills_scope_value(local_config.get("kills_manual_scope", "daily"))
-        if manual_scope not in {"daily", "general"}:
-            manual_scope = "daily"
-        signature = manual_signature(players, manual_scope)
+        active_scope = normalize_kills_scope_value(local_config.get("kills_manual_scope", "daily"))
+        if active_scope not in {"daily", "general"}:
+            active_scope = "daily"
+        manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players())
+        daily_players = merge_manual_player_kills(manual_scope_buffers.get("daily", []))
+        general_players = merge_manual_player_kills(manual_scope_buffers.get("general", []))
+        manual_scope_buffers["daily"] = clone_player_list(daily_players)
+        manual_scope_buffers["general"] = clone_player_list(general_players)
+        signature = manual_snapshot_signature(daily_players, general_players)
         if not endpoint_url:
             manual_status_var.set("Sem endpoint")
             if force:
                 log("Informe a URL do painel/Jarvis para sincronizar as kills.")
             return
-        if not players:
+        if not daily_players and not general_players:
             manual_status_var.set("Sem jogadores")
             if force:
                 log("Adicione pelo menos um jogador antes de enviar as kills.")
@@ -14261,26 +14498,25 @@ def run_gui(config_path: Path) -> int:
 
         def run() -> None:
             try:
-                final_state: RealtimeState | None = None
-                for player in players:
-                    final_state = send_kills_action_update(
-                        endpoint_url,
-                        "add",
-                        player=player,
-                        kills=player.kills,
-                        scope=manual_scope,
-                        device_id=str(local_config.get("device_id", "")),
-                        device_name=str(local_config.get("device_name", "")),
-                        room=str(local_config.get("kills_sync_room", "principal")),
-                        token=str(local_config.get("jarvis_api_token", "")),
-                    )
+                final_state = send_kills_snapshot_update(
+                    endpoint_url,
+                    daily_players,
+                    general_players,
+                    device_id=str(local_config.get("device_id", "")),
+                    device_name=str(local_config.get("device_name", "")),
+                    room=str(local_config.get("kills_sync_room", "principal")),
+                    token=str(local_config.get("jarvis_api_token", "")),
+                )
                 sync_queue.put(
                     (
                         "manual_rank_sent",
                         {
-                            "count": len(players),
+                            "count": len(daily_players) + len(general_players),
                             "signature": signature,
-                            "scope": manual_scope,
+                            "scope": "both",
+                            "scopes": ["daily", "general"],
+                            "daily_count": len(daily_players),
+                            "general_count": len(general_players),
                             "state": final_state,
                         },
                     )
@@ -14533,9 +14769,16 @@ def run_gui(config_path: Path) -> int:
             manual_sending = False
             manual_last_signature = payload["signature"]
             manual_poll_quiet_cycles = 0
-            sent_scope = normalize_kills_scope_value(payload.get("scope"))
-            if sent_scope in {"daily", "general"}:
-                manual_scope_dirty.discard(sent_scope)
+            sent_scopes = payload.get("scopes")
+            if isinstance(sent_scopes, list):
+                for sent_scope in sent_scopes:
+                    clean_sent_scope = normalize_kills_scope_value(sent_scope)
+                    if clean_sent_scope in {"daily", "general"}:
+                        manual_scope_dirty.discard(clean_sent_scope)
+            else:
+                sent_scope = normalize_kills_scope_value(payload.get("scope"))
+                if sent_scope in {"daily", "general"}:
+                    manual_scope_dirty.discard(sent_scope)
             state = payload.get("state")
             if isinstance(state, RealtimeState):
                 apply_kills_rankings(state)
@@ -14551,8 +14794,8 @@ def run_gui(config_path: Path) -> int:
             update_manual_metrics()
             set_text_var(manual_status_var, "Sincronizado")
             log(
-                "Kills manuais lançadas no Jarvis "
-                f"{kills_scope_description(payload.get('scope'))} ({payload['count']} jogador(es))."
+                "Kills FF salvas no Jarvis exatamente como no app "
+                f"({payload.get('daily_count', 0)} diario / {payload.get('general_count', 0)} geral)."
             )
             return
 
