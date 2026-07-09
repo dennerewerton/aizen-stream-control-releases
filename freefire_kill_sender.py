@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.70"
+APP_VERSION = "2.6.71"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -15376,11 +15376,6 @@ def run_gui(config_path: Path) -> int:
         ],
         columns=4,
     )
-    try:
-        tabview.delete("Overlay FF")
-    except (AttributeError, tk.TclError):
-        pass
-
     button(chat_actions, "Iniciar chat", start_chat_listener, "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
     button(chat_actions, "Abrir janela", open_chat_monitor_window, "default", width=112).pack(side=tk.LEFT, padx=(0, 8))
     button(chat_actions, "Overlay jogo", open_chat_overlay_window, "accent", width=112).pack(side=tk.LEFT, padx=(0, 8))
