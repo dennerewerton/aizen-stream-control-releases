@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.73"
+APP_VERSION = "2.6.74"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -980,31 +980,264 @@ def livepix_events_to_payload(events: list[LivepixEvent]) -> list[dict[str, Any]
     ]
 
 
+LIVEPIX_MONTH_NAMES = (
+    "janeiro",
+    "fevereiro",
+    "março",
+    "abril",
+    "maio",
+    "junho",
+    "julho",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "dezembro",
+)
+
+
+def livepix_first_value(mapping: Any, paths: tuple[tuple[str, ...], ...], default: Any = None) -> Any:
+    if not isinstance(mapping, dict):
+        return default
+    for path in paths:
+        current: Any = mapping
+        for key in path:
+            if not isinstance(current, dict) or key not in current:
+                current = None
+                break
+            current = current.get(key)
+        if current not in (None, ""):
+            return current
+    return default
+
+
+def livepix_text_value(value: Any) -> str:
+    if isinstance(value, dict):
+        value = livepix_first_value(
+            value,
+            (
+                ("displayName",),
+                ("username",),
+                ("name",),
+                ("nickname",),
+                ("email",),
+                ("message",),
+                ("text",),
+                ("content",),
+                ("comment",),
+                ("description",),
+            ),
+        )
+    if isinstance(value, (list, tuple, set)):
+        return ""
+    return _first_text(value)
+
+
+def livepix_first_text_from(mapping: Any, paths: tuple[tuple[str, ...], ...]) -> str:
+    values = []
+    for path in paths:
+        values.append(livepix_first_value(mapping, (path,)))
+    return _first_text(*(livepix_text_value(value) for value in values))
+
+
+def livepix_amount_cents(value: Any) -> int:
+    if isinstance(value, dict):
+        value = livepix_first_value(
+            value,
+            (
+                ("amount",),
+                ("amountCents",),
+                ("value",),
+                ("valueCents",),
+                ("total",),
+                ("totalAmount",),
+                ("grossAmount",),
+                ("netAmount",),
+                ("balance",),
+            ),
+        )
+    if value in (None, ""):
+        return 0
+    try:
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return 0
+            has_decimal_marker = bool(re.search(r"\d[,.]\d{1,2}\b", text)) or any(mark in text for mark in ("R$", "$", "BRL"))
+            cleaned = re.sub(r"[^0-9,.-]", "", text)
+            if has_decimal_marker:
+                if "," in cleaned and "." in cleaned:
+                    cleaned = cleaned.replace(".", "").replace(",", ".")
+                elif "," in cleaned:
+                    cleaned = cleaned.replace(",", ".")
+                return max(0, int(round(float(cleaned) * 100)))
+            return max(0, int(float(cleaned)))
+        if isinstance(value, float):
+            return max(0, int(round(value * 100 if abs(value) < 1000 and not value.is_integer() else value)))
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def livepix_parse_datetime(value: Any) -> datetime:
+    text = str(value or "").strip()
+    if not text:
+        return datetime.now()
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        try:
+            timestamp = float(text)
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000
+            return datetime.fromtimestamp(timestamp)
+        except (OSError, OverflowError, ValueError):
+            return datetime.now()
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone().replace(tzinfo=None)
+        return parsed
+    except ValueError:
+        for pattern in ("%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M"):
+            try:
+                return datetime.strptime(text, pattern)
+            except ValueError:
+                continue
+    return datetime.now()
+
+
+def format_livepix_date_label(value: Any) -> str:
+    parsed = livepix_parse_datetime(value)
+    month = LIVEPIX_MONTH_NAMES[parsed.month - 1]
+    return f"{parsed.day} de {month} de {parsed.year}"
+
+
+def format_livepix_time_label(value: Any) -> str:
+    return livepix_parse_datetime(value).strftime("%H:%M")
+
+
 def parse_livepix_event(payload: Any, kind_hint: str = "payment", source: str = "api") -> LivepixEvent | None:
     if not isinstance(payload, dict):
         return None
     data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
     resource = data.get("resource") if isinstance(data.get("resource"), dict) else {}
-    kind = str(data.get("kind") or data.get("type") or resource.get("type") or kind_hint or "payment").strip().lower()
-    event_id = _first_text(data.get("event_id"), data.get("id"), resource.get("id"), data.get("reference"), resource.get("reference"))
-    reference = _first_text(data.get("reference"), resource.get("reference"), event_id)
+    user = livepix_first_value(data, (("user",), ("payer",), ("donor",), ("customer",), ("subscriber",), ("supporter",)), {})
+    message = livepix_first_value(data, (("message",), ("comment",), ("description",), ("text",), ("content",)), {})
+    kind = livepix_first_text_from(
+        data,
+        (
+            ("kind",),
+            ("type",),
+            ("event",),
+            ("resource", "type"),
+            ("transaction", "type"),
+        ),
+    ) or kind_hint or "payment"
+    kind = kind.strip().lower()
+    event_id = livepix_first_text_from(
+        data,
+        (
+            ("event_id",),
+            ("eventId",),
+            ("id",),
+            ("uuid",),
+            ("resource", "id"),
+            ("payment", "id"),
+            ("message", "id"),
+            ("subscription", "id"),
+            ("transaction", "id"),
+            ("reference",),
+            ("resource", "reference"),
+        ),
+    )
+    reference = livepix_first_text_from(data, (("reference",), ("resource", "reference"), ("txid",), ("transaction", "id"))) or event_id
     if not event_id and not reference:
         return None
-    try:
-        amount = int(float(data.get("amount", 0) or 0))
-    except (TypeError, ValueError):
-        amount = 0
+    amount = livepix_amount_cents(
+        livepix_first_value(
+            data,
+            (
+                ("amount",),
+                ("amountCents",),
+                ("value",),
+                ("valueCents",),
+                ("total",),
+                ("totalAmount",),
+                ("grossAmount",),
+                ("netAmount",),
+                ("resource", "amount"),
+                ("payment", "amount"),
+                ("message", "amount"),
+                ("subscription", "amount"),
+                ("plan", "amount"),
+                ("transaction", "amount"),
+                ("receivable", "amount"),
+            ),
+        )
+    )
+    username = livepix_first_text_from(
+        data,
+        (
+            ("username",),
+            ("displayName",),
+            ("name",),
+            ("nickname",),
+            ("payer", "username"),
+            ("payer", "displayName"),
+            ("payer", "name"),
+            ("donor", "username"),
+            ("donor", "displayName"),
+            ("donor", "name"),
+            ("customer", "username"),
+            ("customer", "displayName"),
+            ("customer", "name"),
+            ("user", "username"),
+            ("user", "displayName"),
+            ("user", "name"),
+            ("subscriber", "username"),
+            ("subscriber", "displayName"),
+            ("subscriber", "name"),
+        ),
+    ) or livepix_text_value(user)
+    event_message = livepix_first_text_from(
+        data,
+        (
+            ("message", "message"),
+            ("message", "text"),
+            ("message", "content"),
+            ("comment",),
+            ("description",),
+            ("text",),
+            ("content",),
+            ("payment", "message"),
+            ("subscription", "message"),
+        ),
+    ) or livepix_text_value(message)
+    created_at = livepix_first_text_from(
+        data,
+        (
+            ("createdAt",),
+            ("created_at",),
+            ("paidAt",),
+            ("paid_at",),
+            ("updatedAt",),
+            ("timestamp",),
+            ("date",),
+            ("resource", "createdAt"),
+            ("transaction", "createdAt"),
+        ),
+    ) or datetime.now().isoformat(timespec="seconds")
     return LivepixEvent(
         event_id=event_id or reference,
         kind=kind,
         reference=reference,
-        username=_first_text(data.get("username"), data.get("subscriber"), data.get("user"), data.get("name")),
-        message=_first_text(data.get("message"), data.get("text"), data.get("content")),
+        username=username,
+        message=event_message,
         amount=max(0, amount),
-        currency=_first_text(data.get("currency"), "BRL").upper(),
-        proof=_first_text(data.get("proof")),
+        currency=(livepix_first_text_from(data, (("currency",), ("resource", "currency"), ("payment", "currency"), ("message", "currency"), ("wallet", "currency"))) or "BRL").upper(),
+        proof=livepix_first_text_from(data, (("proof",), ("proofUrl",), ("url",), ("redirectUrl",))),
         flagged=bool(data.get("flagged", False)),
-        created_at=_first_text(data.get("createdAt"), data.get("created_at"), datetime.now().isoformat(timespec="seconds")),
+        created_at=created_at,
         source=source,
     )
 
@@ -1023,6 +1256,7 @@ def load_livepix_events(path: Path) -> list[LivepixEvent]:
         event = parse_livepix_event(item, source=str(item.get("source", "local")) if isinstance(item, dict) else "local")
         if event is not None:
             events.append(event)
+    events.sort(key=lambda item: item.created_at or "", reverse=True)
     return events
 
 
@@ -5549,6 +5783,7 @@ def run_gui(config_path: Path) -> int:
     config_auto_save_after_id: str | None = None
     config_auto_save_running = False
     livepix_events = load_livepix_events(livepix_events_path(config_path))
+    livepix_dashboard_state: dict[str, Any] = {}
     livepix_overlay_window: Any | None = None
     livepix_overlay_frame: Any | None = None
     livepix_widgets: list[Any] = []
@@ -5847,6 +6082,8 @@ def run_gui(config_path: Path) -> int:
     livepix_total_var = tk.StringVar(value="R$ 0,00")
     livepix_goal_var = tk.StringVar(value="0%")
     livepix_count_var = tk.StringVar(value="0")
+    livepix_balance_var = tk.StringVar(value="-")
+    livepix_pending_var = tk.StringVar(value="-")
     livepix_top_var = tk.StringVar(value="-")
     livepix_wallet_var = tk.StringVar(value="-")
     livepix_extra_var = tk.StringVar(value="-")
@@ -12762,19 +12999,40 @@ def run_gui(config_path: Path) -> int:
             return f"{response.status_code} {body or response.reason}".strip()
         return error_text[:220]
 
+    def livepix_event_identity(event: LivepixEvent) -> tuple[str, str]:
+        return (event.kind, event.event_id or event.reference)
+
     def merge_livepix_events(new_events: list[LivepixEvent]) -> int:
-        existing = {(event.kind, event.event_id or event.reference) for event in livepix_events}
+        existing = {livepix_event_identity(event): event for event in livepix_events}
         added = 0
+        updated = False
         for event in new_events:
-            key = (event.kind, event.event_id or event.reference)
-            if key in existing:
+            key = livepix_event_identity(event)
+            current = existing.get(key)
+            if current is not None:
+                for attr in ("reference", "username", "message", "proof", "created_at", "source"):
+                    new_value = str(getattr(event, attr, "") or "").strip()
+                    old_value = str(getattr(current, attr, "") or "").strip()
+                    if new_value and new_value != old_value:
+                        setattr(current, attr, new_value)
+                        updated = True
+                if event.amount and event.amount != current.amount:
+                    current.amount = event.amount
+                    updated = True
+                if event.currency and event.currency != current.currency:
+                    current.currency = event.currency.upper()
+                    updated = True
+                if event.flagged and not current.flagged:
+                    current.flagged = True
+                    updated = True
                 continue
             livepix_events.append(event)
-            existing.add(key)
+            existing[key] = event
             added += 1
         livepix_events.sort(key=lambda item: item.created_at or "", reverse=True)
         del livepix_events[1000:]
-        save_livepix_events(livepix_events_path(config_path), livepix_events)
+        if added or updated:
+            save_livepix_events(livepix_events_path(config_path), livepix_events)
         refresh_livepix_dashboard()
         return added
 
@@ -12872,13 +13130,107 @@ def run_gui(config_path: Path) -> int:
     def livepix_period_events() -> list[LivepixEvent]:
         return [event for event in livepix_events if event.currency.upper() == livepix_currency_var.get().strip().upper()]
 
+    def livepix_selected_wallet() -> dict[str, Any]:
+        wallet = livepix_dashboard_state.get("wallet", [])
+        if not isinstance(wallet, list):
+            return {}
+        selected_currency = livepix_currency_var.get().strip().upper() or "BRL"
+        selected = next(
+            (
+                item
+                for item in wallet
+                if isinstance(item, dict) and str(item.get("currency", "")).upper() == selected_currency
+            ),
+            wallet[0] if wallet and isinstance(wallet[0], dict) else {},
+        )
+        return selected if isinstance(selected, dict) else {}
+
+    def livepix_mapping_amount(mapping: Any, paths: tuple[tuple[str, ...], ...]) -> int:
+        if not isinstance(mapping, dict):
+            return 0
+        return livepix_amount_cents(livepix_first_value(mapping, paths))
+
+    def livepix_positive_amount_sum(items: Any) -> int:
+        if not isinstance(items, list):
+            return 0
+        total = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            status = livepix_first_text_from(item, (("status",), ("state",), ("type",), ("kind",))).casefold()
+            if any(marker in status for marker in ("withdraw", "saque", "debit", "refund", "estorno", "cancel")):
+                continue
+            total += livepix_mapping_amount(
+                item,
+                (
+                    ("amount",),
+                    ("value",),
+                    ("total",),
+                    ("grossAmount",),
+                    ("netAmount",),
+                    ("paidAmount",),
+                    ("balance",),
+                ),
+            )
+        return total
+
+    def livepix_complete_total(local_total: int) -> int:
+        candidates = [local_total]
+        account = livepix_dashboard_state.get("account", {})
+        extras = livepix_dashboard_state.get("extras", {})
+        if isinstance(account, dict):
+            candidates.append(
+                livepix_mapping_amount(
+                    account,
+                    (
+                        ("totalReceived",),
+                        ("receivedTotal",),
+                        ("totalReceivedAmount",),
+                        ("amountReceived",),
+                        ("totalAmount",),
+                        ("total",),
+                        ("stats", "totalReceived"),
+                        ("stats", "receivedTotal"),
+                        ("summary", "totalReceived"),
+                        ("summary", "total"),
+                    ),
+                )
+            )
+        selected_wallet = livepix_selected_wallet()
+        if selected_wallet:
+            balance = livepix_mapping_amount(selected_wallet, (("balance",), ("balanceAvailable",), ("available",)))
+            pending = livepix_mapping_amount(selected_wallet, (("balancePending",), ("pending",), ("pendingBalance",)))
+            held = livepix_mapping_amount(selected_wallet, (("balanceHeld",), ("held",), ("heldBalance",)))
+            candidates.append(balance + pending + held)
+        if isinstance(extras, dict):
+            candidates.append(livepix_positive_amount_sum(extras.get("transactions")))
+            candidates.append(livepix_positive_amount_sum(extras.get("receivables")))
+        return max(candidates) if candidates else local_total
+
     def refresh_livepix_dashboard() -> None:
         events = livepix_period_events()
-        total = sum(event.amount for event in events if event.kind in {"payment", "message", "subscription"})
+        local_total = sum(event.amount for event in events if event.kind in {"payment", "message", "subscription"})
+        total = livepix_complete_total(local_total)
         goal = livepix_goal_amount_cents()
         livepix_total_var.set(format_livepix_amount(total, livepix_currency_var.get()))
         livepix_count_var.set(str(len(events)))
         livepix_goal_var.set(f"{min(999, int((total / goal) * 100)) if goal else 0}%")
+        selected_wallet = livepix_selected_wallet()
+        if selected_wallet:
+            selected_currency = str(selected_wallet.get("currency") or livepix_currency_var.get()).upper()
+            balance = livepix_mapping_amount(selected_wallet, (("balance",), ("balanceAvailable",), ("available",)))
+            pending = livepix_mapping_amount(selected_wallet, (("balancePending",), ("pending",), ("pendingBalance",)))
+            held = livepix_mapping_amount(selected_wallet, (("balanceHeld",), ("held",), ("heldBalance",)))
+            livepix_balance_var.set(format_livepix_amount(balance, selected_currency))
+            livepix_pending_var.set(format_livepix_amount(pending + held, selected_currency))
+            livepix_wallet_var.set(
+                f"Disponível {format_livepix_amount(balance, selected_currency)} | "
+                f"pendente {format_livepix_amount(pending, selected_currency)} | "
+                f"retido {format_livepix_amount(held, selected_currency)}"
+            )
+        else:
+            livepix_balance_var.set("-")
+            livepix_pending_var.set("-")
         by_user: dict[str, int] = {}
         for event in events:
             name = event.username.strip() or event.reference or "Apoiador"
@@ -12901,6 +13253,31 @@ def run_gui(config_path: Path) -> int:
         if livepix_overlay_frame is not None:
             render_livepix_overlay()
 
+    def replay_livepix_history_event(event: LivepixEvent) -> None:
+        announce_livepix_event(event)
+        livepix_status_var.set("Evento reexibido")
+        if livepix_overlay_frame is not None:
+            render_livepix_overlay()
+
+    def toggle_livepix_history_flag(event: LivepixEvent) -> None:
+        key = livepix_event_identity(event)
+        for item in livepix_events:
+            if livepix_event_identity(item) == key:
+                item.flagged = not item.flagged
+                save_livepix_events(livepix_events_path(config_path), livepix_events)
+                livepix_status_var.set("Marcado" if item.flagged else "Desmarcado")
+                refresh_livepix_dashboard()
+                return
+
+    def hide_livepix_history_event(event: LivepixEvent) -> None:
+        key = livepix_event_identity(event)
+        if not messagebox.askyesno("Livepix", "Ocultar este Livepix do histórico local?"):
+            return
+        livepix_events[:] = [item for item in livepix_events if livepix_event_identity(item) != key]
+        save_livepix_events(livepix_events_path(config_path), livepix_events)
+        livepix_status_var.set("Evento ocultado")
+        refresh_livepix_dashboard()
+
     def render_livepix_events() -> None:
         if "livepix_events_frame" not in globals() and not hasattr(render_livepix_events, "frame"):
             return
@@ -12915,28 +13292,81 @@ def run_gui(config_path: Path) -> int:
         livepix_widgets.clear()
         events = livepix_events[:80]
         if not events:
-            empty = ctk.CTkLabel(frame, text="Nenhum evento Livepix recebido ainda", text_color=muted, font=("Segoe UI", 13))
-            empty.grid(row=0, column=0, sticky="ew", padx=12, pady=12)
+            empty = ctk.CTkLabel(
+                frame,
+                text="Nenhum Livepix recebido ainda. A sincronização automática vai preencher este histórico quando houver dados.",
+                text_color=muted,
+                font=("Segoe UI", 13),
+                wraplength=680,
+            )
+            empty.grid(row=0, column=0, sticky="ew", padx=16, pady=20)
             livepix_widgets.append(empty)
             return
-        for row_index, event in enumerate(events):
-            row = ctk.CTkFrame(frame, fg_color="#171014" if row_index % 2 == 0 else "#0f0b0e", corner_radius=10)
-            row.grid(row=row_index, column=0, sticky="ew", padx=8, pady=4)
+        try:
+            wraplength = max(420, frame.winfo_width() - 210)
+        except tk.TclError:
+            wraplength = 680
+        row_index = 0
+        current_date = ""
+        for event in events:
+            date_label = format_livepix_date_label(event.created_at)
+            if date_label != current_date:
+                current_date = date_label
+                date_widget = ctk.CTkLabel(
+                    frame,
+                    text=date_label,
+                    text_color=muted,
+                    font=("Segoe UI Semibold", 15),
+                    anchor="w",
+                )
+                date_widget.grid(row=row_index, column=0, sticky="ew", padx=10, pady=(18 if row_index else 6, 6))
+                livepix_widgets.append(date_widget)
+                row_index += 1
+
+            row = ctk.CTkFrame(frame, fg_color="#151515", corner_radius=6, border_width=1, border_color=border)
+            row.grid(row=row_index, column=0, sticky="ew", padx=10, pady=5)
             row.columnconfigure(1, weight=1)
+            row.columnconfigure(3, weight=0)
             kind_label = {
                 "message": "Mensagem",
                 "payment": "Pagamento",
                 "subscription": "Assinatura",
             }.get(event.kind, event.kind.title() or "Evento")
-            ctk.CTkLabel(row, text=kind_label, text_color=accent, font=("Segoe UI Semibold", 12), width=86).grid(row=0, column=0, sticky="w", padx=10, pady=(8, 0))
+            ctk.CTkLabel(row, text="↔", text_color=muted, font=("Segoe UI Semibold", 16), width=26).grid(
+                row=0, column=0, sticky="nw", padx=(16, 4), pady=(18, 0)
+            )
             title = event.username or event.reference or "Apoiador"
-            ctk.CTkLabel(row, text=title, text_color=fg, font=("Segoe UI Semibold", 13), anchor="w").grid(row=0, column=1, sticky="ew", padx=8, pady=(8, 0))
-            ctk.CTkLabel(row, text=format_livepix_amount(event.amount, event.currency), text_color=teal, font=("Segoe UI Semibold", 13)).grid(row=0, column=2, sticky="e", padx=10, pady=(8, 0))
-            detail = event.message or event.reference or event.proof or event.created_at
-            ctk.CTkLabel(row, text=detail[:180], text_color=muted, font=("Segoe UI", 11), anchor="w", wraplength=760).grid(row=1, column=1, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
+            ctk.CTkLabel(row, text=title, text_color=fg, font=("Segoe UI Semibold", 15), anchor="w").grid(
+                row=0, column=1, sticky="ew", padx=8, pady=(18, 0)
+            )
+            ctk.CTkLabel(row, text=format_livepix_time_label(event.created_at), text_color=muted, font=("Segoe UI", 12), anchor="w").grid(
+                row=1, column=1, sticky="ew", padx=8, pady=(0, 14)
+            )
+            ctk.CTkLabel(row, text="▣", text_color=muted, font=("Segoe UI Semibold", 14), width=26).grid(
+                row=2, column=0, sticky="nw", padx=(16, 4), pady=(0, 0)
+            )
+            detail = event.message or event.reference or kind_label
+            ctk.CTkLabel(row, text=detail[:500], text_color=fg, font=("Segoe UI", 13), anchor="w", justify="left", wraplength=wraplength).grid(
+                row=2, column=1, columnspan=3, sticky="ew", padx=8, pady=(0, 24)
+            )
+            ctk.CTkLabel(
+                row,
+                text=format_livepix_amount(event.amount, event.currency),
+                text_color="#31e06f",
+                font=("Segoe UI Semibold", 20),
+                anchor="w",
+            ).grid(row=3, column=0, columnspan=2, sticky="w", padx=(16, 8), pady=(0, 20))
+            actions = ctk.CTkFrame(row, fg_color="#151515", corner_radius=0)
+            actions.grid(row=3, column=3, sticky="e", padx=(8, 18), pady=(0, 18))
+            button(actions, "▶", lambda item=event: replay_livepix_history_event(item), "ghost", width=42).pack(side=tk.LEFT, padx=(0, 8))
+            button(actions, "⚑", lambda item=event: toggle_livepix_history_flag(item), "ghost", width=42).pack(side=tk.LEFT, padx=(0, 8))
+            button(actions, "⊘", lambda item=event: hide_livepix_history_event(item), "ghost", width=42).pack(side=tk.LEFT)
             if event.flagged:
-                ctk.CTkLabel(row, text="MOD", text_color=danger, font=("Segoe UI Semibold", 11)).grid(row=1, column=0, sticky="w", padx=10, pady=(0, 8))
+                ctk.CTkLabel(row, text="Marcado", text_color=danger, font=("Segoe UI Semibold", 11)).grid(
+                    row=1, column=3, sticky="e", padx=(8, 18), pady=(0, 14)
+                )
             livepix_widgets.append(row)
+            row_index += 1
 
     def handle_livepix_webhook(payload: dict[str, Any]) -> None:
         livepix_queue.put(("webhook", payload))
@@ -12992,18 +13422,22 @@ def run_gui(config_path: Path) -> int:
             livepix_status_var.set("Desligado")
             log("Webhook Livepix parado.")
 
-    def sync_livepix_from_api() -> None:
+    def sync_livepix_from_api(show_error_dialog: bool = True) -> None:
         try:
             save_config(config_path, update_config_from_form())
             client = livepix_client()
         except Exception as exc:
-            messagebox.showerror("Livepix", str(exc))
+            detail = str(exc)
+            livepix_status_var.set("Configure a API")
+            livepix_extra_var.set(detail)
+            log(f"Livepix sincronizacao ignorada: {detail}")
+            if show_error_dialog:
+                messagebox.showerror("Livepix", detail)
             return
         livepix_status_var.set("Sincronizando")
 
         def run() -> None:
             try:
-                account = client.account()
                 sync_errors: list[str] = []
 
                 def try_livepix(label: str, getter: callable, fallback: Any) -> Any:
@@ -13013,8 +13447,9 @@ def run_gui(config_path: Path) -> int:
                         sync_errors.append(f"{label}: {livepix_error_detail(exc)}")
                         return fallback
 
-                payments = try_livepix("pagamentos", lambda: client.payments(limit=40), [])
-                messages = try_livepix("mensagens", lambda: client.messages(limit=40), [])
+                account = try_livepix("conta", client.account, {})
+                payments = try_livepix("pagamentos", lambda: client.payments(limit=100), [])
+                messages = try_livepix("mensagens", lambda: client.messages(limit=100), [])
                 wallet = try_livepix("carteira", client.wallet, [])
                 selected_currency = livepix_currency_var.get().strip().upper() or "BRL"
                 extras: dict[str, Any] = {}
@@ -13051,12 +13486,26 @@ def run_gui(config_path: Path) -> int:
                     for item in extras.get("subscriptions", [])
                     if isinstance(item, dict) and (event := parse_livepix_event(item, "subscription", "api"))
                 ] if isinstance(extras.get("subscriptions"), list) else []
+                transaction_events = [
+                    event
+                    for item in extras.get("transactions", [])
+                    if isinstance(item, dict)
+                    and (event := parse_livepix_event(item, "payment", "api"))
+                    and event.amount > 0
+                ] if isinstance(extras.get("transactions"), list) else []
+                receivable_events = [
+                    event
+                    for item in extras.get("receivables", [])
+                    if isinstance(item, dict)
+                    and (event := parse_livepix_event(item, "payment", "api"))
+                    and event.amount > 0
+                ] if isinstance(extras.get("receivables"), list) else []
                 livepix_queue.put(
                     (
                         "api_synced",
                         {
                             "account": account,
-                            "events": payments + messages + subscription_events,
+                            "events": payments + messages + subscription_events + transaction_events + receivable_events,
                             "wallet": wallet,
                             "extras": extras,
                             "errors": sync_errors,
@@ -13069,7 +13518,16 @@ def run_gui(config_path: Path) -> int:
         threading.Thread(target=run, name="AizenLivepixSync", daemon=True).start()
 
     def test_livepix_account() -> None:
-        sync_livepix_from_api()
+        sync_livepix_from_api(show_error_dialog=True)
+
+    def auto_sync_livepix_on_start() -> None:
+        if not livepix_enabled_var.get():
+            return
+        if not livepix_client_id_var.get().strip() or not livepix_client_secret_var.get().strip():
+            livepix_status_var.set("Configure a API")
+            return
+        log("Sincronizando Livepix automaticamente ao abrir o app.")
+        sync_livepix_from_api(show_error_dialog=False)
 
     def create_livepix_checkout(kind: str) -> None:
         try:
@@ -13298,6 +13756,7 @@ def run_gui(config_path: Path) -> int:
         livepix_overlay_frame = None
 
     def pump_livepix_queue() -> None:
+        nonlocal livepix_dashboard_state
         if app_closing:
             return
         processed = False
@@ -13332,7 +13791,25 @@ def run_gui(config_path: Path) -> int:
                 wallet = payload.get("wallet", []) if isinstance(payload, dict) else []
                 extras = payload.get("extras", {}) if isinstance(payload, dict) else {}
                 errors = payload.get("errors", []) if isinstance(payload, dict) else []
-                display = _first_text(account.get("displayName"), account.get("username"), account.get("email"), "-") if isinstance(account, dict) else "-"
+                livepix_dashboard_state = {
+                    "account": account if isinstance(account, dict) else {},
+                    "wallet": wallet if isinstance(wallet, list) else [],
+                    "extras": extras if isinstance(extras, dict) else {},
+                    "synced_at": datetime.now().isoformat(timespec="seconds"),
+                }
+                display = livepix_first_text_from(
+                    account,
+                    (
+                        ("displayName",),
+                        ("username",),
+                        ("name",),
+                        ("email",),
+                        ("account", "displayName"),
+                        ("user", "displayName"),
+                        ("user", "username"),
+                    ),
+                ) if isinstance(account, dict) else ""
+                display = display or "-"
                 livepix_account_var.set(display)
                 if isinstance(wallet, list):
                     selected_currency = livepix_currency_var.get().strip().upper() or "BRL"
@@ -15032,7 +15509,7 @@ def run_gui(config_path: Path) -> int:
     livepix_right = ctk.CTkFrame(livepix_tab, fg_color=bg, corner_radius=0)
     livepix_right.grid(row=0, column=1, sticky="nsew", padx=(6, 12), pady=0)
     livepix_right.columnconfigure(0, weight=1)
-    livepix_right.rowconfigure(2, weight=1)
+    livepix_right.rowconfigure(1, weight=1)
 
     livepix_config_card = card(livepix_left, "Livepix API", "OAuth2, webhooks, checkout, metas e alertas.")
     livepix_config_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
@@ -15142,13 +15619,14 @@ def run_gui(config_path: Path) -> int:
 
     livepix_metrics = ctk.CTkFrame(livepix_right, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
     livepix_metrics.grid(row=0, column=0, sticky="ew", padx=0, pady=(12, 8))
-    for column in range(5):
+    for column in range(6):
         livepix_metrics.columnconfigure(column, weight=1)
     metric_specs = [
         ("Status", livepix_status_var, accent),
         ("Conta", livepix_account_var, fg),
         ("Total", livepix_total_var, teal),
-        ("Meta", livepix_goal_var, blue),
+        ("Carteira", livepix_balance_var, teal),
+        ("Pendente", livepix_pending_var, blue),
         ("Eventos", livepix_count_var, fg),
     ]
     for col, (label_text, variable, color) in enumerate(metric_specs):
@@ -15159,43 +15637,28 @@ def run_gui(config_path: Path) -> int:
             row=1, column=col, sticky="ew", padx=16, pady=(0, 14)
         )
 
-    livepix_report_card = card(livepix_right, "Resumo", "Ranking, carteira e controles de alerta.")
-    livepix_report_card.grid(row=1, column=0, sticky="ew", pady=8)
-    livepix_report_card.columnconfigure(1, weight=1)
-    section_label(livepix_report_card, "Top apoiador", 2)
-    ctk.CTkLabel(livepix_report_card, textvariable=livepix_top_var, text_color=fg, font=("Segoe UI Semibold", 12), anchor="w").grid(
-        row=2, column=1, sticky="ew", padx=(8, 18), pady=8
+    livepix_events_card = card(livepix_right, "Últimos Livepix recebidos", "Histórico sincronizado da conta, pagamentos, mensagens e webhooks locais.")
+    livepix_events_card.grid(row=1, column=0, sticky="nsew", pady=(8, 12))
+    livepix_events_card.columnconfigure(0, weight=1)
+    livepix_events_card.rowconfigure(4, weight=1)
+    livepix_history_info = ctk.CTkFrame(livepix_events_card, fg_color=panel, corner_radius=0)
+    livepix_history_info.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 8))
+    livepix_history_info.columnconfigure(0, weight=1)
+    livepix_history_info.columnconfigure(1, weight=1)
+    ctk.CTkLabel(livepix_history_info, textvariable=livepix_wallet_var, text_color=teal, font=("Segoe UI Semibold", 12), anchor="w").grid(
+        row=0, column=0, sticky="ew", padx=(0, 10), pady=2
     )
-    section_label(livepix_report_card, "Carteira", 3)
-    ctk.CTkLabel(livepix_report_card, textvariable=livepix_wallet_var, text_color=teal, font=("Segoe UI Semibold", 12), anchor="w").grid(
-        row=3, column=1, sticky="ew", padx=(8, 18), pady=8
+    ctk.CTkLabel(livepix_history_info, textvariable=livepix_extra_var, text_color=blue, font=("Segoe UI", 12), anchor="e", wraplength=420).grid(
+        row=0, column=1, sticky="ew", padx=(10, 0), pady=2
     )
-    section_label(livepix_report_card, "API extra", 4)
-    ctk.CTkLabel(livepix_report_card, textvariable=livepix_extra_var, text_color=blue, font=("Segoe UI Semibold", 12), anchor="w", wraplength=760).grid(
-        row=4, column=1, sticky="ew", padx=(8, 18), pady=8
-    )
-    section_label(livepix_report_card, "Top 10", 5)
-    ctk.CTkLabel(
-        livepix_report_card,
-        textvariable=livepix_ranking_var,
-        text_color=fg,
-        font=("Segoe UI", 12),
-        anchor="w",
-        justify="left",
-        wraplength=760,
-    ).grid(row=5, column=1, sticky="ew", padx=(8, 18), pady=8)
-    livepix_control_actions = ctk.CTkFrame(livepix_report_card, fg_color=panel, corner_radius=0)
-    livepix_control_actions.grid(row=6, column=0, columnspan=2, sticky="ew", padx=18, pady=(8, 16))
+    livepix_control_actions = ctk.CTkFrame(livepix_events_card, fg_color=panel, corner_radius=0)
+    livepix_control_actions.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
+    button(livepix_control_actions, "Sincronizar", lambda: sync_livepix_from_api(show_error_dialog=True), "accent", width=104).pack(side=tk.LEFT, padx=(0, 8))
     button(livepix_control_actions, "Pular alerta", lambda: livepix_control("skip"), "default", width=105).pack(side=tk.LEFT, padx=(0, 8))
     button(livepix_control_actions, "Reexibir", lambda: livepix_control("replay"), "default", width=90).pack(side=tk.LEFT, padx=(0, 8))
     button(livepix_control_actions, "Auto on", lambda: livepix_control("autoplay_on"), "accent", width=86).pack(side=tk.LEFT, padx=(0, 8))
     button(livepix_control_actions, "Auto off", lambda: livepix_control("autoplay_off"), "danger", width=86).pack(side=tk.LEFT, padx=(0, 8))
     button(livepix_control_actions, "Limpar histórico", clear_livepix_events, "ghost", width=120).pack(side=tk.LEFT)
-
-    livepix_events_card = card(livepix_right, "Eventos Livepix", "Pagamentos, mensagens, moderação e histórico local.")
-    livepix_events_card.grid(row=2, column=0, sticky="nsew", pady=(8, 12))
-    livepix_events_card.columnconfigure(0, weight=1)
-    livepix_events_card.rowconfigure(2, weight=1)
     livepix_events_frame = ctk.CTkScrollableFrame(
         livepix_events_card,
         fg_color=field,
@@ -15205,7 +15668,7 @@ def run_gui(config_path: Path) -> int:
         scrollbar_button_color=border,
         scrollbar_button_hover_color=accent,
     )
-    livepix_events_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=18, pady=(10, 18))
+    livepix_events_frame.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 18))
     livepix_events_frame.columnconfigure(0, weight=1)
     render_livepix_events.frame = livepix_events_frame  # type: ignore[attr-defined]
     update_livepix_endpoint_text()
@@ -15715,6 +16178,7 @@ def run_gui(config_path: Path) -> int:
     if not chat_listener_hidden:
         pump_chat_event_queue()
     pump_livepix_queue()
+    root.after(1200, auto_sync_livepix_on_start)
     pump_bot_send_results()
     pump_chat_timers()
     pump_avatar_results()

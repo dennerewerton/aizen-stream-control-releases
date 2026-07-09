@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.73",
-    "notes":  "Atualizacao v2.6.73: simplifica o painel Kills FF, adiciona busca de jogadores ja lancados ao adicionar e permite zerar diario ou geral.",
+    "version":  "2.6.74",
+    "notes":  "Livepix: historico visual dos ultimos recebidos, sincronizacao automatica ao abrir e dashboard com dados completos da conta.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.73/AizenStreamControl.exe",
-                    "sha256":  "545cd788193e3954461a7b770f0a0f58fe544fbde206e6b72b9baf93b6071652"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.74/AizenStreamControl.exe",
+                    "sha256":  "85c2950f765d1d8e85cb18677479cab815c28d1a4fbe855697bf56920e26f62f"
                 }
 }
