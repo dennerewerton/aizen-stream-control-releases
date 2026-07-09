@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.66"
+APP_VERSION = "2.6.67"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -57,6 +57,7 @@ DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
 WINSOCK_CLEAN_RESTART_ENV = "AIZEN_WINSOCK_CLEAN_RESTARTED"
+TIKFINITY_DIRECT_SEND_WAIT_SECONDS = 12.0
 BOT_DELIVERY_TIKFINITY_DIRECT = "tikfinity_direct"
 BOT_DELIVERY_STREAMERBOT_WEBSOCKET = "streamerbot_websocket"
 BOT_DELIVERY_STREAMERBOT_HTTP = "streamerbot_http"
@@ -2112,11 +2113,16 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
         raise RuntimeError("A ponte direta do TikFinity nao foi iniciada.")
     payload = {"action": "sendChatbotMessage", "args": args}
     delivered = bridge_server.broadcast_json(payload)
+    deadline = time.time() + TIKFINITY_DIRECT_SEND_WAIT_SECONDS
+    while delivered <= 0 and time.time() < deadline:
+        time.sleep(0.25)
+        delivered = bridge_server.broadcast_json(payload)
     if delivered <= 0:
         bridge_url = getattr(bridge_server, "url", DEFAULT_STREAMERBOT_WEBSOCKET_URL)
         raise RuntimeError(
             f"TikFinity ainda nao conectou na ponte direta em {bridge_url}. "
-            "No TikFinity, confira Setup > Streamer.bot Connection apontando para esse endereco."
+            "A ponte esta aberta, mas o TikFinity nao manteve a conexao a tempo; "
+            "no TikFinity, confira Setup > Streamer.bot Connection apontando para esse endereco."
         )
     suffix = "conexao" if delivered == 1 else "conexoes"
     return f"TikFinity direto OK ({delivered} {suffix})"

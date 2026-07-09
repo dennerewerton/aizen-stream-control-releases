@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.66",
-    "notes":  "Atualizacao v2.6.66: corrige o handshake da ponte direta TikFinity/Streamer.bot para manter a conexao e enviar respostas do bot sem Streamer.bot.",
+    "version":  "2.6.67",
+    "notes":  "Atualizacao v2.6.67: o envio direto do TikFinity agora espera a ponte reconectar antes de falhar, evitando perder respostas logo apos abrir/atualizar o app.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.66/AizenStreamControl.exe",
-                    "sha256":  "972988ff552dd699c99e9b936f5796fbb9042a41c327487301f299fbf3c7ae4b"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.67/AizenStreamControl.exe",
+                    "sha256":  "39987b98408f5869bde64dbf4a6a1eb32bfec6cb1e585c2345822dec099e9705"
                 }
 }
