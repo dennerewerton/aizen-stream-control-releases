@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.57"
+APP_VERSION = "2.6.58"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1576,16 +1576,23 @@ def websocket_accept_value(key: str) -> str:
     return base64.b64encode(digest).decode("ascii")
 
 
-def websocket_frame(opcode: int, payload: bytes | str = b"") -> bytes:
+def websocket_frame(opcode: int, payload: bytes | str = b"", mask: bool = False) -> bytes:
     if isinstance(payload, str):
         payload = payload.encode("utf-8")
     payload_length = len(payload)
     first_byte = 0x80 | (opcode & 0x0F)
+    mask_bit = 0x80 if mask else 0
     if payload_length < 126:
-        return bytes([first_byte, payload_length]) + payload
-    if payload_length <= 0xFFFF:
-        return bytes([first_byte, 126]) + payload_length.to_bytes(2, "big") + payload
-    return bytes([first_byte, 127]) + payload_length.to_bytes(8, "big") + payload
+        header = bytes([first_byte, mask_bit | payload_length])
+    elif payload_length <= 0xFFFF:
+        header = bytes([first_byte, mask_bit | 126]) + payload_length.to_bytes(2, "big")
+    else:
+        header = bytes([first_byte, mask_bit | 127]) + payload_length.to_bytes(8, "big")
+    if not mask:
+        return header + payload
+    mask_key = secrets.token_bytes(4)
+    masked_payload = bytes(byte ^ mask_key[index % 4] for index, byte in enumerate(payload))
+    return header + mask_key + masked_payload
 
 
 def recv_exact(sock: socket.socket, size: int) -> bytes:
@@ -1613,6 +1620,69 @@ def read_websocket_frame(sock: socket.socket) -> tuple[int, bytes]:
     if mask:
         payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
     return opcode, payload
+
+
+def is_local_websocket_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").casefold()
+    return parsed.scheme == "ws" and host in {"127.0.0.1", "localhost", "::1"}
+
+
+def connect_plain_websocket_client(url: str, timeout: float = 8.0) -> socket.socket:
+    parsed = urlparse(url)
+    if parsed.scheme != "ws":
+        raise ValueError("Cliente WebSocket interno aceita apenas ws://.")
+    host = parsed.hostname or "127.0.0.1"
+    if host.casefold() in {"localhost", "::1"}:
+        host = "127.0.0.1"
+    port = parsed.port or 80
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    websocket_key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect((host, port))
+        host_header = f"{host}:{port}" if port != 80 else host
+        request = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {host_header}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {websocket_key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            f"User-Agent: {APP_NAME}/{APP_VERSION}\r\n"
+            "\r\n"
+        )
+        sock.sendall(request.encode("ascii"))
+        response = b""
+        while b"\r\n\r\n" not in response and len(response) < 16384:
+            chunk = sock.recv(2048)
+            if not chunk:
+                raise ConnectionError("Handshake WebSocket vazio.")
+            response += chunk
+        response_text = response.decode("iso-8859-1", errors="replace")
+        status_line = response_text.split("\r\n", 1)[0]
+        if " 101 " not in f" {status_line} ":
+            raise ConnectionError(f"Handshake WebSocket recusado: {status_line}")
+        headers: dict[str, str] = {}
+        for line in response_text.split("\r\n")[1:]:
+            if ":" not in line:
+                continue
+            name, value = line.split(":", 1)
+            headers[name.strip().casefold()] = value.strip()
+        expected_accept = websocket_accept_value(websocket_key)
+        if headers.get("sec-websocket-accept", "") != expected_accept:
+            raise ConnectionError("Handshake WebSocket com chave invalida.")
+        sock.settimeout(1.0)
+        return sock
+    except Exception:
+        try:
+            sock.close()
+        except OSError:
+            pass
+        raise
 
 
 class TikfinityDirectBridgeServer:
@@ -1947,6 +2017,7 @@ class ChatWebSocketWorker:
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
         self.ws_app: Any | None = None
+        self.ws_socket: socket.socket | None = None
         self.chat_event_count = 0
         self.other_event_count = 0
         self.config_event_logged = False
@@ -1968,13 +2039,21 @@ class ChatWebSocketWorker:
                 self.ws_app.close()
             except Exception:
                 pass
+        if self.ws_socket is not None:
+            try:
+                self.ws_socket.close()
+            except OSError:
+                pass
 
     def _run(self) -> None:
-        try:
-            import websocket
-        except Exception as exc:
-            self.log(f"WebSocket indisponivel. Instale websocket-client: {exc}")
-            return
+        use_internal_client = is_local_websocket_url(self.url)
+        websocket_module: Any | None = None
+        if not use_internal_client:
+            try:
+                import websocket as websocket_module
+            except Exception as exc:
+                self.log(f"WebSocket indisponivel. Instale websocket-client: {exc}")
+                return
 
         while not self.stop_event.is_set():
             try:
@@ -2042,6 +2121,11 @@ class ChatWebSocketWorker:
                                 "Erro no WebSocket do TikFinity: conexao recusada. "
                                 "Abra o TikFinity e ative a Event API antes de iniciar o chat."
                             )
+                        elif "10106" in error_text or "provedor de serviços" in error_text.casefold():
+                            self.log(
+                                "Erro no WebSocket do TikFinity: Windows/Winsock recusou a conexao local. "
+                                "O app esta usando o leitor interno; se continuar, reinicie o Windows ou repare o Winsock."
+                            )
                         else:
                             self.log(f"Erro no WebSocket do TikFinity: {error}")
 
@@ -2049,25 +2133,57 @@ class ChatWebSocketWorker:
                     if not self.stop_event.is_set():
                         self.log("WebSocket do TikFinity desconectado. Tentando reconectar...")
 
-                self.ws_app = websocket.WebSocketApp(
-                    self.url,
-                    on_open=on_open,
-                    on_message=on_message,
-                    on_error=on_error,
-                    on_close=on_close,
-                )
-                self.ws_app.run_forever(
-                    ping_interval=20,
-                    ping_timeout=10,
-                    http_no_proxy=["localhost", "127.0.0.1", "::1"],
-                )
+                if use_internal_client:
+                    self._run_internal_websocket_client(on_open, on_message, on_close)
+                else:
+                    self.ws_app = websocket_module.WebSocketApp(
+                        self.url,
+                        on_open=on_open,
+                        on_message=on_message,
+                        on_error=on_error,
+                        on_close=on_close,
+                    )
+                    self.ws_app.run_forever(
+                        ping_interval=20,
+                        ping_timeout=10,
+                        http_no_proxy=["localhost", "127.0.0.1", "::1"],
+                        http_proxy_host=None,
+                        http_proxy_port=None,
+                        proxy_type=None,
+                    )
             except Exception as exc:
                 if not self.stop_event.is_set():
-                    self.log(f"Falha no WebSocket do TikFinity: {exc}")
+                    on_error(None, exc)
             finally:
                 self.ws_app = None
+                self.ws_socket = None
             if not self.stop_event.is_set():
                 time.sleep(3)
+
+    def _run_internal_websocket_client(self, on_open: callable, on_message: callable, on_close: callable) -> None:
+        sock = connect_plain_websocket_client(self.url, timeout=8)
+        self.ws_socket = sock
+        on_open(None)
+        try:
+            while not self.stop_event.is_set():
+                try:
+                    opcode, payload = read_websocket_frame(sock)
+                except socket.timeout:
+                    continue
+                if opcode == 0x1:
+                    on_message(None, payload.decode("utf-8", errors="replace"))
+                elif opcode == 0x8:
+                    break
+                elif opcode == 0x9:
+                    sock.sendall(websocket_frame(0xA, payload[:125], mask=True))
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+            self.ws_socket = None
+            if not self.stop_event.is_set():
+                on_close(None, None, None)
 
 
 def parse_hotkey(hotkey: str) -> tuple[int, int]:

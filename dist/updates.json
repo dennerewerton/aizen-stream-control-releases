@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.57",
-    "notes":  "Atualizacao v2.6.57: comandos diretos pelo TikFinity sem depender do Streamer.bot.",
+    "version":  "2.6.58",
+    "notes":  "Atualizacao v2.6.58: leitor interno para o WebSocket local do TikFinity, evitando erro WinError 10106 da biblioteca.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.57/AizenStreamControl.exe",
-                    "sha256":  "b2aa0906bcad476621379cc38e36c8fdbc1df4379305a51474177a6e53fdb81b"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.58/AizenStreamControl.exe",
+                    "sha256":  "6f2698bafebc4c29371bb396400422c5c5cf1ef1d56fff0536049c218d483f93"
                 }
 }
