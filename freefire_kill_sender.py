@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.71"
+APP_VERSION = "2.6.72"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6351,8 +6351,8 @@ def run_gui(config_path: Path) -> int:
     kills_left.rowconfigure(0, weight=0)
     kills_left.rowconfigure(1, weight=0)
     kills_left.rowconfigure(2, weight=0)
-    kills_left.rowconfigure(3, weight=0)
-    kills_left.rowconfigure(4, weight=1)
+    kills_left.rowconfigure(3, weight=1)
+    kills_left.rowconfigure(4, weight=0)
 
     kills_right = ctk.CTkFrame(kills_tab, fg_color=bg, corner_radius=0)
     kills_right.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=0)
@@ -6439,7 +6439,7 @@ def run_gui(config_path: Path) -> int:
         border_width=1,
         border_color=border,
     )
-    ff_dashboard_card.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    ff_dashboard_card.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
     for column in range(2):
         ff_dashboard_card.columnconfigure(column, weight=1)
     ctk.CTkLabel(
@@ -6489,7 +6489,7 @@ def run_gui(config_path: Path) -> int:
         ff_dashboard_card.grid_remove()
 
     general_info_card = ctk.CTkFrame(general_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    general_info_card.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    general_info_card.grid(row=4, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
     for column in range(3):
         general_info_card.columnconfigure(column, weight=1)
     for col, label in enumerate(("Versão", "Pasta do app", "Atualização")):
@@ -6515,10 +6515,10 @@ def run_gui(config_path: Path) -> int:
     ).grid(row=1, column=2, sticky="w", padx=18, pady=(4, 14))
 
     general_actions = ctk.CTkFrame(general_tab, fg_color=bg, corner_radius=0)
-    general_actions.grid(row=4, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
+    general_actions.grid(row=5, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
 
-    sync_card = card(kills_left, "Lançamento de Kills FF", "Digite as kills no app e lance manualmente no painel Jarvis quando a partida acabar.")
-    sync_card.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 8))
+    sync_card = card(general_tab, "Lançamento de Kills FF", "Digite as kills no app e lance manualmente no painel Jarvis quando a partida acabar.")
+    sync_card.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
     sync_card.columnconfigure(1, weight=1)
     sync_card.columnconfigure(3, weight=1)
     section_label(sync_card, "URL do painel/Jarvis", 2)
@@ -6541,7 +6541,7 @@ def run_gui(config_path: Path) -> int:
     ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     kill_metrics = ctk.CTkFrame(kills_left, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    kill_metrics.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    kill_metrics.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 8))
     for column in range(2):
         kill_metrics.columnconfigure(column, weight=1)
     for col, label in enumerate(("Jogadores", "Total de kills")):
@@ -6559,7 +6559,7 @@ def run_gui(config_path: Path) -> int:
         "Administrar ranking Jarvis",
         "Aplique no Jarvis as mesmas acoes do site sem alterar a tabela visual da direita.",
     )
-    kills_admin_card.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
+    kills_admin_card.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
     kills_admin_card.columnconfigure(1, weight=1)
     kills_admin_card.columnconfigure(3, weight=1)
     section_label(kills_admin_card, "Jogador atual", 2)
@@ -6594,7 +6594,7 @@ def run_gui(config_path: Path) -> int:
         "OBS Kills FF",
         "Personalize o overlay transparente /freefire-kills/obs do Jarvis direto pelo app.",
     )
-    kills_style_card.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
+    kills_style_card.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
     kills_style_card.columnconfigure(1, weight=1)
     kills_style_card.columnconfigure(3, weight=1)
     section_label(kills_style_card, "Endpoint estilo", 2)
@@ -6699,7 +6699,7 @@ def run_gui(config_path: Path) -> int:
     kills_style_card.grid_remove()
 
     manual_card = card(kills_left, "Kills FF", "Digite as kills feitas na partida e lance no rank diario ou geral.")
-    manual_card.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=12, pady=(8, 12))
+    manual_card.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=12, pady=(8, 12))
     manual_card.columnconfigure(0, weight=1)
     manual_card.rowconfigure(4, weight=1)
     manual_scope_row = ctk.CTkFrame(manual_card, fg_color=panel, corner_radius=0)

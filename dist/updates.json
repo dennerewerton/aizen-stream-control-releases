@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.71",
-    "notes":  "Hotfix v2.6.71: corrige erro ao abrir o app quando Overlay FF esta oculto.",
+    "version":  "2.6.72",
+    "notes":  "Atualizacao v2.6.72: move configuracoes de Lancamento de Kills FF para a aba Geral e limpa a aba Kills FF.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.71/AizenStreamControl.exe",
-                    "sha256":  "eaac823427fa46c10fac5445b2480c27b0a73107b91b0bef464607a96a55cb0f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.72/AizenStreamControl.exe",
+                    "sha256":  "7cbada59cb80253b32d3f75d7ed44dadfac2f4c7ae5feacaf981ab6cf498aa28"
                 }
 }
