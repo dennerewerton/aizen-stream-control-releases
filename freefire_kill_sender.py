@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.69"
+APP_VERSION = "2.6.70"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -79,7 +79,7 @@ LIVE_CHAT_TEXT_FIELDS = (
     "command",
 )
 
-THEME_SCHEMA_VERSION = "2026.1"
+THEME_SCHEMA_VERSION = "2026.2"
 LEGACY_AIZEN_RED_THEME = {
     "canvas_bg": "#050506",
     "bg": "#0b0b0e",
@@ -411,7 +411,8 @@ def load_config(path: Path) -> dict[str, Any]:
     data.setdefault("manual_kills", [])
     data.setdefault("kills_manual_scope", "daily")
     data.setdefault("kills_realtime_url", data.get("jarvis_endpoint_url", ""))
-    data.setdefault("kills_realtime_auto_sync", True)
+    data.setdefault("kills_realtime_auto_sync", False)
+    data["kills_realtime_auto_sync"] = False
     data.setdefault("kills_realtime_poll_seconds", 15)
     data.setdefault("kills_sync_room", "principal")
     data.setdefault("freefire_kills_style_url", "")
@@ -5539,12 +5540,12 @@ def run_gui(config_path: Path) -> int:
     bot_sending = False
     bot_next_allowed_at = 0.0
     app_closing = False
-    hidden_main_tabs = {"Kills FF", "Fila FF", "Chat Ao Vivo"}
+    hidden_main_tabs = {"Fila FF", "Overlay FF", "Chat Ao Vivo"}
     kills_ff_site_sync_hidden = "Kills FF" in hidden_main_tabs
     ff_queue_site_sync_hidden = "Fila FF" in hidden_main_tabs
     chat_tab_hidden = "Chat Ao Vivo" in hidden_main_tabs
     chat_listener_hidden = False
-    ff_overlay_site_sync_hidden = kills_ff_site_sync_hidden and ff_queue_site_sync_hidden
+    ff_overlay_site_sync_hidden = "Overlay FF" in hidden_main_tabs or (kills_ff_site_sync_hidden and ff_queue_site_sync_hidden)
     config_auto_save_after_id: str | None = None
     config_auto_save_running = False
     livepix_events = load_livepix_events(livepix_events_path(config_path))
@@ -5571,8 +5572,8 @@ def run_gui(config_path: Path) -> int:
 
     root = ctk.CTk()
     root.title("Aizen Stream Control")
-    root.geometry("1360x920")
-    root.minsize(980, 640)
+    root.geometry("1280x860")
+    root.minsize(900, 600)
     if APP_ICON.exists():
         try:
             root.iconbitmap(str(APP_ICON))
@@ -5593,14 +5594,14 @@ def run_gui(config_path: Path) -> int:
     blue = theme_config["blue"]
     danger = theme_config["danger"]
     header_panel = panel_alt
-    chip_bg = "#171116"
-    chip_bg_alt = "#111820"
-    table_header_bg = "#0c0d12"
+    chip_bg = panel_alt
+    chip_bg_alt = field
+    table_header_bg = field
 
     root.configure(fg_color=canvas_bg)
 
     main = ctk.CTkFrame(root, fg_color=canvas_bg, corner_radius=0)
-    main.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+    main.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
     main.columnconfigure(0, weight=1)
     main.rowconfigure(1, weight=1)
 
@@ -5768,7 +5769,6 @@ def run_gui(config_path: Path) -> int:
     ff_queue_manual_rooms_var = tk.StringVar(value="1")
     device_name_var = tk.StringVar(value=config.get("device_name", default_device_name()))
     jarvis_token_var = tk.StringVar(value=str(config.get("jarvis_api_token", "")))
-    sync_enabled_var = tk.BooleanVar(value=bool(config.get("kills_realtime_auto_sync", True)) and not kills_ff_site_sync_hidden)
     poll_seconds_var = tk.StringVar(value=str(max(10, normalize_kill_value(config.get("kills_realtime_poll_seconds", 15)))))
     initial_manual_scope = manual_active_scope
     manual_scope_var = tk.StringVar(value="Geral" if initial_manual_scope == "general" else "Diario")
@@ -5923,7 +5923,7 @@ def run_gui(config_path: Path) -> int:
         frame = ctk.CTkFrame(
             parent,
             fg_color=panel,
-            corner_radius=10,
+            corner_radius=8,
             border_width=1,
             border_color=border,
         )
@@ -5950,7 +5950,7 @@ def run_gui(config_path: Path) -> int:
             border_width=1,
             text_color=fg,
             placeholder_text_color="#7f7277",
-            corner_radius=10,
+            corner_radius=8,
             font=("Segoe UI", 12),
             **kwargs,
         )
@@ -5969,7 +5969,7 @@ def run_gui(config_path: Path) -> int:
             dropdown_fg_color=panel,
             dropdown_hover_color=chip_bg,
             text_color=fg,
-            corner_radius=10,
+            corner_radius=8,
             font=("Segoe UI", 12),
             dropdown_font=("Segoe UI", 12),
         )
@@ -5994,7 +5994,7 @@ def run_gui(config_path: Path) -> int:
             command=command,
             width=width if width is not None else 140,
             height=40,
-            corner_radius=10,
+            corner_radius=8,
             border_width=1 if kind in {"default", "ghost"} else 0,
             border_color=border,
             fg_color=fg_color,
@@ -6298,8 +6298,8 @@ def run_gui(config_path: Path) -> int:
     general_tab.columnconfigure(1, weight=1)
     general_tab.rowconfigure(0, weight=0)
     general_tab.rowconfigure(1, weight=1)
-    kills_tab.columnconfigure(0, weight=3, minsize=560)
-    kills_tab.columnconfigure(1, weight=2, minsize=420)
+    kills_tab.columnconfigure(0, weight=3, minsize=360)
+    kills_tab.columnconfigure(1, weight=2, minsize=320)
     kills_tab.rowconfigure(0, weight=1)
     ff_queue_tab.columnconfigure(0, weight=3, minsize=560)
     ff_queue_tab.columnconfigure(1, weight=1, minsize=340)
@@ -6307,19 +6307,19 @@ def run_gui(config_path: Path) -> int:
     ff_overlay_tab.columnconfigure(0, weight=1, minsize=360)
     ff_overlay_tab.columnconfigure(1, weight=2, minsize=520)
     ff_overlay_tab.rowconfigure(0, weight=1)
-    livepix_tab.columnconfigure(0, weight=1, minsize=380)
-    livepix_tab.columnconfigure(1, weight=2, minsize=560)
+    livepix_tab.columnconfigure(0, weight=1, minsize=320)
+    livepix_tab.columnconfigure(1, weight=2, minsize=420)
     livepix_tab.rowconfigure(0, weight=1)
     live_chat_tab.columnconfigure(0, weight=1)
     live_chat_tab.rowconfigure(0, weight=0)
     live_chat_tab.rowconfigure(1, weight=0)
     live_chat_tab.rowconfigure(2, weight=0)
     live_chat_tab.rowconfigure(3, weight=1)
-    commands_tab.columnconfigure(0, weight=1, minsize=360)
-    commands_tab.columnconfigure(1, weight=2, minsize=520)
+    commands_tab.columnconfigure(0, weight=1, minsize=320)
+    commands_tab.columnconfigure(1, weight=2, minsize=420)
     commands_tab.rowconfigure(0, weight=1)
-    timers_tab.columnconfigure(0, weight=1, minsize=360)
-    timers_tab.columnconfigure(1, weight=2, minsize=520)
+    timers_tab.columnconfigure(0, weight=1, minsize=320)
+    timers_tab.columnconfigure(1, weight=2, minsize=420)
     timers_tab.rowconfigure(0, weight=1)
     raffle_tab.columnconfigure(0, weight=1)
     raffle_tab.rowconfigure(0, weight=1)
@@ -6358,6 +6358,35 @@ def run_gui(config_path: Path) -> int:
     kills_right.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=0)
     kills_right.columnconfigure(0, weight=1)
     kills_right.rowconfigure(0, weight=1)
+
+    kills_layout_state = {"mode": ""}
+
+    def apply_kills_responsive_layout(event: Any | None = None) -> None:
+        width = int(getattr(event, "width", 0) or kills_tab.winfo_width() or 1200)
+        compact = width < 1040
+        mode = "compact" if compact else "wide"
+        if kills_layout_state["mode"] == mode:
+            return
+        kills_layout_state["mode"] = mode
+        kills_left.grid_forget()
+        kills_right.grid_forget()
+        if compact:
+            kills_tab.columnconfigure(0, weight=1, minsize=0)
+            kills_tab.columnconfigure(1, weight=0, minsize=0)
+            kills_tab.rowconfigure(0, weight=1)
+            kills_tab.rowconfigure(1, weight=1)
+            kills_left.grid(row=0, column=0, sticky="nsew", padx=0, pady=(0, 8))
+            kills_right.grid(row=1, column=0, sticky="nsew", padx=0, pady=(8, 0))
+            return
+        kills_tab.columnconfigure(0, weight=3, minsize=360)
+        kills_tab.columnconfigure(1, weight=2, minsize=320)
+        kills_tab.rowconfigure(0, weight=1)
+        kills_tab.rowconfigure(1, weight=0)
+        kills_left.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+        kills_right.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=0)
+
+    kills_tab.bind("<Configure>", apply_kills_responsive_layout)
+    root.after(250, apply_kills_responsive_layout)
 
     general_card = card(
         general_tab,
@@ -6427,12 +6456,15 @@ def run_gui(config_path: Path) -> int:
         font=("Segoe UI", 11),
         anchor="w",
     ).grid(row=1, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 12))
-    for column, (title_text, metric_var, target_tab) in enumerate(
-        (
+    ff_dashboard_panels = [
+        (title_text, metric_var, target_tab)
+        for title_text, metric_var, target_tab in (
             ("Kills FF", manual_total_var, "Kills FF"),
             ("Fila FF", ff_queue_count_var, "Fila FF"),
         )
-    ):
+        if target_tab not in hidden_main_tabs
+    ]
+    for column, (title_text, metric_var, target_tab) in enumerate(ff_dashboard_panels):
         panel_frame = ctk.CTkFrame(ff_dashboard_card, fg_color=field, corner_radius=12, border_width=1, border_color=border)
         panel_frame.grid(row=2, column=column, sticky="nsew", padx=(18 if column == 0 else 6, 18 if column == 1 else 6), pady=(0, 18))
         panel_frame.columnconfigure(0, weight=1)
@@ -6453,7 +6485,7 @@ def run_gui(config_path: Path) -> int:
         button(panel_frame, "Abrir", lambda tab_name=target_tab: tabview.set(tab_name), "ghost", width=84).grid(
             row=2, column=0, sticky="ew", padx=14, pady=(8, 14)
         )
-    if {"Kills FF", "Fila FF"}.issubset(hidden_main_tabs):
+    if not ff_dashboard_panels:
         ff_dashboard_card.grid_remove()
 
     general_info_card = ctk.CTkFrame(general_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
@@ -6495,25 +6527,12 @@ def run_gui(config_path: Path) -> int:
     entry(sync_card, title_var).grid(row=3, column=1, sticky="ew", padx=18, pady=5)
     section_label(sync_card, "Sala", 3, column=2)
     entry(sync_card, sync_room_var, width=140).grid(row=3, column=3, sticky="ew", padx=18, pady=5)
-    section_label(sync_card, "Modo", 4)
+    section_label(sync_card, "Sincronização", 4)
     poll_row = ctk.CTkFrame(sync_card, fg_color=panel, corner_radius=0)
     poll_row.grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=(5, 18))
-    entry(poll_row, poll_seconds_var, width=80).pack(side=tk.LEFT)
-    ctk.CTkLabel(poll_row, text="segundos", text_color=muted, font=("Segoe UI", 12)).pack(side=tk.LEFT, padx=(8, 18))
-    ctk.CTkCheckBox(
-        poll_row,
-        text="Sincronizar automaticamente",
-        variable=sync_enabled_var,
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).pack(side=tk.LEFT)
-    for child in poll_row.winfo_children():
-        child.destroy()
     ctk.CTkLabel(
         poll_row,
-        text="Lançamento manual: o app não lê nem edita o ranking automaticamente. Use Enviar agora para somar as kills digitadas.",
+        text="Modo manual: use Salvar no Jarvis para enviar as kills digitadas e Atualizar para ler o ranking quando precisar.",
         text_color=muted,
         font=("Segoe UI", 11),
         anchor="w",
@@ -7235,15 +7254,11 @@ def run_gui(config_path: Path) -> int:
     ff_overlay_realtime_row = ctk.CTkFrame(ff_overlay_sync_card, fg_color=panel, corner_radius=0)
     ff_overlay_realtime_row.grid(row=4, column=0, columnspan=2, sticky="ew", padx=18, pady=(4, 2))
     ff_overlay_realtime_row.columnconfigure(0, weight=1)
-    ctk.CTkCheckBox(
+    ctk.CTkLabel(
         ff_overlay_realtime_row,
-        text="Sincronizar Kills FF automaticamente",
-        variable=sync_enabled_var,
-        command=lambda: schedule_manual_poll(),
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
+        text="Kills FF em modo manual: use os botões Salvar no Jarvis ou Atualizar.",
         text_color=fg,
+        font=("Segoe UI Semibold", 12),
     ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
     ctk.CTkCheckBox(
         ff_overlay_realtime_row,
@@ -9100,19 +9115,6 @@ def run_gui(config_path: Path) -> int:
             row["frame"].grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
             row["index_label"].configure(text=f"{index:02d}")
 
-    def schedule_manual_sync(delay_ms: int = 700) -> None:
-        nonlocal manual_sync_after_id
-        if app_closing or kills_ff_site_sync_hidden:
-            return
-        if manual_applying_remote or not sync_enabled_var.get():
-            return
-        if manual_sync_after_id is not None:
-            try:
-                root.after_cancel(manual_sync_after_id)
-            except tk.TclError:
-                pass
-        manual_sync_after_id = root.after(delay_ms, lambda: send_manual_kills(force=False))
-
     def on_manual_change(*_args: Any) -> None:
         nonlocal manual_last_local_edit_at
         if manual_applying_remote:
@@ -9128,7 +9130,6 @@ def run_gui(config_path: Path) -> int:
             schedule_config_autosave()
         except NameError:
             pass
-        schedule_manual_sync()
 
     def manual_autocomplete_key(value: str) -> str:
         normalized = unicodedata.normalize("NFKD", str(value or "").casefold())
@@ -13274,7 +13275,7 @@ def run_gui(config_path: Path) -> int:
         config["jarvis_endpoint_url"] = endpoint_url
         config["jarvis_base_url"] = jarvis_base_url
         jarvis_base_url_var.set(jarvis_base_url)
-        config["kills_realtime_auto_sync"] = bool(sync_enabled_var.get()) and not kills_ff_site_sync_hidden
+        config["kills_realtime_auto_sync"] = False
         config["kills_realtime_poll_seconds"] = poll_interval_seconds()
         config["kills_sync_room"] = sync_room_var.get().strip() or "principal"
         kills_style_url = normalize_endpoint_url(kills_style_url_var.get())
@@ -13510,6 +13511,8 @@ def run_gui(config_path: Path) -> int:
             if force:
                 log("Sincronizacao Kills FF desativada porque a aba esta oculta.")
             return
+        if not force:
+            return
         try:
             local_config = update_config_from_form()
             save_config(config_path, local_config)
@@ -13578,6 +13581,8 @@ def run_gui(config_path: Path) -> int:
         if kills_ff_site_sync_hidden:
             if force:
                 log("Leitura Kills FF desativada porque a aba esta oculta.")
+            return
+        if not force:
             return
         try:
             local_config = update_config_from_form()
@@ -13715,43 +13720,6 @@ def run_gui(config_path: Path) -> int:
 
         threading.Thread(target=run, daemon=True).start()
 
-    def schedule_manual_poll(delay_ms: int | None = None) -> None:
-        nonlocal manual_poll_after_id
-        if app_closing or kills_ff_site_sync_hidden:
-            if manual_poll_after_id is not None:
-                try:
-                    root.after_cancel(manual_poll_after_id)
-                except tk.TclError:
-                    pass
-                manual_poll_after_id = None
-            return
-        if not sync_enabled_var.get():
-            if manual_poll_after_id is not None:
-                try:
-                    root.after_cancel(manual_poll_after_id)
-                except tk.TclError:
-                    pass
-                manual_poll_after_id = None
-            return
-        if manual_poll_after_id is not None:
-            try:
-                root.after_cancel(manual_poll_after_id)
-            except tk.TclError:
-                pass
-        if delay_ms is None:
-            delay_ms = adaptive_poll_seconds(poll_interval_seconds(), manual_poll_quiet_cycles) * 1000
-        manual_poll_after_id = root.after(delay_ms, run_manual_poll)
-
-    def run_manual_poll() -> None:
-        nonlocal manual_poll_after_id
-        if app_closing:
-            return
-        manual_poll_after_id = None
-        if sync_enabled_var.get() and not kills_ff_site_sync_hidden:
-            fetch_panel_kills(force=False)
-        if not kills_ff_site_sync_hidden:
-            schedule_manual_poll()
-
     def schedule_ff_queue_poll(delay_ms: int | None = None) -> None:
         nonlocal ff_queue_poll_after_id
         if app_closing or ff_queue_site_sync_hidden:
@@ -13825,13 +13793,6 @@ def run_gui(config_path: Path) -> int:
             fetch_ff_overlay(force=False)
         if not ff_overlay_site_sync_hidden:
             schedule_ff_overlay_poll()
-
-    def retry_fetch_panel_kills_after_dns() -> None:
-        nonlocal manual_dns_retry_after_id
-        manual_dns_retry_after_id = None
-        if app_closing or kills_ff_site_sync_hidden:
-            return
-        fetch_panel_kills(force=False)
 
     def handle_sync_event(kind: str, payload: Any) -> None:
         nonlocal manual_sending, manual_fetching, manual_last_signature, manual_last_remote_signature
@@ -14015,8 +13976,6 @@ def run_gui(config_path: Path) -> int:
                 cache_loaded = apply_kills_rank_cache()
                 if force:
                     set_text_var(kills_overlay_status_var, "DNS falhou; usando último rank salvo" if cache_loaded else "DNS falhou; aguardando reconexão")
-                if manual_dns_retry_after_id is None and not app_closing:
-                    manual_dns_retry_after_id = root.after(15000, retry_fetch_panel_kills_after_dns)
             else:
                 if force:
                     set_text_var(kills_overlay_status_var, "Erro ao ler ranking")
@@ -15347,7 +15306,7 @@ def run_gui(config_path: Path) -> int:
             ("Reset tudo", lambda: apply_kills_admin_action("reset"), "danger"),
             ("Reset diario", lambda: apply_kills_admin_action("reset_daily"), "danger"),
             ("Reset geral", lambda: apply_kills_admin_action("reset_general"), "danger"),
-            ("Buscar Jarvis", lambda: fetch_panel_kills(force=True), "default"),
+            ("Atualizar", lambda: fetch_panel_kills(force=True), "default"),
             ("Limpar campos", clear_kills_admin_fields, "ghost"),
         ],
         columns=4,
@@ -15366,7 +15325,7 @@ def run_gui(config_path: Path) -> int:
         manual_actions,
         [
             ("Adicionar jogador", open_manual_kill_dialog, "accent"),
-            ("Enviar agora", lambda: send_manual_kills(force=True), "accent"),
+            ("Salvar no Jarvis", lambda: send_manual_kills(force=True), "accent"),
             ("Zerar", reset_manual_kills, "ghost"),
             ("Limpar", clear_manual_table, "danger"),
             ("Salvar", save_form, "ghost"),
@@ -15410,7 +15369,7 @@ def run_gui(config_path: Path) -> int:
             ("Atualizar Jarvis", refresh_overlay_from_jarvis, "accent"),
             ("Enviar overlay", lambda: send_ff_overlay(force=True), "accent"),
             ("Buscar overlay", lambda: fetch_ff_overlay(force=True), "default"),
-            ("Buscar kills", lambda: fetch_panel_kills(force=True), "default"),
+            ("Atualizar kills", lambda: fetch_panel_kills(force=True), "default"),
             ("Buscar fila", lambda: fetch_ff_queue(force=True), "default"),
             ("Salvar", save_form, "ghost"),
             ("Fechar overlay", close_ff_overlay_window, "danger"),
@@ -15503,7 +15462,6 @@ def run_gui(config_path: Path) -> int:
         ff_queue_poll_seconds_var,
         device_name_var,
         jarvis_token_var,
-        sync_enabled_var,
         poll_seconds_var,
         manual_scope_var,
         auto_update_var,
@@ -15614,12 +15572,8 @@ def run_gui(config_path: Path) -> int:
     pump_bot_send_results()
     pump_chat_timers()
     pump_avatar_results()
-    if not kills_ff_site_sync_hidden:
-        root.after(900, lambda: fetch_panel_kills(force=False))
     if not ff_queue_site_sync_hidden:
         root.after(1400, lambda: fetch_ff_queue(force=False))
-    if sync_enabled_var.get() and not kills_ff_site_sync_hidden:
-        schedule_manual_poll()
     if not ff_queue_site_sync_hidden:
         schedule_ff_queue_poll()
     update_chat_endpoint_text()
@@ -15634,7 +15588,7 @@ def run_gui(config_path: Path) -> int:
         refresh_kills_ignored_list()
     if not ff_queue_site_sync_hidden:
         apply_tikfinity_ff_state({})
-    log("Abas Kills FF, Fila FF e Chat Ao Vivo ocultas; backends necessarios seguem ativos.")
+    log("Kills FF ativo em modo manual. Abas Fila FF, Overlay FF e Chat Ao Vivo seguem ocultas.")
     root.mainloop()
     return 0
 
