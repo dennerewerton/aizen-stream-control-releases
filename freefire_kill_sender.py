@@ -48,13 +48,16 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.56"
+APP_VERSION = "2.6.57"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
+BOT_DELIVERY_TIKFINITY_DIRECT = "tikfinity_direct"
+BOT_DELIVERY_STREAMERBOT_WEBSOCKET = "streamerbot_websocket"
+BOT_DELIVERY_STREAMERBOT_HTTP = "streamerbot_http"
 LIVE_CHAT_EVENT_NAMES = {"chat", "comment", "message", "command", "chatmessage", "livechat"}
 LIVE_CHAT_TEXT_FIELDS = (
     "comment",
@@ -463,12 +466,18 @@ def load_config(path: Path) -> dict[str, Any]:
     data.setdefault("bot_default_command_cooldown_seconds", 30)
     data.setdefault("bot_default_timer_interval_seconds", 600)
     data.setdefault("bot_default_timer_min_messages", 5)
-    data.setdefault("bot_delivery_method", "streamerbot_websocket")
+    data.setdefault("bot_delivery_method", BOT_DELIVERY_TIKFINITY_DIRECT)
     data.setdefault("bot_streamerbot_ws_url", DEFAULT_STREAMERBOT_WEBSOCKET_URL)
     data.setdefault("bot_streamerbot_http_url", DEFAULT_STREAMERBOT_HTTP_URL)
     data.setdefault("bot_streamerbot_password", "")
     data.setdefault("bot_streamerbot_action_name", "Aizen TikFinity Chatbot")
     data.setdefault("bot_streamerbot_action_id", "")
+    if (
+        data.get("bot_delivery_method") == BOT_DELIVERY_STREAMERBOT_WEBSOCKET
+        and str(data.get("bot_streamerbot_action_name", "")).strip() in {"", "Aizen TikFinity Chatbot"}
+        and not str(data.get("bot_streamerbot_action_id", "")).strip()
+    ):
+        data["bot_delivery_method"] = BOT_DELIVERY_TIKFINITY_DIRECT
     data.setdefault("bot_ignore_usernames", "")
     data.setdefault("livepix_enabled", False)
     data.setdefault("livepix_client_id", "")
@@ -1415,6 +1424,30 @@ def normalize_streamerbot_http_url(url: str) -> str:
     return text.rstrip("/")
 
 
+BOT_DELIVERY_METHOD_LABELS = {
+    BOT_DELIVERY_TIKFINITY_DIRECT: "TikFinity direto",
+    BOT_DELIVERY_STREAMERBOT_WEBSOCKET: "Streamer.bot WebSocket",
+    BOT_DELIVERY_STREAMERBOT_HTTP: "Streamer.bot HTTP",
+}
+BOT_DELIVERY_METHOD_OPTIONS = [
+    BOT_DELIVERY_METHOD_LABELS[BOT_DELIVERY_TIKFINITY_DIRECT],
+    BOT_DELIVERY_METHOD_LABELS[BOT_DELIVERY_STREAMERBOT_WEBSOCKET],
+    BOT_DELIVERY_METHOD_LABELS[BOT_DELIVERY_STREAMERBOT_HTTP],
+]
+
+
+def bot_delivery_method_label(method: Any) -> str:
+    return BOT_DELIVERY_METHOD_LABELS.get(str(method or ""), BOT_DELIVERY_METHOD_LABELS[BOT_DELIVERY_TIKFINITY_DIRECT])
+
+
+def bot_delivery_method_from_label(label: Any) -> str:
+    text = str(label or "").strip()
+    for key, value in BOT_DELIVERY_METHOD_LABELS.items():
+        if value == text:
+            return key
+    return BOT_DELIVERY_TIKFINITY_DIRECT
+
+
 def parse_chat_commands_payload(payload: Any) -> list[ChatCommand]:
     commands: list[ChatCommand] = []
     if not isinstance(payload, list):
@@ -1535,6 +1568,232 @@ def render_chat_command_response(template: str, message: LiveChatMessage, comman
     return re.sub(r"\s+", " ", output).strip()
 
 
+WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def websocket_accept_value(key: str) -> str:
+    digest = hashlib.sha1((key + WEBSOCKET_ACCEPT_GUID).encode("ascii")).digest()
+    return base64.b64encode(digest).decode("ascii")
+
+
+def websocket_frame(opcode: int, payload: bytes | str = b"") -> bytes:
+    if isinstance(payload, str):
+        payload = payload.encode("utf-8")
+    payload_length = len(payload)
+    first_byte = 0x80 | (opcode & 0x0F)
+    if payload_length < 126:
+        return bytes([first_byte, payload_length]) + payload
+    if payload_length <= 0xFFFF:
+        return bytes([first_byte, 126]) + payload_length.to_bytes(2, "big") + payload
+    return bytes([first_byte, 127]) + payload_length.to_bytes(8, "big") + payload
+
+
+def recv_exact(sock: socket.socket, size: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining > 0:
+        chunk = sock.recv(remaining)
+        if not chunk:
+            raise ConnectionError("Conexao WebSocket encerrada.")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def read_websocket_frame(sock: socket.socket) -> tuple[int, bytes]:
+    first_byte, second_byte = recv_exact(sock, 2)
+    opcode = first_byte & 0x0F
+    payload_length = second_byte & 0x7F
+    if payload_length == 126:
+        payload_length = int.from_bytes(recv_exact(sock, 2), "big")
+    elif payload_length == 127:
+        payload_length = int.from_bytes(recv_exact(sock, 8), "big")
+    mask = recv_exact(sock, 4) if second_byte & 0x80 else b""
+    payload = recv_exact(sock, payload_length) if payload_length else b""
+    if mask:
+        payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+    return opcode, payload
+
+
+class TikfinityDirectBridgeServer:
+    def __init__(self, websocket_url: str, log: callable | None = None):
+        url = normalize_streamerbot_websocket_url(websocket_url)
+        parsed = urlparse(url)
+        if parsed.scheme != "ws":
+            raise ValueError("A ponte direta do TikFinity usa ws:// local, nao wss://.")
+        host = parsed.hostname or "127.0.0.1"
+        if host.casefold() in {"localhost", "::1"}:
+            host = "127.0.0.1"
+        self.host = host
+        self.port = parsed.port or 8080
+        self.path = parsed.path or "/"
+        self.url = f"ws://{self.host}:{self.port}{self.path}"
+        self.log = log
+        self.stop_event = threading.Event()
+        self.server_socket: socket.socket | None = None
+        self.thread: threading.Thread | None = None
+        self.clients: set[socket.socket] = set()
+        self.clients_lock = threading.Lock()
+
+    def start(self) -> None:
+        if self.is_running():
+            return
+        self.stop_event.clear()
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server_socket.bind((self.host, self.port))
+            server_socket.listen(8)
+            server_socket.settimeout(1.0)
+        except OSError as exc:
+            try:
+                server_socket.close()
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"Nao consegui abrir a ponte direta em {self.url}. "
+                "Feche o Streamer.bot ou outro programa usando essa porta, ou mude a porta no TikFinity e no app."
+            ) from exc
+        self.server_socket = server_socket
+        self.thread = threading.Thread(target=self._accept_loop, name="AizenTikFinityBridge", daemon=True)
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        server_socket = self.server_socket
+        self.server_socket = None
+        if server_socket is not None:
+            try:
+                server_socket.close()
+            except OSError:
+                pass
+        with self.clients_lock:
+            clients = list(self.clients)
+            self.clients.clear()
+        for client in clients:
+            try:
+                client.close()
+            except OSError:
+                pass
+
+    def is_running(self) -> bool:
+        return self.server_socket is not None and self.thread is not None and self.thread.is_alive()
+
+    def client_count(self) -> int:
+        with self.clients_lock:
+            return len(self.clients)
+
+    def broadcast_json(self, payload: dict[str, Any]) -> int:
+        message = json.dumps(payload, ensure_ascii=False)
+        frame = websocket_frame(0x1, message)
+        with self.clients_lock:
+            clients = list(self.clients)
+        delivered = 0
+        stale_clients: list[socket.socket] = []
+        for client in clients:
+            try:
+                client.sendall(frame)
+                delivered += 1
+            except OSError:
+                stale_clients.append(client)
+        if stale_clients:
+            with self.clients_lock:
+                for client in stale_clients:
+                    self.clients.discard(client)
+            for client in stale_clients:
+                try:
+                    client.close()
+                except OSError:
+                    pass
+        return delivered
+
+    def _accept_loop(self) -> None:
+        while not self.stop_event.is_set():
+            server_socket = self.server_socket
+            if server_socket is None:
+                break
+            try:
+                client, _address = server_socket.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            threading.Thread(target=self._handle_client, args=(client,), name="AizenTikFinityBridgeClient", daemon=True).start()
+
+    def _handle_client(self, client: socket.socket) -> None:
+        connected = False
+        try:
+            client.settimeout(5.0)
+            self._perform_handshake(client)
+            client.settimeout(1.0)
+            with self.clients_lock:
+                self.clients.add(client)
+                client_total = len(self.clients)
+            connected = True
+            self._log(f"TikFinity conectado na ponte direta ({client_total} conexao).")
+            while not self.stop_event.is_set():
+                try:
+                    opcode, payload = read_websocket_frame(client)
+                except socket.timeout:
+                    continue
+                except (ConnectionError, OSError):
+                    break
+                if opcode == 0x8:
+                    try:
+                        client.sendall(websocket_frame(0x8, payload[:125]))
+                    except OSError:
+                        pass
+                    break
+                if opcode == 0x9:
+                    try:
+                        client.sendall(websocket_frame(0xA, payload[:125]))
+                    except OSError:
+                        break
+        finally:
+            if connected:
+                with self.clients_lock:
+                    self.clients.discard(client)
+                self._log("TikFinity desconectou da ponte direta.")
+            try:
+                client.close()
+            except OSError:
+                pass
+
+    def _perform_handshake(self, client: socket.socket) -> None:
+        data = b""
+        while b"\r\n\r\n" not in data and len(data) < 16384:
+            chunk = client.recv(2048)
+            if not chunk:
+                raise ConnectionError("Handshake WebSocket vazio.")
+            data += chunk
+        request_text = data.decode("iso-8859-1", errors="replace")
+        headers: dict[str, str] = {}
+        for line in request_text.split("\r\n")[1:]:
+            if ":" not in line:
+                continue
+            name, value = line.split(":", 1)
+            headers[name.strip().casefold()] = value.strip()
+        websocket_key = headers.get("sec-websocket-key", "")
+        if not websocket_key:
+            raise ConnectionError("Handshake WebSocket sem chave.")
+        response = (
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {websocket_accept_value(websocket_key)}\r\n"
+            "\r\n"
+        )
+        client.sendall(response.encode("ascii"))
+
+    def _log(self, message: str) -> None:
+        if self.log is None:
+            return
+        try:
+            self.log(message)
+        except Exception:
+            pass
+
+
 def streamerbot_authentication(password: str, salt: str, challenge: str) -> str:
     secret_hash = hashlib.sha256((password + salt).encode("utf-8")).digest()
     secret = base64.b64encode(secret_hash).decode("ascii")
@@ -1648,11 +1907,28 @@ def send_streamerbot_action_websocket(
             pass
 
 
+def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> str:
+    if bridge_server is None:
+        raise RuntimeError("A ponte direta do TikFinity nao foi iniciada.")
+    payload = {"action": "sendChatbotMessage", "args": args}
+    delivered = bridge_server.broadcast_json(payload)
+    if delivered <= 0:
+        bridge_url = getattr(bridge_server, "url", DEFAULT_STREAMERBOT_WEBSOCKET_URL)
+        raise RuntimeError(
+            f"TikFinity ainda nao conectou na ponte direta em {bridge_url}. "
+            "No TikFinity, confira Setup > Streamer.bot Connection apontando para esse endereco."
+        )
+    suffix = "conexao" if delivered == 1 else "conexoes"
+    return f"TikFinity direto OK ({delivered} {suffix})"
+
+
 def send_chatbot_message_via_streamerbot(settings: dict[str, Any], args: dict[str, Any]) -> str:
-    method = str(settings.get("method") or "streamerbot_websocket")
+    method = str(settings.get("method") or BOT_DELIVERY_TIKFINITY_DIRECT)
+    if method == BOT_DELIVERY_TIKFINITY_DIRECT:
+        return send_tikfinity_direct_message(settings.get("bridge_server"), args)
     action_name = str(settings.get("action_name") or "")
     action_id = str(settings.get("action_id") or "")
-    if method == "streamerbot_http":
+    if method == BOT_DELIVERY_STREAMERBOT_HTTP:
         return send_streamerbot_action_http(str(settings.get("http_url") or ""), action_name, action_id, args)
     return send_streamerbot_action_websocket(
         str(settings.get("websocket_url") or ""),
@@ -4774,6 +5050,7 @@ def run_gui(config_path: Path) -> int:
     chat_webhook_server: LocalChatWebhookServer | None = None
     livepix_webhook_server: LocalLivepixWebhookServer | None = None
     chat_websocket_worker: ChatWebSocketWorker | None = None
+    bot_bridge_server: TikfinityDirectBridgeServer | None = None
     raffle_worker: TikfinityRaffleWorker | None = None
     raffle_end_at = 0.0
     raffle_animating = False
@@ -5129,9 +5406,7 @@ def run_gui(config_path: Path) -> int:
     chat_platform_var = tk.StringVar(value="-")
     chat_endpoint_var = tk.StringVar(value="")
     chat_commands_enabled_var = tk.BooleanVar(value=bool(config.get("chat_commands_enabled", False)))
-    bot_delivery_method_var = tk.StringVar(
-        value="Streamer.bot HTTP" if config.get("bot_delivery_method") == "streamerbot_http" else "Streamer.bot WebSocket"
-    )
+    bot_delivery_method_var = tk.StringVar(value=bot_delivery_method_label(config.get("bot_delivery_method")))
     bot_streamerbot_ws_url_var = tk.StringVar(
         value=str(config.get("bot_streamerbot_ws_url") or DEFAULT_STREAMERBOT_WEBSOCKET_URL)
     )
@@ -7077,7 +7352,7 @@ def run_gui(config_path: Path) -> int:
         text_color=fg,
     ).grid(row=2, column=0, columnspan=4, sticky="w", padx=18, pady=(6, 8))
     section_label(command_bot_card, "Metodo", 3)
-    combo(command_bot_card, bot_delivery_method_var, ["Streamer.bot WebSocket", "Streamer.bot HTTP"], width=210).grid(
+    combo(command_bot_card, bot_delivery_method_var, BOT_DELIVERY_METHOD_OPTIONS, width=230).grid(
         row=3, column=1, sticky="w", padx=18, pady=5
     )
     section_label(command_bot_card, "Delay seguro", 3, column=2)
@@ -7090,11 +7365,11 @@ def run_gui(config_path: Path) -> int:
     streamerbot_card = card(
         commands_settings_col,
         "Envio para TikFinity",
-        "Configure uma action no Streamer.bot para enviar o argumento {message} ao chatbot do TikFinity.",
+        "O modo direto abre uma ponte local. HTTP, senha e action ficam so para Streamer.bot legado.",
     )
     streamerbot_card.grid(row=1, column=0, sticky="ew", pady=8)
     streamerbot_card.columnconfigure(1, weight=1)
-    section_label(streamerbot_card, "WebSocket", 2)
+    section_label(streamerbot_card, "Ponte WS", 2)
     entry(streamerbot_card, bot_streamerbot_ws_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
     section_label(streamerbot_card, "HTTP", 3)
     entry(streamerbot_card, bot_streamerbot_http_url_var).grid(row=3, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
@@ -11293,21 +11568,66 @@ def run_gui(config_path: Path) -> int:
         return value
 
     def bot_delivery_method_key() -> str:
-        return "streamerbot_http" if bot_delivery_method_var.get() == "Streamer.bot HTTP" else "streamerbot_websocket"
+        return bot_delivery_method_from_label(bot_delivery_method_var.get())
+
+    def stop_tikfinity_direct_bridge(silent: bool = False) -> None:
+        nonlocal bot_bridge_server
+        if bot_bridge_server is None:
+            return
+        bot_bridge_server.stop()
+        bot_bridge_server = None
+        if not silent:
+            log("Ponte direta do TikFinity parada.")
+
+    def ensure_tikfinity_direct_bridge() -> TikfinityDirectBridgeServer:
+        nonlocal bot_bridge_server
+        if app_closing:
+            raise RuntimeError("O app esta fechando; ponte do TikFinity nao pode iniciar.")
+        url = normalize_streamerbot_websocket_url(bot_streamerbot_ws_url_var.get())
+        bot_streamerbot_ws_url_var.set(url)
+        if bot_bridge_server is not None and bot_bridge_server.url == url and bot_bridge_server.is_running():
+            return bot_bridge_server
+        stop_tikfinity_direct_bridge(silent=True)
+        server = TikfinityDirectBridgeServer(url, log)
+        server.start()
+        bot_bridge_server = server
+        log(f"Ponte direta do TikFinity ativa em {server.url}.")
+        return server
+
+    def refresh_tikfinity_direct_bridge(*_args: Any) -> None:
+        if app_closing:
+            return
+        if bot_delivery_method_key() != BOT_DELIVERY_TIKFINITY_DIRECT:
+            stop_tikfinity_direct_bridge(silent=True)
+            return
+        if not (chat_commands_enabled_var.get() or chat_timers_enabled_var.get()):
+            stop_tikfinity_direct_bridge(silent=True)
+            return
+        try:
+            ensure_tikfinity_direct_bridge()
+            if bot_status_var.get() in {"Desligado", "Erro"}:
+                bot_status_var.set("Ponte direta ativa")
+        except Exception as exc:
+            bot_status_var.set("Erro")
+            log(f"Erro na ponte direta do TikFinity: {exc}")
 
     def bot_ignored_usernames() -> set[str]:
         raw = bot_ignore_usernames_var.get()
         return {item.strip().casefold() for item in re.split(r"[,;\n]+", raw) if item.strip()}
 
     def bot_settings_from_vars() -> dict[str, Any]:
-        return {
-            "method": bot_delivery_method_key(),
+        method = bot_delivery_method_key()
+        settings = {
+            "method": method,
             "websocket_url": normalize_streamerbot_websocket_url(bot_streamerbot_ws_url_var.get()),
             "http_url": normalize_streamerbot_http_url(bot_streamerbot_http_url_var.get()),
             "password": bot_streamerbot_password_var.get(),
             "action_name": bot_streamerbot_action_name_var.get().strip(),
             "action_id": bot_streamerbot_action_id_var.get().strip(),
         }
+        if method == BOT_DELIVERY_TIKFINITY_DIRECT:
+            settings["bridge_server"] = ensure_tikfinity_direct_bridge()
+        return settings
 
     def update_bot_queue_count() -> None:
         bot_queue_count_var.set(str(bot_reply_queue.qsize()))
@@ -11725,7 +12045,7 @@ def run_gui(config_path: Path) -> int:
             source="local",
         )
         queue_bot_reply(
-            "Mensagem de teste do Aizen Stream Control via Streamer.bot/TikFinity.",
+            "Mensagem de teste do Aizen Stream Control via TikFinity direto.",
             message,
             "!teste",
             "",
@@ -14161,6 +14481,7 @@ def run_gui(config_path: Path) -> int:
         try:
             if raffle_worker is not None:
                 raffle_worker.stop()
+            stop_tikfinity_direct_bridge(silent=True)
             stop_chat_listener(silent=True)
             stop_livepix_webhook(silent=True)
             close_ff_overlay_window()
@@ -14865,9 +15186,14 @@ def run_gui(config_path: Path) -> int:
             return
         start_chat_listener(open_monitor=False)
 
+    def ensure_bot_runtime(*_args: Any) -> None:
+        ensure_chat_listener_for_bot()
+        refresh_tikfinity_direct_bridge()
+
     device_name_var.trace_add("write", update_local_source_labels)
-    chat_commands_enabled_var.trace_add("write", ensure_chat_listener_for_bot)
-    chat_timers_enabled_var.trace_add("write", ensure_chat_listener_for_bot)
+    chat_commands_enabled_var.trace_add("write", ensure_bot_runtime)
+    chat_timers_enabled_var.trace_add("write", ensure_bot_runtime)
+    bot_delivery_method_var.trace_add("write", refresh_tikfinity_direct_bridge)
     pump_log()
     if not (kills_ff_site_sync_hidden and ff_overlay_site_sync_hidden):
         pump_sync_queue()
@@ -14888,6 +15214,7 @@ def run_gui(config_path: Path) -> int:
     if not ff_queue_site_sync_hidden:
         schedule_ff_queue_poll()
     update_chat_endpoint_text()
+    ensure_bot_runtime()
     if chat_commands_enabled_var.get() or chat_timers_enabled_var.get():
         root.after(700, lambda: ensure_chat_listener_for_bot())
     apply_chat_overlay_settings()

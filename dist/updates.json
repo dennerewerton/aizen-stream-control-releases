@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.56",
-    "notes":  "Corrige comandos com Chat Ao Vivo oculto e melhora erro de Streamer.bot fechado.",
+    "version":  "2.6.57",
+    "notes":  "Atualizacao v2.6.57: comandos diretos pelo TikFinity sem depender do Streamer.bot.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.56/AizenStreamControl.exe",
-                    "sha256":  "19ff4004237d1273ee4dc377683a825f62949511183cea869ea532599a4828ec"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.57/AizenStreamControl.exe",
+                    "sha256":  "b2aa0906bcad476621379cc38e36c8fdbc1df4379305a51474177a6e53fdb81b"
                 }
 }
