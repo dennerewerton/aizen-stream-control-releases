@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.58",
-    "notes":  "Atualizacao v2.6.58: leitor interno para o WebSocket local do TikFinity, evitando erro WinError 10106 da biblioteca.",
+    "version":  "2.6.59",
+    "notes":  "Atualizacao v2.6.59: fallback automatico por leitor auxiliar do Windows quando o WebSocket local do TikFinity retorna WinError 10106.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.58/AizenStreamControl.exe",
-                    "sha256":  "6f2698bafebc4c29371bb396400422c5c5cf1ef1d56fff0536049c218d483f93"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.59/AizenStreamControl.exe",
+                    "sha256":  "0c124a4f7abe0fbb053ccb3b34a1377a7b35c3ef48d04065c60bbddc6ea734ab"
                 }
 }

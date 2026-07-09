@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.58"
+APP_VERSION = "2.6.59"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1628,6 +1628,11 @@ def is_local_websocket_url(url: str) -> bool:
     return parsed.scheme == "ws" and host in {"127.0.0.1", "localhost", "::1"}
 
 
+def is_winsock_provider_error(error: Any) -> bool:
+    text = str(error).casefold()
+    return "10106" in text or "provedor de serviços" in text or "provider" in text and "load" in text
+
+
 def connect_plain_websocket_client(url: str, timeout: float = 8.0) -> socket.socket:
     parsed = urlparse(url)
     if parsed.scheme != "ws":
@@ -2018,6 +2023,7 @@ class ChatWebSocketWorker:
         self.thread: threading.Thread | None = None
         self.ws_app: Any | None = None
         self.ws_socket: socket.socket | None = None
+        self.ws_process: subprocess.Popen | None = None
         self.chat_event_count = 0
         self.other_event_count = 0
         self.config_event_logged = False
@@ -2043,6 +2049,11 @@ class ChatWebSocketWorker:
             try:
                 self.ws_socket.close()
             except OSError:
+                pass
+        if self.ws_process is not None:
+            try:
+                self.ws_process.terminate()
+            except Exception:
                 pass
 
     def _run(self) -> None:
@@ -2121,10 +2132,10 @@ class ChatWebSocketWorker:
                                 "Erro no WebSocket do TikFinity: conexao recusada. "
                                 "Abra o TikFinity e ative a Event API antes de iniciar o chat."
                             )
-                        elif "10106" in error_text or "provedor de serviços" in error_text.casefold():
+                        elif is_winsock_provider_error(error):
                             self.log(
                                 "Erro no WebSocket do TikFinity: Windows/Winsock recusou a conexao local. "
-                                "O app esta usando o leitor interno; se continuar, reinicie o Windows ou repare o Winsock."
+                                "Tentando leitor auxiliar do Windows."
                             )
                         else:
                             self.log(f"Erro no WebSocket do TikFinity: {error}")
@@ -2134,7 +2145,13 @@ class ChatWebSocketWorker:
                         self.log("WebSocket do TikFinity desconectado. Tentando reconectar...")
 
                 if use_internal_client:
-                    self._run_internal_websocket_client(on_open, on_message, on_close)
+                    try:
+                        self._run_internal_websocket_client(on_open, on_message, on_close)
+                    except Exception as exc:
+                        if not is_winsock_provider_error(exc):
+                            raise
+                        on_error(None, exc)
+                        self._run_windows_websocket_helper(on_open, on_message, on_close)
                 else:
                     self.ws_app = websocket_module.WebSocketApp(
                         self.url,
@@ -2157,6 +2174,7 @@ class ChatWebSocketWorker:
             finally:
                 self.ws_app = None
                 self.ws_socket = None
+                self.ws_process = None
             if not self.stop_event.is_set():
                 time.sleep(3)
 
@@ -2183,6 +2201,98 @@ class ChatWebSocketWorker:
                 pass
             self.ws_socket = None
             if not self.stop_event.is_set():
+                on_close(None, None, None)
+
+    def _run_windows_websocket_helper(self, on_open: callable, on_message: callable, on_close: callable) -> None:
+        if os.name != "nt":
+            raise RuntimeError("Leitor auxiliar do Windows disponivel apenas no Windows.")
+        powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        powershell_cmd = str(powershell) if powershell.exists() else "powershell.exe"
+        safe_url = self.url.replace("'", "''")
+        script = f"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$uri = [Uri]'{safe_url}'
+$ws = [System.Net.WebSockets.ClientWebSocket]::new()
+$ct = [Threading.CancellationToken]::None
+[void]$ws.ConnectAsync($uri, $ct).GetAwaiter().GetResult()
+[Console]::Out.WriteLine('OPEN')
+[Console]::Out.Flush()
+$buffer = New-Object byte[] 65536
+while ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {{
+  $memory = [System.IO.MemoryStream]::new()
+  try {{
+    do {{
+      $segment = [ArraySegment[byte]]::new($buffer)
+      $result = $ws.ReceiveAsync($segment, $ct).GetAwaiter().GetResult()
+      if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) {{
+        exit 0
+      }}
+      if ($result.Count -gt 0) {{
+        $memory.Write($buffer, 0, $result.Count)
+      }}
+    }} while (-not $result.EndOfMessage)
+    if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Text) {{
+      [Console]::Out.WriteLine('MSG ' + [Convert]::ToBase64String($memory.ToArray()))
+      [Console]::Out.Flush()
+    }}
+  }} finally {{
+    $memory.Dispose()
+  }}
+}}
+"""
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        process = subprocess.Popen(
+            [powershell_cmd, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=creationflags,
+        )
+        self.ws_process = process
+        opened = False
+        helper_messages = 0
+        self.log("Leitor auxiliar do Windows iniciado para o WebSocket local do TikFinity.")
+        try:
+            assert process.stdout is not None
+            while not self.stop_event.is_set():
+                line = process.stdout.readline()
+                if line == "":
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.05)
+                    continue
+                line = line.strip()
+                if not line:
+                    continue
+                if line == "OPEN":
+                    opened = True
+                    on_open(None)
+                    continue
+                if line.startswith("MSG "):
+                    try:
+                        raw_message = base64.b64decode(line[4:].strip()).decode("utf-8", errors="replace")
+                    except Exception as exc:
+                        self.log(f"Leitor auxiliar do TikFinity recebeu mensagem invalida: {exc}")
+                        continue
+                    helper_messages += 1
+                    on_message(None, raw_message)
+                    continue
+                if not opened:
+                    raise RuntimeError(f"Leitor auxiliar do TikFinity falhou: {line[:220]}")
+                if helper_messages < 3:
+                    self.log(f"Leitor auxiliar do TikFinity: {line[:180]}")
+            if process.poll() not in {None, 0} and not self.stop_event.is_set():
+                raise RuntimeError(f"Leitor auxiliar do TikFinity encerrou com codigo {process.returncode}.")
+        finally:
+            try:
+                process.terminate()
+            except Exception:
+                pass
+            self.ws_process = None
+            if opened and not self.stop_event.is_set():
                 on_close(None, None, None)
 
 
