@@ -13,6 +13,7 @@ $pyInstallerArgs = @(
   "--onefile",
   "--windowed",
   "--noupx",
+  "--runtime-tmpdir", ".",
   "--name", "AizenStreamControlSetup",
   "--icon", "assets/app_icon.ico",
   "--add-binary", "dist/AizenStreamControl.exe;.",

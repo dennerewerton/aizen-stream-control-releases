@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.67"
+APP_VERSION = "2.6.68"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4409,6 +4409,12 @@ def update_log_path() -> Path:
     return APP_DIR / "update.log"
 
 
+def update_workspace_dir() -> Path:
+    workspace = APP_DIR / "updates"
+    workspace.mkdir(parents=True, exist_ok=True)
+    return workspace
+
+
 def write_update_log(message: str) -> None:
     try:
         with update_log_path().open("a", encoding="utf-8") as handle:
@@ -4576,7 +4582,8 @@ def sha256_file(path: Path) -> str:
 
 def download_update_asset(url: str, sha256: str = "", progress_callback: Any | None = None) -> Path:
     suffix = Path(urlparse(url).path).suffix or ".bin"
-    target_dir = Path(tempfile.mkdtemp(prefix="aizen_update_"))
+    target_dir = update_workspace_dir() / f"aizen_update_{int(time.time())}_{secrets.token_hex(4)}"
+    target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / f"update{suffix}"
     with requests.get(url, timeout=60, stream=True) as response:
         response.raise_for_status()
@@ -4674,19 +4681,19 @@ def launch_self_replacement(new_exe: Path) -> None:
                 "}",
                 "$started = $false",
                 "try {",
-                "  Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -ArgumentList ('\"' + $Target + '\"') -ErrorAction Stop",
+                "  Start-Process -FilePath $Target -WorkingDirectory $TargetDir -UseNewEnvironment -ErrorAction Stop",
                 "  $started = $true",
-                "  Write-AizenLog 'App reiniciado via explorer.exe.'",
-                "} catch { Write-AizenLog ('Falha explorer.exe: ' + $_.Exception.Message) }",
+                "  Write-AizenLog 'App reiniciado com UseNewEnvironment.'",
+                "} catch { Write-AizenLog ('Falha UseNewEnvironment: ' + $_.Exception.Message) }",
                 "if (-not $started) {",
                 "  try {",
-                "    Start-Process -FilePath $Target -WorkingDirectory $TargetDir -UseNewEnvironment -ErrorAction Stop",
+                "    Start-Process -FilePath $Target -WorkingDirectory $TargetDir -ErrorAction Stop",
                 "    $started = $true",
-                "    Write-AizenLog 'App reiniciado com UseNewEnvironment.'",
-                "  } catch { Write-AizenLog ('Falha UseNewEnvironment: ' + $_.Exception.Message) }",
+                "    Write-AizenLog 'App reiniciado por Start-Process padrao.'",
+                "  } catch { Write-AizenLog ('Falha Start-Process padrao: ' + $_.Exception.Message) }",
                 "}",
                 "if (-not $started) {",
-                "  try { Start-Process -FilePath $Target -WorkingDirectory $TargetDir -ErrorAction Stop; Write-AizenLog 'App reiniciado por Start-Process padrao.' } catch { Write-AizenLog ('Falha final ao reiniciar: ' + $_.Exception.Message) }",
+                "  try { Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -ArgumentList ('\"' + $Target + '\"') -ErrorAction Stop; Write-AizenLog 'App reiniciado via explorer.exe.' } catch { Write-AizenLog ('Falha final explorer.exe: ' + $_.Exception.Message) }",
                 "}",
                 "Start-Sleep -Seconds 3",
                 "Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue",
