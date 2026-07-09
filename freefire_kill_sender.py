@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.60"
+APP_VERSION = "2.6.61"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1633,6 +1633,11 @@ def is_winsock_provider_error(error: Any) -> bool:
     return "10106" in text or "provedor de serviços" in text or "provider" in text and "load" in text
 
 
+def clean_pyinstaller_subprocess_env() -> dict[str, str]:
+    clean_env = clean_pyinstaller_subprocess_env()
+    return clean_env
+
+
 def connect_plain_websocket_client(url: str, timeout: float = 8.0) -> socket.socket:
     parsed = urlparse(url)
     if parsed.scheme != "ws":
@@ -2271,44 +2276,53 @@ class ChatWebSocketWorker:
         script = f"""
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$uri = [Uri]'{safe_url}'
-$ws = [System.Net.WebSockets.ClientWebSocket]::new()
-$ct = [Threading.CancellationToken]::None
-[void]$ws.ConnectAsync($uri, $ct).GetAwaiter().GetResult()
-[Console]::Out.WriteLine('OPEN')
-[Console]::Out.Flush()
-$buffer = New-Object byte[] 65536
-while ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {{
-  $memory = [System.IO.MemoryStream]::new()
-  try {{
-    do {{
-      $segment = [ArraySegment[byte]]::new($buffer)
-      $result = $ws.ReceiveAsync($segment, $ct).GetAwaiter().GetResult()
-      if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) {{
-        exit 0
+try {{
+  $uri = [Uri]'{safe_url}'
+  $ws = [System.Net.WebSockets.ClientWebSocket]::new()
+  $ct = [Threading.CancellationToken]::None
+  [void]$ws.ConnectAsync($uri, $ct).GetAwaiter().GetResult()
+  [Console]::Out.WriteLine('OPEN')
+  [Console]::Out.Flush()
+  $buffer = New-Object byte[] 65536
+  while ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {{
+    $memory = [System.IO.MemoryStream]::new()
+    try {{
+      do {{
+        $segment = [ArraySegment[byte]]::new($buffer)
+        $result = $ws.ReceiveAsync($segment, $ct).GetAwaiter().GetResult()
+        if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) {{
+          exit 0
+        }}
+        if ($result.Count -gt 0) {{
+          $memory.Write($buffer, 0, $result.Count)
+        }}
+      }} while (-not $result.EndOfMessage)
+      if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Text) {{
+        [Console]::Out.WriteLine('MSG ' + [Convert]::ToBase64String($memory.ToArray()))
+        [Console]::Out.Flush()
       }}
-      if ($result.Count -gt 0) {{
-        $memory.Write($buffer, 0, $result.Count)
-      }}
-    }} while (-not $result.EndOfMessage)
-    if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Text) {{
-      [Console]::Out.WriteLine('MSG ' + [Convert]::ToBase64String($memory.ToArray()))
-      [Console]::Out.Flush()
+    }} finally {{
+      $memory.Dispose()
     }}
-  }} finally {{
-    $memory.Dispose()
   }}
+}} catch {{
+  $message = $_.Exception.ToString()
+  [Console]::Out.WriteLine('ERR ' + [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($message)))
+  [Console]::Out.Flush()
+  exit 1
 }}
 """
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        encoded_script = base64.b64encode(script.encode("utf-16le")).decode("ascii")
         process = subprocess.Popen(
-            [powershell_cmd, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            [powershell_cmd, "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded_script],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="replace",
             creationflags=creationflags,
+            env=clean_pyinstaller_subprocess_env(),
         )
         self.ws_process = process
         opened = False
@@ -2339,6 +2353,12 @@ while ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {{
                     helper_messages += 1
                     on_message(None, raw_message)
                     continue
+                if line.startswith("ERR "):
+                    try:
+                        error_message = base64.b64decode(line[4:].strip()).decode("utf-8", errors="replace")
+                    except Exception:
+                        error_message = line[4:].strip()
+                    raise RuntimeError(f"Leitor auxiliar do TikFinity falhou: {error_message[:420]}")
                 if not opened:
                     raise RuntimeError(f"Leitor auxiliar do TikFinity falhou: {line[:220]}")
                 if helper_messages < 3:
@@ -15515,6 +15535,56 @@ def run_gui(config_path: Path) -> int:
     return 0
 
 
+def run_socket_diagnostic(output_path: Path) -> int:
+    result: dict[str, Any] = {
+        "app": APP_NAME,
+        "version": APP_VERSION,
+        "executable": sys.executable,
+        "ok": False,
+        "tests": [],
+    }
+
+    def record(name: str, ok: bool, detail: str = "") -> None:
+        result["tests"].append({"name": name, "ok": ok, "detail": detail})
+
+    try:
+        addresses = socket.getaddrinfo("127.0.0.1", 21213)
+        record("getaddrinfo", True, str(addresses[:1]))
+    except Exception as exc:
+        record("getaddrinfo", False, repr(exc))
+
+    try:
+        test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        test_socket.close()
+        record("socket_create", True)
+    except Exception as exc:
+        record("socket_create", False, repr(exc))
+
+    try:
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.bind(("127.0.0.1", 0))
+        address = server_socket.getsockname()
+        server_socket.close()
+        record("socket_bind", True, str(address))
+    except Exception as exc:
+        record("socket_bind", False, repr(exc))
+
+    try:
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_socket.settimeout(2)
+        client_socket.connect(("127.0.0.1", 21213))
+        client_socket.close()
+        record("connect_tikfinity_21213", True)
+    except Exception as exc:
+        record("connect_tikfinity_21213", False, repr(exc))
+
+    result["ok"] = all(bool(item.get("ok")) for item in result["tests"])
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return 0 if result["ok"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Painel manual de kills do Free Fire e sorteios para live.")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -15524,11 +15594,15 @@ def main() -> int:
     parser.add_argument("--version", action="store_true", help="Mostra a versao do aplicativo e sai.")
     parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--socket-diagnostic", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     if args.version:
         print(f"{APP_NAME} {APP_VERSION}")
         return 0
+
+    if args.socket_diagnostic:
+        return run_socket_diagnostic(args.socket_diagnostic)
 
     if args.image or args.watch:
         print("Captura automatica por print/OCR foi desativada. Use a interface de kills manuais.")

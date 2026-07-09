@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.60",
-    "notes":  "Atualizacao v2.6.60: ponte direta do TikFinity envia saudacao compatível com Streamer.bot e identifica conexao de teste rapida.",
+    "version":  "2.6.61",
+    "notes":  "Atualizacao v2.6.61: build limpo sem DLLs de runtime do Windows embutidas para corrigir WinError 10106/Winsock no app instalado.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.60/AizenStreamControl.exe",
-                    "sha256":  "608b7e7387c08b2147c37976628df45eb472c6a442d489bafea0887b0599c15a"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.61/AizenStreamControl.exe",
+                    "sha256":  "3a789bfd656dd90af09d57995aaabb09bd7040382d099abb4711da23a0085238"
                 }
 }
