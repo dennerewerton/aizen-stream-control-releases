@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.62",
-    "notes":  "Atualizacao v2.6.62: corrige recursao no leitor auxiliar do TikFinity e relanca o app com ambiente limpo quando o Winsock local inicia com WinError 10106.",
+    "version":  "2.6.63",
+    "notes":  "Atualizacao v2.6.63: reforca a recuperacao do Winsock local, captura o erro da ponte direta desde a criacao do socket e desativa o fallback PowerShell quando o Windows retorna 80090010.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.62/AizenStreamControl.exe",
-                    "sha256":  "d38d52a11cc2f82941121701e4b4748b9dce3f51247ab39ea2cc1e45dcb088c7"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.63/AizenStreamControl.exe",
+                    "sha256":  "7dd468dc14d5b75ad13c16ee0863af6909e5025d8a948813d6b1c27be4448ad2"
                 }
 }

@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.62"
+APP_VERSION = "2.6.63"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1639,6 +1639,16 @@ def is_winsock_provider_error(error: Any) -> bool:
     )
 
 
+def is_windows_powershell_loader_error(error: Any) -> bool:
+    text = str(error).casefold()
+    return (
+        "80090010" in text
+        or "erro interno do windows powershell" in text
+        or "falha no carregamento do windows powershell" in text
+        or "windows powershell" in text and "falha no carregamento" in text
+    )
+
+
 def clean_pyinstaller_subprocess_env() -> dict[str, str]:
     clean_env = os.environ.copy()
     for key in list(clean_env):
@@ -1733,17 +1743,19 @@ class TikfinityDirectBridgeServer:
         if self.is_running():
             return
         self.stop_event.clear()
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket: socket.socket | None = None
         try:
+            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             server_socket.bind((self.host, self.port))
             server_socket.listen(8)
             server_socket.settimeout(1.0)
         except OSError as exc:
-            try:
-                server_socket.close()
-            except OSError:
-                pass
+            if server_socket is not None:
+                try:
+                    server_socket.close()
+                except OSError:
+                    pass
             if is_winsock_provider_error(exc):
                 raise RuntimeError(
                     "Windows/Winsock recusou abrir a ponte local do TikFinity neste processo. "
@@ -2110,6 +2122,7 @@ class ChatWebSocketWorker:
         self.chat_event_count = 0
         self.other_event_count = 0
         self.config_event_logged = False
+        self.windows_helper_unavailable_reason = ""
 
     def start(self) -> None:
         if self.thread and self.thread.is_alive():
@@ -2233,8 +2246,23 @@ class ChatWebSocketWorker:
                     except Exception as exc:
                         if not is_winsock_provider_error(exc):
                             raise
+                        if self.windows_helper_unavailable_reason:
+                            self.log(
+                                "Erro no WebSocket do TikFinity: Windows/Winsock recusou a conexao local. "
+                                f"{self.windows_helper_unavailable_reason}"
+                            )
+                            self.stop_event.wait(15)
+                            continue
                         on_error(None, exc)
-                        self._run_windows_websocket_helper(on_open, on_message, on_close)
+                        try:
+                            self._run_windows_websocket_helper(on_open, on_message, on_close)
+                        except Exception as helper_exc:
+                            if is_windows_powershell_loader_error(helper_exc):
+                                self.windows_helper_unavailable_reason = (
+                                    "Leitor auxiliar desativado porque o Windows PowerShell falhou com erro 80090010. "
+                                    "Reinicie o Windows ou repare o Winsock/PowerShell para liberar conexoes locais."
+                                )
+                            raise
                 else:
                     self.ws_app = websocket_module.WebSocketApp(
                         self.url,
@@ -15627,14 +15655,26 @@ def probe_local_winsock() -> tuple[bool, str]:
 def maybe_relaunch_clean_for_winsock(config_path: Path) -> bool:
     if not IS_FROZEN or os.name != "nt":
         return False
-    if os.environ.get(WINSOCK_CLEAN_RESTART_ENV) == "1":
-        return False
+    try:
+        restart_stage = int(os.environ.get(WINSOCK_CLEAN_RESTART_ENV, "0") or "0")
+    except ValueError:
+        restart_stage = 0
     ok, detail = probe_local_winsock()
-    if ok or not is_winsock_provider_error(detail):
+    if ok:
+        if restart_stage:
+            write_update_log(f"Winsock OK apos relancamento limpo etapa {restart_stage}.")
+        return False
+    if not is_winsock_provider_error(detail):
+        return False
+    if restart_stage >= 2:
+        write_update_log(
+            f"Winsock ainda falhou apos {restart_stage} relancamentos limpos ({detail}); "
+            "continuando para mostrar erro no app."
+        )
         return False
 
     clean_env = clean_pyinstaller_subprocess_env()
-    clean_env[WINSOCK_CLEAN_RESTART_ENV] = "1"
+    clean_env[WINSOCK_CLEAN_RESTART_ENV] = str(restart_stage + 1)
     launch_args = [sys.executable]
     if config_path.resolve() != DEFAULT_CONFIG.resolve():
         launch_args.extend(["--config", str(config_path)])
@@ -15647,7 +15687,10 @@ def maybe_relaunch_clean_for_winsock(config_path: Path) -> bool:
             creationflags=creationflags,
             close_fds=True,
         )
-        write_update_log(f"Winsock falhou no processo atual ({detail}); app relancado com ambiente limpo.")
+        write_update_log(
+            f"Winsock falhou no processo atual ({detail}); "
+            f"app relancado com ambiente limpo etapa {restart_stage + 1}."
+        )
         return True
     except Exception as exc:
         write_update_log(f"Winsock falhou ({detail}) e o relancamento limpo tambem falhou: {exc}")
