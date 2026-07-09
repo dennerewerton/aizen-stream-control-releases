@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.69",
-    "notes":  "Atualizacao v2.6.69: corrige o log do bot TikFinity para nao indicar falso sucesso na live e mostra a configuracao obrigatoria do TikFinity Chatbot.",
+    "version":  "2.6.70",
+    "notes":  "Atualizacao v2.6.70: volta a aba Kills FF em modo manual, remove sincronizacoes automaticas das abas ocultas e melhora a responsividade da interface.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.69/AizenStreamControl.exe",
-                    "sha256":  "e363c3177b52ea186558556f9000540feaf73d1c7a4f4763974a8f9d4e0ab931"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.70/AizenStreamControl.exe",
+                    "sha256":  "27d0cd7ad683d229b6c80e45400a2ea641e39178e8c13690ef42f0805c473c60"
                 }
 }
