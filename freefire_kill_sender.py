@@ -48,13 +48,14 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.61"
+APP_VERSION = "2.6.62"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
+WINSOCK_CLEAN_RESTART_ENV = "AIZEN_WINSOCK_CLEAN_RESTARTED"
 BOT_DELIVERY_TIKFINITY_DIRECT = "tikfinity_direct"
 BOT_DELIVERY_STREAMERBOT_WEBSOCKET = "streamerbot_websocket"
 BOT_DELIVERY_STREAMERBOT_HTTP = "streamerbot_http"
@@ -1630,11 +1631,24 @@ def is_local_websocket_url(url: str) -> bool:
 
 def is_winsock_provider_error(error: Any) -> bool:
     text = str(error).casefold()
-    return "10106" in text or "provedor de serviços" in text or "provider" in text and "load" in text
+    return (
+        "10106" in text
+        or "provedor de serviços" in text
+        or "winsock" in text and "recus" in text
+        or "provider" in text and ("load" in text or "initialized" in text)
+    )
 
 
 def clean_pyinstaller_subprocess_env() -> dict[str, str]:
-    clean_env = clean_pyinstaller_subprocess_env()
+    clean_env = os.environ.copy()
+    for key in list(clean_env):
+        if key.startswith("_PYI") or key in {"PYTHONHOME", "PYTHONPATH", "TCL_LIBRARY", "TK_LIBRARY"}:
+            clean_env.pop(key, None)
+    clean_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    if clean_env.get("PATH"):
+        clean_env["PATH"] = ";".join(
+            part for part in clean_env["PATH"].split(";") if part and not re.search(r"_MEI\d+", part, re.IGNORECASE)
+        )
     return clean_env
 
 
@@ -1730,6 +1744,11 @@ class TikfinityDirectBridgeServer:
                 server_socket.close()
             except OSError:
                 pass
+            if is_winsock_provider_error(exc):
+                raise RuntimeError(
+                    "Windows/Winsock recusou abrir a ponte local do TikFinity neste processo. "
+                    "Feche e abra o app novamente pelo atalho; se continuar, reinicie o Windows ou repare o Winsock."
+                ) from exc
             raise RuntimeError(
                 f"Nao consegui abrir a ponte direta em {self.url}. "
                 "Feche o Streamer.bot ou outro programa usando essa porta, ou mude a porta no TikFinity e no app."
@@ -15585,6 +15604,56 @@ def run_socket_diagnostic(output_path: Path) -> int:
     return 0 if result["ok"] else 1
 
 
+def probe_local_winsock() -> tuple[bool, str]:
+    sockets: list[socket.socket] = []
+    try:
+        test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sockets.append(test_socket)
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sockets.append(server_socket)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.bind(("127.0.0.1", 0))
+        return True, "ok"
+    except Exception as exc:
+        return False, repr(exc)
+    finally:
+        for sock in sockets:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
+def maybe_relaunch_clean_for_winsock(config_path: Path) -> bool:
+    if not IS_FROZEN or os.name != "nt":
+        return False
+    if os.environ.get(WINSOCK_CLEAN_RESTART_ENV) == "1":
+        return False
+    ok, detail = probe_local_winsock()
+    if ok or not is_winsock_provider_error(detail):
+        return False
+
+    clean_env = clean_pyinstaller_subprocess_env()
+    clean_env[WINSOCK_CLEAN_RESTART_ENV] = "1"
+    launch_args = [sys.executable]
+    if config_path.resolve() != DEFAULT_CONFIG.resolve():
+        launch_args.extend(["--config", str(config_path)])
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    try:
+        subprocess.Popen(
+            launch_args,
+            cwd=str(APP_DIR),
+            env=clean_env,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+        write_update_log(f"Winsock falhou no processo atual ({detail}); app relancado com ambiente limpo.")
+        return True
+    except Exception as exc:
+        write_update_log(f"Winsock falhou ({detail}) e o relancamento limpo tambem falhou: {exc}")
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Painel manual de kills do Free Fire e sorteios para live.")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -15607,6 +15676,9 @@ def main() -> int:
     if args.image or args.watch:
         print("Captura automatica por print/OCR foi desativada. Use a interface de kills manuais.")
         return 2
+
+    if maybe_relaunch_clean_for_winsock(args.config):
+        return 0
 
     if maybe_apply_auto_update(args.config):
         return 0

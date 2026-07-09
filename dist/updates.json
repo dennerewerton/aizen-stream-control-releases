@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.61",
-    "notes":  "Atualizacao v2.6.61: build limpo sem DLLs de runtime do Windows embutidas para corrigir WinError 10106/Winsock no app instalado.",
+    "version":  "2.6.62",
+    "notes":  "Atualizacao v2.6.62: corrige recursao no leitor auxiliar do TikFinity e relanca o app com ambiente limpo quando o Winsock local inicia com WinError 10106.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.61/AizenStreamControl.exe",
-                    "sha256":  "3a789bfd656dd90af09d57995aaabb09bd7040382d099abb4711da23a0085238"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.62/AizenStreamControl.exe",
+                    "sha256":  "d38d52a11cc2f82941121701e4b4748b9dce3f51247ab39ea2cc1e45dcb088c7"
                 }
 }
