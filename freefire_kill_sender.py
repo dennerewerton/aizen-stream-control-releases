@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.59"
+APP_VERSION = "2.6.60"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1758,6 +1758,24 @@ class TikfinityDirectBridgeServer:
         with self.clients_lock:
             return len(self.clients)
 
+    def send_json_to_client(self, client: socket.socket, payload: dict[str, Any]) -> None:
+        client.sendall(websocket_frame(0x1, json.dumps(payload, ensure_ascii=False)))
+
+    def streamerbot_hello_payload(self) -> dict[str, Any]:
+        return {
+            "timeStamp": datetime.now().isoformat(timespec="seconds"),
+            "event": {
+                "source": "Streamer.bot",
+                "type": "General",
+            },
+            "data": {
+                "name": "Streamer.bot",
+                "version": APP_VERSION,
+                "instanceId": "aizen-tikfinity-direct",
+                "source": APP_NAME,
+            },
+        }
+
     def broadcast_json(self, payload: dict[str, Any]) -> int:
         message = json.dumps(payload, ensure_ascii=False)
         frame = websocket_frame(0x1, message)
@@ -1797,6 +1815,8 @@ class TikfinityDirectBridgeServer:
 
     def _handle_client(self, client: socket.socket) -> None:
         connected = False
+        connected_at = time.time()
+        received_messages = 0
         try:
             client.settimeout(5.0)
             self._perform_handshake(client)
@@ -1806,6 +1826,10 @@ class TikfinityDirectBridgeServer:
                 client_total = len(self.clients)
             connected = True
             self._log(f"TikFinity conectado na ponte direta ({client_total} conexao).")
+            try:
+                self.send_json_to_client(client, self.streamerbot_hello_payload())
+            except OSError:
+                return
             while not self.stop_event.is_set():
                 try:
                     opcode, payload = read_websocket_frame(client)
@@ -1824,13 +1848,48 @@ class TikfinityDirectBridgeServer:
                         client.sendall(websocket_frame(0xA, payload[:125]))
                     except OSError:
                         break
+                if opcode == 0x1:
+                    received_messages += 1
+                    self._handle_client_text_message(client, payload)
         finally:
             if connected:
                 with self.clients_lock:
                     self.clients.discard(client)
-                self._log("TikFinity desconectou da ponte direta.")
+                lifetime = time.time() - connected_at
+                if lifetime < 8 and received_messages == 0:
+                    self._log(
+                        "TikFinity encerrou a ponte apos um teste rapido. "
+                        "Para envio automatico, ative Chatbot > Streamer.bot Messages no TikFinity."
+                    )
+                else:
+                    self._log("TikFinity desconectou da ponte direta.")
             try:
                 client.close()
+            except OSError:
+                pass
+
+    def _handle_client_text_message(self, client: socket.socket, payload: bytes) -> None:
+        try:
+            message = json.loads(payload.decode("utf-8", errors="replace"))
+        except Exception:
+            return
+        if not isinstance(message, dict):
+            return
+        request_id = str(message.get("id") or message.get("requestId") or "")
+        request = str(message.get("request") or message.get("event") or message.get("action") or "").strip()
+        if request.casefold() in {"getinfo", "getinforequest", "hello"}:
+            response = self.streamerbot_hello_payload()
+            if request_id:
+                response["id"] = request_id
+                response["status"] = "ok"
+            try:
+                self.send_json_to_client(client, response)
+            except OSError:
+                pass
+            return
+        if request_id:
+            try:
+                self.send_json_to_client(client, {"id": request_id, "status": "ok"})
             except OSError:
                 pass
 
