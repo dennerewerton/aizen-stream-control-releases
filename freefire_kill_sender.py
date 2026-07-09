@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.72"
+APP_VERSION = "2.6.73"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6532,7 +6532,7 @@ def run_gui(config_path: Path) -> int:
     poll_row.grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=(5, 18))
     ctk.CTkLabel(
         poll_row,
-        text="Modo manual: use Salvar no Jarvis para enviar as kills digitadas e Atualizar para ler o ranking quando precisar.",
+        text="Modo manual: use Salvar para enviar as kills digitadas ao Jarvis e Atualizar para ler o ranking quando precisar.",
         text_color=muted,
         font=("Segoe UI", 11),
         anchor="w",
@@ -7256,7 +7256,7 @@ def run_gui(config_path: Path) -> int:
     ff_overlay_realtime_row.columnconfigure(0, weight=1)
     ctk.CTkLabel(
         ff_overlay_realtime_row,
-        text="Kills FF em modo manual: use os botões Salvar no Jarvis ou Atualizar.",
+        text="Kills FF em modo manual: use os botões Salvar ou Atualizar.",
         text_color=fg,
         font=("Segoe UI Semibold", 12),
     ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
@@ -9178,6 +9178,30 @@ def run_gui(config_path: Path) -> int:
         ranked.sort(key=lambda item: (-item[2], manual_autocomplete_key(item[0])))
         return ranked[:limit]
 
+    def manual_existing_name_suggestions(query: str, limit: int = 8) -> list[tuple[str, int, float]]:
+        seen: set[str] = set()
+        ranked: list[tuple[str, int, float]] = []
+        sources: list[PlayerKill] = []
+        sources.extend(collect_manual_players())
+        for scope_key in ("daily", "general"):
+            sources.extend(manual_scope_buffers.get(scope_key, []))
+        sources.extend(kills_daily_ranking)
+        sources.extend(kills_global_ranking)
+        for player in sources:
+            candidate_name = player.name.strip()
+            if not candidate_name:
+                continue
+            key = normalize_player_key(candidate_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            score = manual_name_match_score(query, candidate_name)
+            if score <= 0:
+                continue
+            ranked.append((candidate_name, normalize_kill_value(player.kills), score))
+        ranked.sort(key=lambda item: (-item[2], manual_autocomplete_key(item[0])))
+        return ranked[:limit]
+
     def hide_manual_name_suggestions(row: dict[str, Any]) -> None:
         suggestion_frame = row.get("suggestion_frame")
         if not suggestion_frame:
@@ -9340,8 +9364,8 @@ def run_gui(config_path: Path) -> int:
     def open_manual_kill_dialog() -> None:
         dialog = ctk.CTkToplevel(root)
         dialog.title("Adicionar jogador em Kills FF")
-        dialog.geometry("500x360")
-        dialog.minsize(440, 320)
+        dialog.geometry("560x460")
+        dialog.minsize(460, 360)
         dialog.configure(fg_color=bg)
         try:
             dialog.transient(root)
@@ -9363,15 +9387,110 @@ def run_gui(config_path: Path) -> int:
         )
         dialog_card.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
         dialog_card.columnconfigure(1, weight=1)
+        dialog_card.rowconfigure(3, weight=0)
 
         section_label(dialog_card, "Nick", 2)
         name_entry = entry(dialog_card, name_var)
-        name_entry.grid(row=2, column=1, sticky="ew", padx=18, pady=5)
-        section_label(dialog_card, "Kills", 3)
-        entry(dialog_card, kills_var, width=100).grid(row=3, column=1, sticky="w", padx=18, pady=5)
+        name_entry.grid(row=2, column=1, sticky="ew", padx=18, pady=(5, 2))
+        suggestion_frame = ctk.CTkScrollableFrame(
+            dialog_card,
+            height=132,
+            fg_color=field,
+            corner_radius=8,
+            border_width=1,
+            border_color=border,
+            scrollbar_button_color=chip_bg,
+            scrollbar_button_hover_color=accent,
+        )
+        suggestion_frame.grid(row=3, column=1, sticky="nsew", padx=18, pady=(0, 5))
+        suggestion_frame.columnconfigure(0, weight=1)
+        suggestion_frame.grid_remove()
+        section_label(dialog_card, "Kills", 4)
+        entry(dialog_card, kills_var, width=100).grid(row=4, column=1, sticky="w", padx=18, pady=5)
 
         dialog_actions = ctk.CTkFrame(dialog_card, fg_color=panel, corner_radius=0)
-        dialog_actions.grid(row=4, column=0, columnspan=2, sticky="ew", padx=18, pady=(16, 18))
+        dialog_actions.grid(row=5, column=0, columnspan=2, sticky="ew", padx=18, pady=(16, 18))
+
+        def hide_dialog_suggestions() -> None:
+            for widget in suggestion_frame.winfo_children():
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    pass
+            try:
+                suggestion_frame.grid_remove()
+            except tk.TclError:
+                pass
+            dialog_card.rowconfigure(3, weight=0)
+
+        def apply_dialog_suggestion(selected_name: str) -> None:
+            name_var.set(selected_name)
+            hide_dialog_suggestions()
+            try:
+                name_entry.focus_set()
+                name_entry.icursor(tk.END)
+            except tk.TclError:
+                pass
+
+        def refresh_dialog_suggestions(*_args: Any) -> None:
+            query = name_var.get().strip()
+            if len(manual_autocomplete_key(query)) < 1:
+                hide_dialog_suggestions()
+                return
+            suggestions = manual_existing_name_suggestions(query)
+            for widget in suggestion_frame.winfo_children():
+                try:
+                    widget.destroy()
+                except tk.TclError:
+                    pass
+            if not suggestions:
+                hide_dialog_suggestions()
+                return
+            dialog_card.rowconfigure(3, weight=1)
+            suggestion_frame.grid()
+            ctk.CTkLabel(
+                suggestion_frame,
+                text="Jogadores ja lancados",
+                text_color=muted,
+                font=("Segoe UI Semibold", 11),
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
+            for index, (candidate_name, candidate_kills, score) in enumerate(suggestions, start=1):
+                row = ctk.CTkFrame(
+                    suggestion_frame,
+                    fg_color="#211116" if index == 1 else "#151015",
+                    corner_radius=8,
+                    border_width=1 if index == 1 else 0,
+                    border_color=accent,
+                )
+                row.grid(row=index, column=0, sticky="ew", padx=4, pady=(4 if index == 1 else 2, 2))
+                row.columnconfigure(0, weight=1)
+                suggestion_button = ctk.CTkButton(
+                    row,
+                    text=f"{candidate_name}   {candidate_kills} kill{'s' if candidate_kills != 1 else ''}",
+                    command=lambda name=candidate_name: apply_dialog_suggestion(name),
+                    height=32,
+                    fg_color="transparent",
+                    hover_color="#30151b",
+                    text_color=fg,
+                    anchor="w",
+                    corner_radius=7,
+                    font=("Segoe UI Semibold", 12),
+                )
+                suggestion_button.grid(row=0, column=0, sticky="ew", padx=3, pady=3)
+                ctk.CTkLabel(
+                    row,
+                    text="inicio" if score >= 100 else "parecido",
+                    text_color=teal if score >= 100 else muted,
+                    font=("Segoe UI", 10),
+                ).grid(row=0, column=1, sticky="e", padx=(4, 10), pady=3)
+
+        def select_first_dialog_suggestion() -> bool:
+            suggestions = manual_existing_name_suggestions(name_var.get().strip(), limit=1)
+            if not suggestions:
+                return False
+            apply_dialog_suggestion(suggestions[0][0])
+            return True
 
         def add_and_close() -> None:
             clean_name = name_var.get().strip()
@@ -9386,8 +9505,11 @@ def run_gui(config_path: Path) -> int:
 
         button(dialog_actions, "Adicionar", add_and_close, "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
         button(dialog_actions, "Cancelar", dialog.destroy, "ghost", width=100).pack(side=tk.LEFT, padx=(0, 8))
+        name_var.trace_add("write", refresh_dialog_suggestions)
         name_entry.focus_set()
-        name_entry.bind("<Return>", lambda _event: add_and_close())
+        name_entry.bind("<FocusIn>", lambda _event: refresh_dialog_suggestions())
+        name_entry.bind("<FocusOut>", lambda _event: root.after(140, hide_dialog_suggestions))
+        name_entry.bind("<Return>", lambda _event: "break" if select_first_dialog_suggestion() else (add_and_close(), "break")[-1])
 
     def remove_manual_row(row: dict[str, Any]) -> None:
         if row not in manual_rows:
@@ -9429,11 +9551,43 @@ def run_gui(config_path: Path) -> int:
         on_manual_change()
 
     def reset_manual_kills() -> None:
-        clear_manual_metric_overrides()
-        for row in manual_rows:
-            row["kills_var"].set("0")
-        update_manual_metrics()
-        manual_status_var.set("Kills zeradas")
+        dialog = ctk.CTkToplevel(root)
+        dialog.title("Zerar Kills FF")
+        dialog.geometry("420x260")
+        dialog.minsize(380, 240)
+        dialog.configure(fg_color=bg)
+        try:
+            dialog.transient(root)
+            dialog.grab_set()
+            dialog.lift()
+            dialog.focus_force()
+        except tk.TclError:
+            pass
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(0, weight=1)
+        reset_card = card(dialog, "Zerar Kills FF", "Escolha qual ranking do Jarvis deve ser zerado.")
+        reset_card.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
+        reset_actions = ctk.CTkFrame(reset_card, fg_color=panel, corner_radius=0)
+        reset_actions.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(14, 18))
+        for column in range(3):
+            reset_actions.columnconfigure(column, weight=1)
+
+        def choose_reset(action: str) -> None:
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass
+            apply_kills_admin_action(action)
+
+        button(reset_actions, "Diario", lambda: choose_reset("reset_daily"), "danger", width=1).grid(
+            row=0, column=0, sticky="ew", padx=(0, 6), pady=4
+        )
+        button(reset_actions, "Geral", lambda: choose_reset("reset_general"), "danger", width=1).grid(
+            row=0, column=1, sticky="ew", padx=6, pady=4
+        )
+        button(reset_actions, "Cancelar", dialog.destroy, "ghost", width=1).grid(
+            row=0, column=2, sticky="ew", padx=(6, 0), pady=4
+        )
 
     def queue_summary_items(entries: list[FFQueueEntry]) -> list[dict[str, Any]]:
         grouped: dict[str, dict[str, Any]] = {}
@@ -15325,13 +15479,10 @@ def run_gui(config_path: Path) -> int:
         manual_actions,
         [
             ("Adicionar jogador", open_manual_kill_dialog, "accent"),
-            ("Salvar no Jarvis", lambda: send_manual_kills(force=True), "accent"),
+            ("Salvar", lambda: send_manual_kills(force=True), "accent"),
             ("Zerar", reset_manual_kills, "ghost"),
-            ("Limpar", clear_manual_table, "danger"),
-            ("Salvar", save_form, "ghost"),
-            ("Minimizar", hide_window, "default"),
-            ("Sair", close_app, "danger"),
         ],
+        columns=3,
     )
 
     grid_action_buttons(

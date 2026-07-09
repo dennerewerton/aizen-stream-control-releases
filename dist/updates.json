@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.72",
-    "notes":  "Atualizacao v2.6.72: move configuracoes de Lancamento de Kills FF para a aba Geral e limpa a aba Kills FF.",
+    "version":  "2.6.73",
+    "notes":  "Atualizacao v2.6.73: simplifica o painel Kills FF, adiciona busca de jogadores ja lancados ao adicionar e permite zerar diario ou geral.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.72/AizenStreamControl.exe",
-                    "sha256":  "7cbada59cb80253b32d3f75d7ed44dadfac2f4c7ae5feacaf981ab6cf498aa28"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.73/AizenStreamControl.exe",
+                    "sha256":  "545cd788193e3954461a7b770f0a0f58fe544fbde206e6b72b9baf93b6071652"
                 }
 }
