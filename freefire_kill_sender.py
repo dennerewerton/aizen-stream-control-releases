@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.74"
+APP_VERSION = "2.6.75"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -59,8 +59,9 @@ DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
 WINSOCK_CLEAN_RESTART_ENV = "AIZEN_WINSOCK_CLEAN_RESTARTED"
 TIKFINITY_DIRECT_SEND_WAIT_SECONDS = 12.0
 TIKFINITY_DIRECT_CHATBOT_HINT = (
-    "Se nao aparecer na live, ative no TikFinity: Chatbot > Settings > "
-    "Allow Streamer.bot to push messages to TikFinity."
+    "Se nao aparecer na live, confirme no TikFinity: Chatbot > Settings > "
+    "Allow Streamer.bot to push messages to TikFinity. Se ja estiver ativo, desconecte e conecte "
+    "novamente a conexao Streamer.bot no TikFinity."
 )
 BOT_DELIVERY_TIKFINITY_DIRECT = "tikfinity_direct"
 BOT_DELIVERY_STREAMERBOT_WEBSOCKET = "streamerbot_websocket"
@@ -78,6 +79,26 @@ LIVE_CHAT_TEXT_FIELDS = (
     "commandParams",
     "command",
 )
+
+
+def live_chat_emote_comment(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    emotes = payload.get("emotes")
+    if not isinstance(emotes, list):
+        emotes = data.get("emotes")
+    if not isinstance(emotes, list) or not emotes:
+        return ""
+    visible = []
+    for item in emotes[:8]:
+        if isinstance(item, dict):
+            visible.append(_first_text(item.get("name"), item.get("emoteName"), item.get("shortCode"), item.get("code")) or "[emote]")
+        else:
+            visible.append(str(item) or "[emote]")
+    if len(emotes) > len(visible):
+        visible.append(f"+{len(emotes) - len(visible)}")
+    return " ".join(visible) or "[emote]"
 
 THEME_SCHEMA_VERSION = "2026.2"
 LEGACY_AIZEN_RED_THEME = {
@@ -725,6 +746,7 @@ def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessa
                 data.get("comment"),
                 data.get("message"),
                 data.get("text"),
+                live_chat_emote_comment(payload),
             )
         )
         if not has_comment:
@@ -752,6 +774,8 @@ def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessa
         data.get("commandParams"),
         data.get("command"),
     )
+    if not comment:
+        comment = live_chat_emote_comment(payload)
     username = _first_text(
         payload.get("nickname"),
         payload.get("displayName"),
@@ -785,8 +809,25 @@ def normalize_live_chat_payload(payload: Any, source: str = "") -> LiveChatMessa
         user_details.get("username"),
         user_details.get("uniqueId"),
     )
-    if not username or not comment:
+    if not comment:
         return None
+    if not username:
+        username = _first_text(
+            payload.get("userId"),
+            payload.get("userid"),
+            payload.get("user_id"),
+            data.get("userId"),
+            data.get("userid"),
+            data.get("user_id"),
+            user.get("userId"),
+            user.get("userid"),
+            user.get("id"),
+            author.get("userId"),
+            author.get("id"),
+            user_details.get("userId"),
+            user_details.get("id"),
+            "TikTok",
+        )
 
     user_id = _first_text(
         payload.get("userId"),
@@ -2352,7 +2393,34 @@ def send_streamerbot_action_websocket(
 def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> str:
     if bridge_server is None:
         raise RuntimeError("A ponte direta do TikFinity nao foi iniciada.")
-    payload = {"action": "sendChatbotMessage", "args": args}
+    message = re.sub(r"\s+", " ", str(args.get("message") or args.get("text") or "")).strip()
+    username = str(args.get("username") or args.get("user") or "Aizen").strip() or "Aizen"
+    event_data = dict(args)
+    event_data.update(
+        {
+            "name": "sendChatbotMessage",
+            "action": "sendChatbotMessage",
+            "message": message,
+            "text": message,
+            "content": message,
+            "username": username,
+            "user": username,
+            "nick": username,
+            "args": args,
+        }
+    )
+    payload = {
+        "timeStamp": datetime.now().isoformat(timespec="milliseconds"),
+        "event": {"source": "General", "type": "Custom"},
+        "source": "General",
+        "type": "Custom",
+        "action": "sendChatbotMessage",
+        "request": "sendChatbotMessage",
+        "message": message,
+        "text": message,
+        "args": args,
+        "data": event_data,
+    }
     delivered = bridge_server.broadcast_json(payload)
     deadline = time.time() + TIKFINITY_DIRECT_SEND_WAIT_SECONDS
     while delivered <= 0 and time.time() < deadline:

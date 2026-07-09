@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.74",
-    "notes":  "Livepix: historico visual dos ultimos recebidos, sincronizacao automatica ao abrir e dashboard com dados completos da conta.",
+    "version":  "2.6.75",
+    "notes":  "TikFinity: corrige leitura de chats com emotes e envia respostas do bot como evento Streamer.bot General Custom.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.74/AizenStreamControl.exe",
-                    "sha256":  "85c2950f765d1d8e85cb18677479cab815c28d1a4fbe855697bf56920e26f62f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.75/AizenStreamControl.exe",
+                    "sha256":  "ed17a1adb2c9abb15ec47a46c9da66ed77f4450f7bc8243970ec3744ec7d52c0"
                 }
 }
