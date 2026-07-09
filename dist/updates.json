@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.55",
-    "notes":  "Adiciona fallback interno de DNS para endpoints LivePix.",
+    "version":  "2.6.56",
+    "notes":  "Corrige comandos com Chat Ao Vivo oculto e melhora erro de Streamer.bot fechado.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.55/AizenStreamControl.exe",
-                    "sha256":  "c73f27476ca7829917fe7db74daa96734a8471d6e328d3641032a09c8779da4f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.56/AizenStreamControl.exe",
+                    "sha256":  "19ff4004237d1273ee4dc377683a825f62949511183cea869ea532599a4828ec"
                 }
 }

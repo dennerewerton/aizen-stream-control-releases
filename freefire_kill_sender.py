@@ -48,7 +48,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.55"
+APP_VERSION = "2.6.56"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1561,7 +1561,15 @@ def send_streamerbot_action_http(
 ) -> str:
     base_url = normalize_streamerbot_http_url(http_url)
     payload = streamerbot_action_payload(action_name, action_id, args)
-    response = requests.post(f"{base_url}/DoAction", json=payload, timeout=8)
+    try:
+        response = requests.post(f"{base_url}/DoAction", json=payload, timeout=8)
+    except requests.ConnectionError as exc:
+        raise RuntimeError(
+            f"Nao consegui conectar no Streamer.bot HTTP em {base_url}. "
+            "Abra o Streamer.bot e ative o HTTP Server nessa porta."
+        ) from exc
+    except requests.Timeout as exc:
+        raise RuntimeError(f"Streamer.bot HTTP em {base_url} nao respondeu a tempo.") from exc
     if response.status_code not in {200, 202, 204}:
         raise RuntimeError(f"Streamer.bot HTTP respondeu {response.status_code}: {response.text[:180]}")
     return "Streamer.bot HTTP OK"
@@ -1588,7 +1596,13 @@ def send_streamerbot_action_websocket(
         "action": payload["action"],
         "args": payload["args"],
     }
-    ws = websocket.create_connection(url, timeout=8, http_no_proxy=["localhost", "127.0.0.1", "::1"])
+    try:
+        ws = websocket.create_connection(url, timeout=8, http_no_proxy=["localhost", "127.0.0.1", "::1"])
+    except Exception as exc:
+        raise RuntimeError(
+            f"Nao consegui conectar no Streamer.bot WebSocket em {url}. "
+            "Abra o Streamer.bot e confirme Servers > WebSocket Server na porta 8080."
+        ) from exc
     try:
         try:
             hello_raw = ws.recv()
@@ -4850,7 +4864,8 @@ def run_gui(config_path: Path) -> int:
     hidden_main_tabs = {"Kills FF", "Fila FF", "Chat Ao Vivo"}
     kills_ff_site_sync_hidden = "Kills FF" in hidden_main_tabs
     ff_queue_site_sync_hidden = "Fila FF" in hidden_main_tabs
-    chat_listener_hidden = "Chat Ao Vivo" in hidden_main_tabs
+    chat_tab_hidden = "Chat Ao Vivo" in hidden_main_tabs
+    chat_listener_hidden = False
     ff_overlay_site_sync_hidden = kills_ff_site_sync_hidden and ff_queue_site_sync_hidden
     config_auto_save_after_id: str | None = None
     config_auto_save_running = False
@@ -10491,7 +10506,7 @@ def run_gui(config_path: Path) -> int:
         if not silent:
             log("Leitor de chat parado.")
 
-    def start_chat_listener() -> None:
+    def start_chat_listener(open_monitor: bool = True) -> None:
         nonlocal chat_webhook_server, chat_websocket_worker
         if chat_listener_hidden:
             chat_status_var.set("Desativado")
@@ -10523,7 +10538,8 @@ def run_gui(config_path: Path) -> int:
                 chat_webhook_server = server
                 chat_status_var.set("Webhook ativo")
             update_chat_endpoint_text()
-            open_chat_monitor_window()
+            if open_monitor:
+                open_chat_monitor_window()
         except Exception as exc:
             chat_status_var.set("Erro")
             messagebox.showerror("Chat ao vivo", str(exc))
@@ -14840,7 +14856,18 @@ def run_gui(config_path: Path) -> int:
         manual_source_var.set(local_name)
         ff_queue_source_var.set(local_name)
 
+    def ensure_chat_listener_for_bot(*_args: Any) -> None:
+        if app_closing:
+            return
+        if not (chat_commands_enabled_var.get() or chat_timers_enabled_var.get()):
+            return
+        if chat_webhook_server is not None or chat_websocket_worker is not None:
+            return
+        start_chat_listener(open_monitor=False)
+
     device_name_var.trace_add("write", update_local_source_labels)
+    chat_commands_enabled_var.trace_add("write", ensure_chat_listener_for_bot)
+    chat_timers_enabled_var.trace_add("write", ensure_chat_listener_for_bot)
     pump_log()
     if not (kills_ff_site_sync_hidden and ff_overlay_site_sync_hidden):
         pump_sync_queue()
@@ -14861,6 +14888,8 @@ def run_gui(config_path: Path) -> int:
     if not ff_queue_site_sync_hidden:
         schedule_ff_queue_poll()
     update_chat_endpoint_text()
+    if chat_commands_enabled_var.get() or chat_timers_enabled_var.get():
+        root.after(700, lambda: ensure_chat_listener_for_bot())
     apply_chat_overlay_settings()
     refresh_chat_messages(force=True)
     refresh_participant_list([])
@@ -14869,7 +14898,7 @@ def run_gui(config_path: Path) -> int:
         refresh_kills_ignored_list()
     if not ff_queue_site_sync_hidden:
         apply_tikfinity_ff_state({})
-    log("Sincronizacoes de Kills FF, Fila FF e Chat Ao Vivo desativadas por abas ocultas.")
+    log("Abas Kills FF, Fila FF e Chat Ao Vivo ocultas; backends necessarios seguem ativos.")
     root.mainloop()
     return 0
 
