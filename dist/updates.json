@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.75",
-    "notes":  "TikFinity: corrige leitura de chats com emotes e envia respostas do bot como evento Streamer.bot General Custom.",
+    "version":  "2.6.76",
+    "notes":  "TikFinity: melhora reconexao do leitor de chat apos teste do bot e corrige logs de eventos ignorados.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.75/AizenStreamControl.exe",
-                    "sha256":  "ed17a1adb2c9abb15ec47a46c9da66ed77f4450f7bc8243970ec3744ec7d52c0"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.76/AizenStreamControl.exe",
+                    "sha256":  "878b6a0b91db26b833f277b131b120cdcdf30435bd29f1e859b3be160bacf59a"
                 }
 }

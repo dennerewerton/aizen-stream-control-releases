@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.75"
+APP_VERSION = "2.6.76"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -2467,6 +2467,7 @@ class ChatWebSocketWorker:
         self.chat_event_count = 0
         self.other_event_count = 0
         self.config_event_logged = False
+        self.last_chat_at = 0.0
         self.windows_helper_unavailable_reason = ""
 
     def start(self) -> None:
@@ -2476,6 +2477,7 @@ class ChatWebSocketWorker:
         self.chat_event_count = 0
         self.other_event_count = 0
         self.config_event_logged = False
+        self.last_chat_at = 0.0
         self.thread = threading.Thread(target=self._run, name="AizenChatWebSocket", daemon=True)
         self.thread.start()
 
@@ -2513,6 +2515,7 @@ class ChatWebSocketWorker:
                     self.chat_event_count = 0
                     self.other_event_count = 0
                     self.config_event_logged = False
+                    self.last_chat_at = 0.0
                     self.log("WebSocket do TikFinity conectado. Aguardando mensagens do chat.")
 
                     def warn_if_no_chat() -> None:
@@ -2541,13 +2544,21 @@ class ChatWebSocketWorker:
                             if not is_live_chat_event_payload(event):
                                 self.other_event_count += 1
                                 if self.other_event_count in {1, 50, 200}:
-                                    self.log(
-                                        "Recebendo eventos do TikFinity, mas ainda sem chat "
-                                        f"({self.other_event_count} eventos de live ignorados)."
-                                    )
+                                    if self.chat_event_count == 0:
+                                        self.log(
+                                            "Recebendo eventos do TikFinity, mas ainda sem chat "
+                                            f"({self.other_event_count} eventos de live ignorados)."
+                                        )
+                                    else:
+                                        self.log(
+                                            "Chat TikFinity segue conectado; "
+                                            f"{self.other_event_count} eventos de live sem mensagem foram ignorados."
+                                        )
                                 continue
 
+                            was_waiting_for_first_chat = self.chat_event_count == 0
                             self.chat_event_count += 1
+                            self.last_chat_at = time.time()
                             message = normalize_live_chat_payload(event, "TikFinity WebSocket")
                             if message is None:
                                 self.log(
@@ -2556,7 +2567,9 @@ class ChatWebSocketWorker:
                                 )
                                 self.callback(event, "TikFinity WebSocket")
                                 continue
-                            if self.chat_event_count <= 3:
+                            if was_waiting_for_first_chat:
+                                self.log(f"Chat TikFinity reconhecido: {message.username}: {message.comment[:80]}")
+                            elif self.chat_event_count <= 3:
                                 self.log(f"Chat TikFinity recebido: {message.username}: {message.comment[:80]}")
                             self.callback(message, "TikFinity WebSocket")
 
@@ -12932,11 +12945,13 @@ def run_gui(config_path: Path) -> int:
                 if detail_text.startswith("TikFinity recebeu pacote"):
                     bot_status_var.set("Entregue ao TikFinity")
                     log(f"Bot entregue ao TikFinity: {message_preview}")
+                    root.after(1200, ensure_chat_listener_for_bot)
                     if bool(payload.get("test")):
                         log(detail_text)
                 else:
                     bot_status_var.set("Enviado")
                     log(f"Bot respondeu na live: {message_preview}")
+                    root.after(1200, ensure_chat_listener_for_bot)
             else:
                 bot_status_var.set("Erro")
                 log(f"Erro ao enviar resposta do bot: {detail}")
@@ -16222,12 +16237,23 @@ def run_gui(config_path: Path) -> int:
         ff_queue_source_var.set(local_name)
 
     def ensure_chat_listener_for_bot(*_args: Any) -> None:
+        nonlocal chat_websocket_worker
         if app_closing:
             return
         if not (chat_commands_enabled_var.get() or chat_timers_enabled_var.get()):
             return
-        if chat_webhook_server is not None or chat_websocket_worker is not None:
+        if chat_webhook_server is not None:
             return
+        if chat_websocket_worker is not None:
+            worker_thread = chat_websocket_worker.thread
+            if worker_thread is not None and worker_thread.is_alive():
+                return
+            log("Leitor de chat WebSocket parou; reiniciando automaticamente.")
+            try:
+                chat_websocket_worker.stop()
+            except Exception:
+                pass
+            chat_websocket_worker = None
         start_chat_listener(open_monitor=False)
 
     def ensure_bot_runtime(*_args: Any) -> None:
