@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.68"
+APP_VERSION = "2.6.69"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -58,6 +58,10 @@ DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
 WINSOCK_CLEAN_RESTART_ENV = "AIZEN_WINSOCK_CLEAN_RESTARTED"
 TIKFINITY_DIRECT_SEND_WAIT_SECONDS = 12.0
+TIKFINITY_DIRECT_CHATBOT_HINT = (
+    "Se nao aparecer na live, ative no TikFinity: Chatbot > Settings > "
+    "Allow Streamer.bot to push messages to TikFinity."
+)
 BOT_DELIVERY_TIKFINITY_DIRECT = "tikfinity_direct"
 BOT_DELIVERY_STREAMERBOT_WEBSOCKET = "streamerbot_websocket"
 BOT_DELIVERY_STREAMERBOT_HTTP = "streamerbot_http"
@@ -1954,6 +1958,8 @@ class TikfinityDirectBridgeServer:
         request = str(message.get("request") or message.get("event") or message.get("action") or "").strip()
         if request:
             self._log(f"TikFinity ponte recebeu request Streamer.bot: {request}.")
+            if request.casefold() == "subscribe":
+                self._log(f"TikFinity assinou eventos Streamer.bot: {compact_json_preview(message.get('events') or message, 260)}")
         if request_id:
             try:
                 self.send_json_to_client(client, self.streamerbot_response_for_request(message))
@@ -2125,7 +2131,7 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
             "no TikFinity, confira Setup > Streamer.bot Connection apontando para esse endereco."
         )
     suffix = "conexao" if delivered == 1 else "conexoes"
-    return f"TikFinity direto OK ({delivered} {suffix})"
+    return f"TikFinity recebeu pacote do bot ({delivered} {suffix}). {TIKFINITY_DIRECT_CHATBOT_HINT}"
 
 
 def send_chatbot_message_via_streamerbot(settings: dict[str, Any], args: dict[str, Any]) -> str:
@@ -12461,8 +12467,16 @@ def run_gui(config_path: Path) -> int:
             update_bot_queue_count()
             if ok:
                 bot_last_sent_var.set(datetime.now().strftime("%H:%M:%S"))
-                bot_status_var.set("Enviado")
-                log(f"Bot respondeu na live: {payload.get('message', '')[:140]}")
+                detail_text = str(detail or "")
+                message_preview = str(payload.get("message", ""))[:140]
+                if detail_text.startswith("TikFinity recebeu pacote"):
+                    bot_status_var.set("Entregue ao TikFinity")
+                    log(f"Bot entregue ao TikFinity: {message_preview}")
+                    if bool(payload.get("test")):
+                        log(detail_text)
+                else:
+                    bot_status_var.set("Enviado")
+                    log(f"Bot respondeu na live: {message_preview}")
             else:
                 bot_status_var.set("Erro")
                 log(f"Erro ao enviar resposta do bot: {detail}")
