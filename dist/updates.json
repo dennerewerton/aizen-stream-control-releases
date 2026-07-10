@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.83",
-    "notes":  "Comandos: envio TikFinity direto agora confirma se a resposta apareceu no chat e reenvia uma vez se necessario.",
+    "version":  "2.6.84",
+    "notes":  "Livepix: sincronizacao busca paginas extras de pagamentos, mensagens, transacoes e recebiveis; status parcial agora mostra a causa.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.83/AizenStreamControl.exe",
-                    "sha256":  "f2099ea6ff867a8852de6e310388317088f50f7db384dec0d79a73ea4572e59e"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.84/AizenStreamControl.exe",
+                    "sha256":  "965bfbaeb6f3b2adc6201b2ac753144f9819b6f4cc60669a7bab195e4354c08f"
                 }
 }

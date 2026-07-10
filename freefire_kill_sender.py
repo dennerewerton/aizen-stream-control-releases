@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.83"
+APP_VERSION = "2.6.84"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -13668,6 +13668,15 @@ def run_gui(config_path: Path) -> int:
     def livepix_payload_items(payload: Any) -> list[dict[str, Any]]:
         if not isinstance(payload, dict):
             return []
+        pages = payload.get("pages")
+        if isinstance(pages, list):
+            items: list[dict[str, Any]] = []
+            for page_payload in pages:
+                items.extend(livepix_payload_items(page_payload))
+            return items
+        packaged_items = payload.get("items")
+        if isinstance(packaged_items, list):
+            return [item for item in packaged_items if isinstance(item, dict)]
         data = payload.get("data", [])
         if isinstance(data, list):
             return [item for item in data if isinstance(item, dict)]
@@ -13702,8 +13711,12 @@ def run_gui(config_path: Path) -> int:
         return [item for item in values if isinstance(item, dict)]
 
     def livepix_total_amount_from_payload(payload: Any) -> int:
+        if isinstance(payload, list):
+            return max((livepix_total_amount_from_payload(item) for item in payload), default=0)
         if not isinstance(payload, dict):
             return 0
+        pages = payload.get("pages")
+        page_total = livepix_total_amount_from_payload(pages) if isinstance(pages, list) else 0
         paths = (
             ("totalReceived",),
             ("receivedTotal",),
@@ -13742,7 +13755,124 @@ def run_gui(config_path: Path) -> int:
             ("data", "summary", "totalAmount"),
             ("data", "totals", "amount"),
         )
-        return max(livepix_mapping_amount(payload, (path,)) for path in paths)
+        return max(page_total, *(livepix_mapping_amount(payload, (path,)) for path in paths))
+
+    def livepix_payload_count_hint(payload: Any) -> int:
+        if not isinstance(payload, dict):
+            return 0
+        paths = (
+            ("totalCount",),
+            ("totalItems",),
+            ("itemCount",),
+            ("countTotal",),
+            ("recordsTotal",),
+            ("pagination", "totalCount"),
+            ("pagination", "totalItems"),
+            ("pagination", "itemCount"),
+            ("pagination", "total"),
+            ("meta", "totalCount"),
+            ("meta", "totalItems"),
+            ("meta", "itemCount"),
+            ("data", "totalCount"),
+            ("data", "totalItems"),
+            ("data", "pagination", "totalCount"),
+            ("data", "pagination", "totalItems"),
+        )
+        for path in paths:
+            try:
+                value = int(livepix_first_value(payload, (path,), 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return 0
+
+    def livepix_next_cursor(payload: Any) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        value = livepix_first_value(
+            payload,
+            (
+                ("nextCursor",),
+                ("cursor", "next"),
+                ("pagination", "nextCursor"),
+                ("pagination", "cursor"),
+                ("meta", "nextCursor"),
+                ("data", "nextCursor"),
+                ("data", "pagination", "nextCursor"),
+            ),
+            "",
+        )
+        return _first_text(value)
+
+    def livepix_payload_total_pages(payload: Any) -> int:
+        if not isinstance(payload, dict):
+            return 0
+        paths = (
+            ("totalPages",),
+            ("pages",),
+            ("pageCount",),
+            ("pagination", "totalPages"),
+            ("pagination", "pages"),
+            ("meta", "totalPages"),
+            ("meta", "pages"),
+            ("data", "totalPages"),
+            ("data", "pagination", "totalPages"),
+        )
+        for path in paths:
+            try:
+                value = int(livepix_first_value(payload, (path,), 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return 0
+
+    def livepix_payload_has_more(payload: Any, item_count: int, limit: int, page: int) -> bool:
+        if not isinstance(payload, dict):
+            return item_count >= limit
+        explicit = livepix_first_value(
+            payload,
+            (
+                ("hasMore",),
+                ("hasNext",),
+                ("hasNextPage",),
+                ("pagination", "hasMore"),
+                ("pagination", "hasNext"),
+                ("pagination", "hasNextPage"),
+                ("meta", "hasMore"),
+                ("data", "pagination", "hasMore"),
+            ),
+        )
+        if isinstance(explicit, bool):
+            return explicit
+        total_pages = livepix_payload_total_pages(payload)
+        if total_pages:
+            return page < total_pages
+        total_count = livepix_payload_count_hint(payload)
+        if total_count:
+            return item_count < total_count
+        return item_count >= limit
+
+    def livepix_collection_item_key(item: Any, fallback: int) -> str:
+        if not isinstance(item, dict):
+            return f"fallback:{fallback}"
+        key = livepix_first_text_from(
+            item,
+            (
+                ("id",),
+                ("uuid",),
+                ("reference",),
+                ("transactionId",),
+                ("paymentId",),
+                ("messageId",),
+                ("resource", "id"),
+                ("data", "id"),
+            ),
+        )
+        if key:
+            return key
+        return f"payload:{hashlib.sha1(json.dumps(item, sort_keys=True, ensure_ascii=False, default=str).encode('utf-8')).hexdigest()}"
 
     def livepix_wallet_current_total(wallet_item: Any) -> int:
         if not isinstance(wallet_item, dict):
@@ -14035,19 +14165,77 @@ def run_gui(config_path: Path) -> int:
                         sync_errors.append(f"{label}: {livepix_error_detail(exc)}")
                         return fallback
 
+                def fetch_livepix_collection(label: str, path: str, limit: int = 100, max_pages: int = 12) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                    first_payload = try_livepix(label, lambda: client.request("GET", path, params={"limit": limit}), {})
+                    if not isinstance(first_payload, dict):
+                        return {}, []
+                    pages: list[dict[str, Any]] = [first_payload]
+                    items = livepix_payload_items(first_payload)
+                    seen = {livepix_collection_item_key(item, index) for index, item in enumerate(items)}
+                    cursor = livepix_next_cursor(first_payload)
+                    page = 1
+                    while page < max_pages and livepix_payload_has_more(pages[-1], len(items), limit, page):
+                        page += 1
+                        params = {"limit": limit}
+                        if cursor:
+                            params["cursor"] = cursor
+                        else:
+                            params["page"] = page
+                        try:
+                            page_payload = client.request("GET", path, params=params)
+                        except Exception as exc:
+                            sync_errors.append(f"{label}: pagina {page} falhou: {livepix_error_detail(exc)}")
+                            break
+                        page_items = livepix_payload_items(page_payload)
+                        fresh_items: list[dict[str, Any]] = []
+                        for index, item in enumerate(page_items, start=len(items)):
+                            key = livepix_collection_item_key(item, index)
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            fresh_items.append(item)
+                        if not fresh_items and len(page_items) >= limit and not cursor and page == 2:
+                            try:
+                                page_payload = client.request("GET", path, params={"limit": limit, "offset": len(items)})
+                                page_items = livepix_payload_items(page_payload)
+                                fresh_items = []
+                                for index, item in enumerate(page_items, start=len(items)):
+                                    key = livepix_collection_item_key(item, index)
+                                    if key in seen:
+                                        continue
+                                    seen.add(key)
+                                    fresh_items.append(item)
+                            except Exception:
+                                pass
+                        if not fresh_items:
+                            expected_total = livepix_payload_count_hint(pages[0])
+                            expected_pages = livepix_payload_total_pages(pages[0])
+                            if expected_total > len(items) or (expected_pages and page <= expected_pages) or cursor:
+                                sync_errors.append(
+                                    f"{label}: API indicou mais registros, mas a pagina {page} nao trouxe itens novos"
+                                )
+                            break
+                        pages.append(page_payload if isinstance(page_payload, dict) else {})
+                        items.extend(fresh_items)
+                        cursor = livepix_next_cursor(page_payload)
+                        time.sleep(0.15)
+                    if page >= max_pages and livepix_payload_has_more(pages[-1], len(items), limit, page):
+                        sync_errors.append(f"{label}: limite interno de {max_pages} paginas atingido; total pode estar parcial")
+                    return {"pages": pages, "items": items, "count": len(items)}, items
+
                 account_payload = try_livepix("conta", lambda: client.request("GET", "/account"), {})
                 account_data = account_payload.get("data", {}) if isinstance(account_payload, dict) else {}
                 account = account_data if isinstance(account_data, dict) else {}
-                payments_payload = try_livepix("pagamentos", lambda: client.request("GET", "/payments", params={"limit": 100}), {})
+                payments_payload, payment_items = fetch_livepix_collection("pagamentos", "/payments")
                 payments = [
                     event
-                    for item in livepix_payload_items(payments_payload)
+                    for item in payment_items
                     if (event := parse_livepix_event(item, "payment", "api"))
                 ]
-                messages_payload = try_livepix("mensagens", lambda: client.request("GET", "/messages", params={"limit": 100}), {})
+                messages_payload, message_items = fetch_livepix_collection("mensagens", "/messages")
                 messages = [
                     event
-                    for item in livepix_payload_items(messages_payload)
+                    for item in message_items
                     if (event := parse_livepix_event(item, "message", "api"))
                 ]
                 wallet_payload = try_livepix("carteira", lambda: client.request("GET", "/wallet"), {})
@@ -14066,20 +14254,26 @@ def run_gui(config_path: Path) -> int:
                     ("subscriptions", client.subscriptions),
                     ("rewards", client.rewards),
                     ("webhooks", client.webhooks),
-                    ("transactions", lambda: client.request("GET", f"/wallet/{selected_currency}/transactions", params={"limit": 100})),
-                    ("receivables", lambda: client.request("GET", f"/wallet/{selected_currency}/receivables", params={"limit": 100})),
                 ):
                     try:
                         result = getter()
-                        if name in {"transactions", "receivables"}:
-                            raw_payloads[name] = result if isinstance(result, dict) else {}
-                            extras[name] = livepix_payload_items(result)
-                        else:
-                            extras[name] = result
+                        extras[name] = result
                     except Exception as exc:
                         detail = livepix_error_detail(exc)
                         extras[name] = f"erro: {detail}"
                         sync_errors.append(f"{name}: {detail}")
+                transactions_payload, transaction_items = fetch_livepix_collection(
+                    "transacoes",
+                    f"/wallet/{selected_currency}/transactions",
+                )
+                receivables_payload, receivable_items = fetch_livepix_collection(
+                    "recebiveis",
+                    f"/wallet/{selected_currency}/receivables",
+                )
+                raw_payloads["transactions"] = transactions_payload
+                raw_payloads["receivables"] = receivables_payload
+                extras["transactions"] = transaction_items
+                extras["receivables"] = receivable_items
                 reward_grants: list[dict[str, Any]] = []
                 if isinstance(extras.get("rewards"), list):
                     for reward in extras["rewards"]:
@@ -14467,14 +14661,19 @@ def run_gui(config_path: Path) -> int:
                         parts.append(f"avisos: {'; '.join(str(item) for item in errors[:3])}")
                     livepix_extra_var.set(" | ".join(parts) if parts else "-")
                 added = merge_livepix_events(events if isinstance(events, list) else [])
-                critical_prefixes = ("conta:", "pagamentos:", "mensagens:", "carteira:")
+                critical_prefixes = ("conta:", "pagamentos:", "mensagens:", "carteira:", "transacoes:", "recebiveis:")
                 critical_errors = [
                     str(item)
                     for item in errors
                     if str(item).casefold().startswith(critical_prefixes)
                 ] if isinstance(errors, list) else []
                 if critical_errors:
-                    livepix_status_var.set("Parcial")
+                    failed_parts = []
+                    for item in critical_errors:
+                        part = str(item).split(":", 1)[0].strip()
+                        if part and part not in failed_parts:
+                            failed_parts.append(part)
+                    livepix_status_var.set(f"Parcial: {', '.join(failed_parts[:2])}"[:34] if failed_parts else "Parcial")
                     log(f"Livepix sincronizado parcialmente: {'; '.join(critical_errors[:6])}")
                 else:
                     livepix_status_var.set(f"Sincronizado (+{added})")
