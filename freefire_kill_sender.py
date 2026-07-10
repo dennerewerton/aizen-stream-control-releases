@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.80"
+APP_VERSION = "2.6.81"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6364,6 +6364,12 @@ def run_gui(config_path: Path) -> int:
     livepix_extra_var = tk.StringVar(value="-")
     livepix_ranking_var = tk.StringVar(value="-")
     livepix_endpoint_var = tk.StringVar(value="")
+    livepix_values_visible_var = tk.BooleanVar(value=False)
+    livepix_account_display_var = tk.StringVar(value="-")
+    livepix_total_display_var = tk.StringVar(value="••••")
+    livepix_balance_display_var = tk.StringVar(value="••••")
+    livepix_pending_display_var = tk.StringVar(value="••••")
+    livepix_count_display_var = tk.StringVar(value="••••")
     livepix_checkout_amount_var = tk.StringVar(
         value=str(int(config.get("livepix_checkout_amount", 1000)) / 100).replace(".", ",")
     )
@@ -13543,6 +13549,110 @@ def run_gui(config_path: Path) -> int:
             return 0
         return livepix_amount_cents(livepix_first_value(mapping, paths))
 
+    def livepix_metric_display(value: str) -> str:
+        clean = str(value or "").strip()
+        if livepix_values_visible_var.get() or clean in {"", "-"}:
+            return clean or "-"
+        return "••••"
+
+    def refresh_livepix_metric_visibility() -> None:
+        livepix_account_display_var.set(livepix_metric_display(livepix_account_var.get()))
+        livepix_total_display_var.set(livepix_metric_display(livepix_total_var.get()))
+        livepix_balance_display_var.set(livepix_metric_display(livepix_balance_var.get()))
+        livepix_pending_display_var.set(livepix_metric_display(livepix_pending_var.get()))
+        livepix_count_display_var.set(livepix_metric_display(livepix_count_var.get()))
+
+    def toggle_livepix_metric_visibility() -> None:
+        livepix_values_visible_var.set(not livepix_values_visible_var.get())
+        refresh_livepix_metric_visibility()
+
+    def livepix_payload_items(payload: Any) -> list[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return []
+        data = payload.get("data", [])
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        if isinstance(data, dict):
+            for key in ("items", "results", "records", "transactions", "payments", "messages"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+        return []
+
+    def livepix_wallet_items(payload: Any) -> list[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return []
+        values = []
+        data = payload.get("data")
+        if isinstance(data, list):
+            values = data
+        elif isinstance(data, dict):
+            for key in ("wallets", "balances", "items", "results", "records", "accounts"):
+                nested = data.get(key)
+                if isinstance(nested, list):
+                    values = nested
+                    break
+            else:
+                values = [data]
+        else:
+            for key in ("wallets", "balances", "items", "results", "records", "accounts"):
+                nested = payload.get(key)
+                if isinstance(nested, list):
+                    values = nested
+                    break
+        return [item for item in values if isinstance(item, dict)]
+
+    def livepix_total_amount_from_payload(payload: Any) -> int:
+        if not isinstance(payload, dict):
+            return 0
+        paths = (
+            ("totalReceived",),
+            ("receivedTotal",),
+            ("totalReceivedAmount",),
+            ("amountReceived",),
+            ("totalAmount",),
+            ("total_amount",),
+            ("amountTotal",),
+            ("amount_total",),
+            ("paidAmountTotal",),
+            ("grossAmountTotal",),
+            ("netAmountTotal",),
+            ("totalPaidAmount",),
+            ("totalGrossAmount",),
+            ("totalNetAmount",),
+            ("stats", "totalReceived"),
+            ("stats", "receivedTotal"),
+            ("stats", "totalAmount"),
+            ("summary", "totalReceived"),
+            ("summary", "receivedTotal"),
+            ("summary", "totalAmount"),
+            ("summary", "amount"),
+            ("totals", "received"),
+            ("totals", "totalReceived"),
+            ("totals", "amount"),
+            ("totals", "totalAmount"),
+            ("total", "amount"),
+            ("total", "value"),
+            ("meta", "totalAmount"),
+            ("metadata", "totalAmount"),
+            ("pagination", "totalAmount"),
+            ("data", "totalReceived"),
+            ("data", "receivedTotal"),
+            ("data", "totalAmount"),
+            ("data", "summary", "totalReceived"),
+            ("data", "summary", "totalAmount"),
+            ("data", "totals", "amount"),
+        )
+        return max(livepix_mapping_amount(payload, (path,)) for path in paths)
+
+    def livepix_wallet_current_total(wallet_item: Any) -> int:
+        if not isinstance(wallet_item, dict):
+            return 0
+        balance = livepix_mapping_amount(wallet_item, (("balance",), ("balanceAvailable",), ("available",)))
+        pending = livepix_mapping_amount(wallet_item, (("balancePending",), ("pending",), ("pendingBalance",)))
+        held = livepix_mapping_amount(wallet_item, (("balanceHeld",), ("held",), ("heldBalance",)))
+        return balance + pending + held
+
     def livepix_positive_amount_sum(items: Any) -> int:
         if not isinstance(items, list):
             return 0
@@ -13562,7 +13672,6 @@ def run_gui(config_path: Path) -> int:
                     ("grossAmount",),
                     ("netAmount",),
                     ("paidAmount",),
-                    ("balance",),
                 ),
             )
         return total
@@ -13571,33 +13680,19 @@ def run_gui(config_path: Path) -> int:
         candidates = [local_total]
         account = livepix_dashboard_state.get("account", {})
         extras = livepix_dashboard_state.get("extras", {})
+        raw = livepix_dashboard_state.get("raw", {})
         if isinstance(account, dict):
-            candidates.append(
-                livepix_mapping_amount(
-                    account,
-                    (
-                        ("totalReceived",),
-                        ("receivedTotal",),
-                        ("totalReceivedAmount",),
-                        ("amountReceived",),
-                        ("totalAmount",),
-                        ("total",),
-                        ("stats", "totalReceived"),
-                        ("stats", "receivedTotal"),
-                        ("summary", "totalReceived"),
-                        ("summary", "total"),
-                    ),
-                )
-            )
+            candidates.append(livepix_total_amount_from_payload(account))
         selected_wallet = livepix_selected_wallet()
         if selected_wallet:
-            balance = livepix_mapping_amount(selected_wallet, (("balance",), ("balanceAvailable",), ("available",)))
-            pending = livepix_mapping_amount(selected_wallet, (("balancePending",), ("pending",), ("pendingBalance",)))
-            held = livepix_mapping_amount(selected_wallet, (("balanceHeld",), ("held",), ("heldBalance",)))
-            candidates.append(balance + pending + held)
+            candidates.append(livepix_total_amount_from_payload(selected_wallet))
+            candidates.append(livepix_wallet_current_total(selected_wallet))
         if isinstance(extras, dict):
             candidates.append(livepix_positive_amount_sum(extras.get("transactions")))
             candidates.append(livepix_positive_amount_sum(extras.get("receivables")))
+        if isinstance(raw, dict):
+            for key in ("account", "payments", "messages", "wallet", "transactions", "receivables"):
+                candidates.append(livepix_total_amount_from_payload(raw.get(key)))
         return max(candidates) if candidates else local_total
 
     def refresh_livepix_dashboard() -> None:
@@ -13642,6 +13737,7 @@ def run_gui(config_path: Path) -> int:
         else:
             livepix_top_var.set("-")
             livepix_ranking_var.set("-")
+        refresh_livepix_metric_visibility()
         render_livepix_events()
         if livepix_overlay_frame is not None:
             render_livepix_overlay()
@@ -13840,23 +13936,47 @@ def run_gui(config_path: Path) -> int:
                         sync_errors.append(f"{label}: {livepix_error_detail(exc)}")
                         return fallback
 
-                account = try_livepix("conta", client.account, {})
-                payments = try_livepix("pagamentos", lambda: client.payments(limit=100), [])
-                messages = try_livepix("mensagens", lambda: client.messages(limit=100), [])
-                wallet = try_livepix("carteira", client.wallet, [])
+                account_payload = try_livepix("conta", lambda: client.request("GET", "/account"), {})
+                account_data = account_payload.get("data", {}) if isinstance(account_payload, dict) else {}
+                account = account_data if isinstance(account_data, dict) else {}
+                payments_payload = try_livepix("pagamentos", lambda: client.request("GET", "/payments", params={"limit": 100}), {})
+                payments = [
+                    event
+                    for item in livepix_payload_items(payments_payload)
+                    if (event := parse_livepix_event(item, "payment", "api"))
+                ]
+                messages_payload = try_livepix("mensagens", lambda: client.request("GET", "/messages", params={"limit": 100}), {})
+                messages = [
+                    event
+                    for item in livepix_payload_items(messages_payload)
+                    if (event := parse_livepix_event(item, "message", "api"))
+                ]
+                wallet_payload = try_livepix("carteira", lambda: client.request("GET", "/wallet"), {})
+                wallet = livepix_wallet_items(wallet_payload)
                 selected_currency = livepix_currency_var.get().strip().upper() or "BRL"
                 extras: dict[str, Any] = {}
+                raw_payloads: dict[str, Any] = {
+                    "account": account_payload if isinstance(account_payload, dict) else {},
+                    "payments": payments_payload if isinstance(payments_payload, dict) else {},
+                    "messages": messages_payload if isinstance(messages_payload, dict) else {},
+                    "wallet": wallet_payload if isinstance(wallet_payload, dict) else {},
+                }
                 for name, getter in (
                     ("currencies", client.currencies),
                     ("plans", client.plans),
                     ("subscriptions", client.subscriptions),
                     ("rewards", client.rewards),
                     ("webhooks", client.webhooks),
-                    ("transactions", lambda: client.wallet_transactions(selected_currency)),
-                    ("receivables", lambda: client.wallet_receivables(selected_currency)),
+                    ("transactions", lambda: client.request("GET", f"/wallet/{selected_currency}/transactions", params={"limit": 100})),
+                    ("receivables", lambda: client.request("GET", f"/wallet/{selected_currency}/receivables", params={"limit": 100})),
                 ):
                     try:
-                        extras[name] = getter()
+                        result = getter()
+                        if name in {"transactions", "receivables"}:
+                            raw_payloads[name] = result if isinstance(result, dict) else {}
+                            extras[name] = livepix_payload_items(result)
+                        else:
+                            extras[name] = result
                     except Exception as exc:
                         detail = livepix_error_detail(exc)
                         extras[name] = f"erro: {detail}"
@@ -13901,6 +14021,7 @@ def run_gui(config_path: Path) -> int:
                             "events": payments + messages + subscription_events + transaction_events + receivable_events,
                             "wallet": wallet,
                             "extras": extras,
+                            "raw": raw_payloads,
                             "errors": sync_errors,
                         },
                     )
@@ -14183,11 +14304,13 @@ def run_gui(config_path: Path) -> int:
                 events = payload.get("events", []) if isinstance(payload, dict) else []
                 wallet = payload.get("wallet", []) if isinstance(payload, dict) else []
                 extras = payload.get("extras", {}) if isinstance(payload, dict) else {}
+                raw = payload.get("raw", {}) if isinstance(payload, dict) else {}
                 errors = payload.get("errors", []) if isinstance(payload, dict) else []
                 livepix_dashboard_state = {
                     "account": account if isinstance(account, dict) else {},
                     "wallet": wallet if isinstance(wallet, list) else [],
                     "extras": extras if isinstance(extras, dict) else {},
+                    "raw": raw if isinstance(raw, dict) else {},
                     "synced_at": datetime.now().isoformat(timespec="seconds"),
                 }
                 display = livepix_first_text_from(
@@ -14215,9 +14338,9 @@ def run_gui(config_path: Path) -> int:
                         wallet[0] if wallet and isinstance(wallet[0], dict) else {},
                     )
                     if isinstance(selected_wallet, dict) and selected_wallet:
-                        balance = int(selected_wallet.get("balance", 0) or 0)
-                        pending = int(selected_wallet.get("balancePending", 0) or 0)
-                        held = int(selected_wallet.get("balanceHeld", 0) or 0)
+                        balance = livepix_mapping_amount(selected_wallet, (("balance",), ("balanceAvailable",), ("available",)))
+                        pending = livepix_mapping_amount(selected_wallet, (("balancePending",), ("pending",), ("pendingBalance",)))
+                        held = livepix_mapping_amount(selected_wallet, (("balanceHeld",), ("held",), ("heldBalance",)))
                         livepix_wallet_var.set(
                             f"{format_livepix_amount(balance, selected_wallet.get('currency', selected_currency))} "
                             f"(pendente {format_livepix_amount(pending, selected_wallet.get('currency', selected_currency))}, "
@@ -14245,11 +14368,20 @@ def run_gui(config_path: Path) -> int:
                         parts.append(f"avisos: {'; '.join(str(item) for item in errors[:3])}")
                     livepix_extra_var.set(" | ".join(parts) if parts else "-")
                 added = merge_livepix_events(events if isinstance(events, list) else [])
-                if isinstance(errors, list) and errors:
+                critical_prefixes = ("conta:", "pagamentos:", "mensagens:", "carteira:")
+                critical_errors = [
+                    str(item)
+                    for item in errors
+                    if str(item).casefold().startswith(critical_prefixes)
+                ] if isinstance(errors, list) else []
+                if critical_errors:
                     livepix_status_var.set("Parcial")
-                    log(f"Livepix sincronizado parcialmente: {'; '.join(str(item) for item in errors[:6])}")
+                    log(f"Livepix sincronizado parcialmente: {'; '.join(critical_errors[:6])}")
                 else:
                     livepix_status_var.set(f"Sincronizado (+{added})")
+                    if isinstance(errors, list) and errors:
+                        log(f"Livepix sincronizado com avisos opcionais: {'; '.join(str(item) for item in errors[:6])}")
+                refresh_livepix_dashboard()
             elif kind == "checkout":
                 url = _first_text(payload.get("redirectUrl"), payload.get("url")) if isinstance(payload, dict) else ""
                 if url:
@@ -16038,13 +16170,14 @@ def run_gui(config_path: Path) -> int:
     livepix_metrics.grid(row=0, column=0, sticky="ew", padx=0, pady=(12, 8))
     for column in range(6):
         livepix_metrics.columnconfigure(column, weight=1)
+    livepix_metrics.columnconfigure(6, weight=0)
     metric_specs = [
         ("Status", livepix_status_var, accent),
-        ("Conta", livepix_account_var, fg),
-        ("Total", livepix_total_var, teal),
-        ("Carteira", livepix_balance_var, teal),
-        ("Pendente", livepix_pending_var, blue),
-        ("Eventos", livepix_count_var, fg),
+        ("Conta", livepix_account_display_var, fg),
+        ("Total", livepix_total_display_var, teal),
+        ("Carteira", livepix_balance_display_var, teal),
+        ("Pendente", livepix_pending_display_var, blue),
+        ("Eventos", livepix_count_display_var, fg),
     ]
     for col, (label_text, variable, color) in enumerate(metric_specs):
         ctk.CTkLabel(livepix_metrics, text=label_text, text_color=muted, font=("Segoe UI", 11)).grid(
@@ -16053,6 +16186,15 @@ def run_gui(config_path: Path) -> int:
         ctk.CTkLabel(livepix_metrics, textvariable=variable, text_color=color, font=("Segoe UI Semibold", 16), anchor="w").grid(
             row=1, column=col, sticky="ew", padx=16, pady=(0, 14)
         )
+    button(livepix_metrics, "👁", toggle_livepix_metric_visibility, "ghost", width=42).grid(
+        row=0,
+        column=6,
+        rowspan=2,
+        sticky="e",
+        padx=(0, 14),
+        pady=14,
+    )
+    refresh_livepix_metric_visibility()
 
     livepix_events_card = card(livepix_right, "Últimos Livepix recebidos", "Histórico sincronizado da conta, pagamentos, mensagens e webhooks locais.")
     livepix_events_card.grid(row=1, column=0, sticky="nsew", pady=(8, 12))

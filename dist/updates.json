@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.80",
-    "notes":  "Comandos: corrige deteccao de comandos do chat TikFinity com mencao/caracteres invisiveis, melhora logs e permite cooldown 0.",
+    "version":  "2.6.81",
+    "notes":  "Livepix: dashboard inicia com valores ocultos por botao de olho e totais usam dados completos/resumos da conta quando disponiveis.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.80/AizenStreamControl.exe",
-                    "sha256":  "a74507b65dba1ad51c6235a741ca9fb21ae5874c5c5d3b79a8d34ac347ed8aa3"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.81/AizenStreamControl.exe",
+                    "sha256":  "843814c8b240e8cf773bd8e819ccf3051149da271f592fd400bef25aefc2f205"
                 }
 }
