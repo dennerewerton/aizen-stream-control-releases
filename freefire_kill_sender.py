@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.82"
+APP_VERSION = "2.6.83"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -2387,18 +2387,34 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
         raise RuntimeError("A ponte direta do TikFinity nao foi iniciada.")
     message = re.sub(r"\s+", " ", str(args.get("message") or args.get("text") or "")).strip()
     username = str(args.get("username") or args.get("user") or "Aizen").strip() or "Aizen"
+    event_name = str(args.get("eventName") or "sendChatbotMessage").strip() or "sendChatbotMessage"
     event_data = dict(args)
+    event_arguments = {
+        "message": message,
+        "text": message,
+        "content": message,
+        "chatMessage": message,
+        "username": username,
+        "user": username,
+        "nick": username,
+        "source": APP_NAME,
+        "deliveryId": str(args.get("deliveryId") or ""),
+    }
+    event_arguments.update(args)
     event_data.update(
         {
-            "name": "sendChatbotMessage",
-            "action": "sendChatbotMessage",
+            "name": event_name,
+            "eventName": event_name,
+            "action": event_name,
             "message": message,
             "text": message,
             "content": message,
+            "chatMessage": message,
             "username": username,
             "user": username,
             "nick": username,
-            "args": args,
+            "args": event_arguments,
+            "arguments": event_arguments,
         }
     )
     payload = {
@@ -2406,11 +2422,13 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
         "event": {"source": "General", "type": "Custom"},
         "source": "General",
         "type": "Custom",
-        "action": "sendChatbotMessage",
-        "request": "sendChatbotMessage",
+        "action": event_name,
+        "request": event_name,
         "message": message,
         "text": message,
-        "args": args,
+        "content": message,
+        "args": event_arguments,
+        "arguments": event_arguments,
         "data": event_data,
     }
     delivered = bridge_server.broadcast_json(payload)
@@ -6046,6 +6064,7 @@ def run_gui(config_path: Path) -> int:
     bot_send_result_queue: queue.Queue[tuple[bool, str, dict[str, Any]]] = queue.Queue()
     bot_command_last_sent: dict[str, float] = {}
     bot_command_last_missed: dict[str, float] = {}
+    bot_pending_confirmations: dict[str, dict[str, Any]] = {}
     bot_sending = False
     bot_next_allowed_at = 0.0
     app_closing = False
@@ -12019,6 +12038,32 @@ def run_gui(config_path: Path) -> int:
             return f"{message.platform}|{message.user_id}|{message.message_id}"
         return f"{message.platform}|{message.user_id}|{message.username}|{message.comment}|{message.received_at}"
 
+    def normalize_bot_confirmation_text(value: Any) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+    def bot_reply_seen_in_chat(text: str, start_index: int = 0) -> bool:
+        expected = normalize_bot_confirmation_text(text)
+        if not expected:
+            return False
+        recent_messages = chat_messages[max(0, start_index) :]
+        for chat_message in reversed(recent_messages[-80:]):
+            if normalize_bot_confirmation_text(chat_message.comment) == expected:
+                return True
+        return False
+
+    def confirm_bot_reply_from_chat(message: LiveChatMessage) -> None:
+        if not bot_pending_confirmations:
+            return
+        received = normalize_bot_confirmation_text(message.comment)
+        if not received:
+            return
+        for delivery_id, pending in list(bot_pending_confirmations.items()):
+            expected = normalize_bot_confirmation_text(pending.get("message"))
+            if expected and expected == received:
+                bot_pending_confirmations.pop(delivery_id, None)
+                bot_status_var.set("Confirmado na live")
+                log(f"Bot confirmado no chat: {message.username}: {message.comment[:120]}")
+
     def apply_window_clickthrough(window: Any, enabled: bool) -> None:
         if os.name != "nt":
             return
@@ -12383,6 +12428,7 @@ def run_gui(config_path: Path) -> int:
         chat_platform_var.set(message.platform or "-")
         chat_status_var.set("Recebendo chat")
 
+        confirm_bot_reply_from_chat(message)
         if raffle_worker is not None and getattr(raffle_worker, "source_mode", "browser") == "events":
             raffle_worker.handle_live_chat_event(message)
         handle_custom_chat_commands(message)
@@ -13151,6 +13197,8 @@ def run_gui(config_path: Path) -> int:
         if not response_text:
             return
         payload = {
+            "deliveryId": f"bot-{uuid.uuid4().hex}",
+            "attempt": 1,
             "message": response_text,
             "username": message.username,
             "user": message.username,
@@ -13166,6 +13214,55 @@ def run_gui(config_path: Path) -> int:
         update_bot_queue_count()
         bot_status_var.set("Na fila")
         log(f"Resposta do bot enfileirada: {response_text[:120]}")
+
+    def schedule_bot_delivery_confirmation(payload: dict[str, Any]) -> None:
+        delivery_id = str(payload.get("deliveryId") or f"bot-{uuid.uuid4().hex}")
+        payload["deliveryId"] = delivery_id
+        bot_pending_confirmations[delivery_id] = {
+            "message": str(payload.get("message") or ""),
+            "payload": payload,
+            "sent_at": time.time(),
+            "attempt": int(payload.get("attempt") or 1),
+            "chat_index": int(payload.get("sendChatIndex") or len(chat_messages)),
+        }
+        root.after(7000, lambda current_id=delivery_id: check_bot_delivery_confirmation(current_id))
+
+    def check_bot_delivery_confirmation(delivery_id: str) -> None:
+        nonlocal bot_next_allowed_at
+        if app_closing:
+            return
+        pending = bot_pending_confirmations.get(delivery_id)
+        if not pending:
+            return
+        message_text = str(pending.get("message") or "")
+        if bot_reply_seen_in_chat(message_text, int(pending.get("chat_index") or 0)):
+            bot_pending_confirmations.pop(delivery_id, None)
+            bot_status_var.set("Confirmado na live")
+            log(f"Bot confirmado no chat: {message_text[:120]}")
+            return
+        payload = dict(pending.get("payload") or {})
+        attempt = int(pending.get("attempt") or payload.get("attempt") or 1)
+        bot_pending_confirmations.pop(delivery_id, None)
+        if attempt < 2 and bot_delivery_method_key() == BOT_DELIVERY_TIKFINITY_DIRECT:
+            payload["attempt"] = attempt + 1
+            payload["retry"] = True
+            payload["deliveryId"] = f"bot-{uuid.uuid4().hex}"
+            stop_tikfinity_direct_bridge(silent=True)
+            bot_next_allowed_at = 0.0
+            bot_reply_queue.put(payload)
+            update_bot_queue_count()
+            bot_status_var.set("Reenviando")
+            log(
+                "TikFinity recebeu o pacote do bot, mas a mensagem nao apareceu no chat em 7s; "
+                "reiniciando a ponte direta e reenviando uma vez."
+            )
+            root.after(200, pump_bot_send_results)
+            return
+        bot_status_var.set("Sem confirmação")
+        log(
+            "TikFinity recebeu o pacote do bot, mas o app nao viu a mensagem voltar no chat. "
+            "No TikFinity, desconecte/conecte Setup > Streamer.bot Connection e teste novamente."
+        )
 
     def should_ignore_bot_user(message: LiveChatMessage) -> bool:
         ignored = bot_ignored_usernames()
@@ -13259,8 +13356,9 @@ def run_gui(config_path: Path) -> int:
                 detail_text = str(detail or "")
                 message_preview = str(payload.get("message", ""))[:140]
                 if detail_text.startswith("TikFinity recebeu pacote"):
-                    bot_status_var.set("Entregue ao TikFinity")
-                    log(f"Bot entregue ao TikFinity: {message_preview}")
+                    bot_status_var.set("Aguardando confirmação")
+                    log(f"Bot enviado ao TikFinity; aguardando aparecer no chat: {message_preview}")
+                    schedule_bot_delivery_confirmation(payload)
                     root.after(1200, ensure_chat_listener_for_bot)
                     if bool(payload.get("test")):
                         log(detail_text)
@@ -13302,6 +13400,7 @@ def run_gui(config_path: Path) -> int:
             return
 
         payload = bot_reply_queue.get_nowait()
+        payload["sendChatIndex"] = len(chat_messages)
         update_bot_queue_count()
         bot_sending = True
         bot_status_var.set("Enviando")
