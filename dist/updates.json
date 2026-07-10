@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.78",
-    "notes":  "TikFinity: corrige leitura do chat apos teste/reconexao, reconhece chats com emotes e remove aviso falso de 50 eventos ignorados.",
+    "version":  "2.6.79",
+    "notes":  "Kills FF: Salvar reforcado para gravar no Jarvis e rank manual reordena automaticamente por mais kills.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.78/AizenStreamControl.exe",
-                    "sha256":  "b0383b92708a847de7b1510a1376536c34ab8fc74ce168dee24ecc35aba3c4b5"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.79/AizenStreamControl.exe",
+                    "sha256":  "1d23a00d8f5b13394c98aa880c6221c50ca2ade430462676084fbc44282cfb1a"
                 }
 }

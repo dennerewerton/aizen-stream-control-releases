@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.78"
+APP_VERSION = "2.6.79"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4292,20 +4292,34 @@ def send_kills_snapshot_update(
     if token:
         headers["X-Aizen-Token"] = token
 
-    response = requests.post(
-        derive_kills_action_endpoint(endpoint_url),
-        json=payload,
-        headers=headers,
-        timeout=20,
-        allow_redirects=False,
-    )
-    if 300 <= response.status_code < 400:
-        location = response.headers.get("Location", "")
-        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
-    response.raise_for_status()
-    state = parse_realtime_state(response.text)
-    if kills_snapshot_matches_state(state, daily_players, general_players):
-        return state
+    snapshot_urls: list[str] = []
+    for candidate_url in (derive_kills_action_endpoint(endpoint_url), normalize_endpoint_url(endpoint_url)):
+        if candidate_url not in snapshot_urls:
+            snapshot_urls.append(candidate_url)
+    for snapshot_url in snapshot_urls:
+        try:
+            response = requests.post(
+                snapshot_url,
+                json=payload,
+                headers=headers,
+                timeout=20,
+                allow_redirects=False,
+            )
+            if 300 <= response.status_code < 400:
+                location = response.headers.get("Location", "")
+                raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+            response.raise_for_status()
+            state = parse_realtime_state(response.text)
+            if kills_snapshot_matches_state(state, daily_players, general_players):
+                return state
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else 0
+            if status_code not in {400, 404, 405, 409, 422}:
+                raise
+        except requests.RequestException:
+            raise
+        except Exception:
+            pass
 
     final_state: RealtimeState | None = None
     final_state = send_kills_action_update(
@@ -8979,7 +8993,7 @@ def run_gui(config_path: Path) -> int:
             if player.ff_player_id and not merged[key].ff_player_id:
                 merged[key].ff_player_id = player.ff_player_id
             merged[key].entries = max(merged[key].entries, normalize_kill_value(player.entries))
-        return [merged[key] for key in order]
+        return sorted((merged[key] for key in order), key=lambda item: (-item.kills, normalize_player_key(item.name)))
 
     def current_manual_scope() -> str:
         scope = normalize_kills_scope_value(manual_scope_var.get())
@@ -9610,13 +9624,48 @@ def run_gui(config_path: Path) -> int:
             row["frame"].grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
             row["index_label"].configure(text=f"{index:02d}")
 
+    def sort_manual_rows_by_kills() -> None:
+        def row_sort_key(row: dict[str, Any]) -> tuple[int, int, str]:
+            name = row["name_var"].get().strip()
+            return (
+                0 if name else 1,
+                -normalize_kill_value(row["kills_var"].get()),
+                normalize_player_key(name),
+            )
+
+        manual_rows.sort(
+            key=row_sort_key
+        )
+        update_manual_row_numbers()
+
+    def refresh_local_rank_from_manual_scope(scope: str | None = None) -> None:
+        nonlocal kills_daily_ranking, kills_global_ranking
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            return
+        players = merge_manual_player_kills(manual_scope_buffers.get(clean_scope, []))
+        if clean_scope == "general":
+            kills_global_ranking = clone_player_list(players)
+        else:
+            kills_daily_ranking = clone_player_list(players)
+        try:
+            refresh_kills_rank_table()
+        except NameError:
+            pass
+        try:
+            refresh_ff_overlay(force=True)
+        except NameError:
+            pass
+
     def on_manual_change(*_args: Any) -> None:
         nonlocal manual_last_local_edit_at
         if manual_applying_remote:
             return
         scope = current_manual_scope()
+        sort_manual_rows_by_kills()
         manual_scope_buffers[scope] = clone_player_list(collect_manual_players())
         manual_scope_dirty.add(scope)
+        refresh_local_rank_from_manual_scope(scope)
         clear_manual_metric_overrides()
         manual_last_local_edit_at = time.monotonic()
         update_manual_metrics()
@@ -9875,6 +9924,7 @@ def run_gui(config_path: Path) -> int:
             players.append(PlayerKill(clean_name, add_kills, key=normalize_player_key(clean_name)))
             manual_scope_buffers[scope_key] = merge_manual_player_kills(players)
             manual_scope_dirty.add(scope_key)
+            refresh_local_rank_from_manual_scope(scope_key)
 
         set_manual_players(manual_scope_buffers[active_scope])
         sync_kills_rank_tab_with_manual_scope(active_scope)
@@ -10059,6 +10109,7 @@ def run_gui(config_path: Path) -> int:
         manual_remote_count_override = total_players
         manual_remote_total_override = total_kills
         try:
+            players = merge_manual_player_kills(players)
             for row in manual_rows:
                 row["frame"].destroy()
             manual_rows.clear()
@@ -14446,15 +14497,29 @@ def run_gui(config_path: Path) -> int:
             messagebox.showerror("Erro", str(exc))
             return
 
-        endpoint_url = local_config.get("kills_realtime_url", "").strip()
+        endpoint_url = str(
+            local_config.get("kills_realtime_url")
+            or local_config.get("jarvis_endpoint_url")
+            or ""
+        ).strip()
+        if not endpoint_url and str(local_config.get("jarvis_base_url") or "").strip():
+            endpoint_url = derive_jarvis_endpoint(str(local_config.get("jarvis_base_url") or ""), "kills")
+            local_config["kills_realtime_url"] = endpoint_url
+            try:
+                save_config(config_path, local_config)
+            except Exception:
+                pass
         active_scope = normalize_kills_scope_value(local_config.get("kills_manual_scope", "daily"))
         if active_scope not in {"daily", "general"}:
             active_scope = "daily"
+        sort_manual_rows_by_kills()
         manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players())
         daily_players = merge_manual_player_kills(manual_scope_buffers.get("daily", []))
         general_players = merge_manual_player_kills(manual_scope_buffers.get("general", []))
         manual_scope_buffers["daily"] = clone_player_list(daily_players)
         manual_scope_buffers["general"] = clone_player_list(general_players)
+        refresh_local_rank_from_manual_scope("daily")
+        refresh_local_rank_from_manual_scope("general")
         signature = manual_snapshot_signature(daily_players, general_players)
         if not endpoint_url:
             manual_status_var.set("Sem endpoint")
