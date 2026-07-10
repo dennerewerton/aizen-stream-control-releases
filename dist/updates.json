@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.84",
-    "notes":  "Livepix: sincronizacao busca paginas extras de pagamentos, mensagens, transacoes e recebiveis; status parcial agora mostra a causa.",
+    "version":  "2.6.85",
+    "notes":  "Kills FF: rank geral agora preenche os nicks na tela de edicao usando o ranking correto apos salvar/atualizar.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.84/AizenStreamControl.exe",
-                    "sha256":  "965bfbaeb6f3b2adc6201b2ac753144f9819b6f4cc60669a7bab195e4354c08f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.85/AizenStreamControl.exe",
+                    "sha256":  "b448956f17499624c67d37e8e900a346554dc645e14aedfd84fb7a629ff19c12"
                 }
 }

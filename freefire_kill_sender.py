@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.84"
+APP_VERSION = "2.6.85"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3649,9 +3649,42 @@ def parse_players_payload(payload: Any) -> list[PlayerKill]:
     if isinstance(candidates, dict):
         iterable = candidates.items()
         for name, kills in iterable:
-            clean = str(name).strip()
+            key = ""
+            ff_player_id = ""
+            entries = 0
+            if isinstance(kills, dict):
+                item = kills
+                row_name = first_present(
+                    item,
+                    (
+                        "name",
+                        "nick",
+                        "nickname",
+                        "username",
+                        "user",
+                        "participant",
+                        "participantName",
+                        "player",
+                        "playerName",
+                        "jogador",
+                        "apelido",
+                        "displayName",
+                    ),
+                    name,
+                )
+                kills = first_present(item, ("kills", "kill", "k", "abates", "score", "points", "value", "total"), 0)
+                key = str(first_present(item, ("key", "player_key", "playerKey", "id", "uid"), "") or "").strip()
+                ff_player_id = re.sub(
+                    r"\D+",
+                    "",
+                    str(first_present(item, ("ff_player_id", "ffPlayerId", "freefire_id", "freeFireId", "player_id", "playerId"), "") or ""),
+                )
+                entries = normalize_kill_value(first_present(item, ("entries", "partidas", "matches", "games"), 0))
+            else:
+                row_name = name
+            clean = str(row_name or "").strip()
             if clean:
-                players.append(PlayerKill(clean, normalize_kill_value(kills)))
+                players.append(PlayerKill(clean, normalize_kill_value(kills), key, ff_player_id, entries))
         return players
 
     if not isinstance(candidates, list):
@@ -9063,6 +9096,95 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         return kills_global_ranking if clean_scope == "general" else kills_daily_ranking
 
+    def manual_name_reference_players(scope: str | None = None) -> list[PlayerKill]:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        other_scope = "daily" if clean_scope == "general" else "general"
+        references: list[PlayerKill] = []
+        references.extend(manual_scope_rank_players(clean_scope))
+        references.extend(manual_scope_buffers.get(clean_scope, []))
+        references.extend(manual_scope_rank_players(other_scope))
+        references.extend(manual_scope_buffers.get(other_scope, []))
+        return sorted_rank_players(references)
+
+    def complete_manual_player_names(
+        players: list[PlayerKill],
+        scope: str | None = None,
+        references: list[PlayerKill] | None = None,
+    ) -> list[PlayerKill]:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        source_players = sorted_rank_players(references if references is not None else manual_name_reference_players(clean_scope))
+        if not source_players:
+            return clone_player_list(players)
+
+        used_keys = {
+            normalize_player_key(player.name)
+            for player in players
+            if str(player.name or "").strip()
+        }
+        source_by_kills: dict[int, list[PlayerKill]] = {}
+        for source_player in source_players:
+            source_by_kills.setdefault(normalize_kill_value(source_player.kills), []).append(source_player)
+
+        completed: list[PlayerKill] = []
+        for index, player in enumerate(players):
+            name = str(player.name or "").strip()
+            kills = normalize_kill_value(player.kills)
+            if name or kills <= 0:
+                completed.append(
+                    PlayerKill(
+                        name=name,
+                        kills=kills,
+                        key=player.key,
+                        ff_player_id=player.ff_player_id,
+                        entries=normalize_kill_value(player.entries),
+                    )
+                )
+                continue
+
+            candidate: PlayerKill | None = None
+            if index < len(source_players):
+                indexed_candidate = source_players[index]
+                indexed_key = normalize_player_key(indexed_candidate.name)
+                if indexed_candidate.name.strip() and normalize_kill_value(indexed_candidate.kills) == kills and indexed_key not in used_keys:
+                    candidate = indexed_candidate
+
+            if candidate is None:
+                kill_matches = [
+                    source_player
+                    for source_player in source_by_kills.get(kills, [])
+                    if normalize_player_key(source_player.name) not in used_keys
+                ]
+                if kill_matches:
+                    candidate = kill_matches[0]
+
+            if candidate is not None:
+                candidate_key = normalize_player_key(candidate.name)
+                used_keys.add(candidate_key)
+                completed.append(
+                    PlayerKill(
+                        name=candidate.name,
+                        kills=kills,
+                        key=player.key or candidate.key,
+                        ff_player_id=player.ff_player_id or candidate.ff_player_id,
+                        entries=max(normalize_kill_value(player.entries), normalize_kill_value(candidate.entries)),
+                    )
+                )
+            else:
+                completed.append(
+                    PlayerKill(
+                        name=name,
+                        kills=kills,
+                        key=player.key,
+                        ff_player_id=player.ff_player_id,
+                        entries=normalize_kill_value(player.entries),
+                    )
+                )
+        return completed
+
     def manual_scope_display_players(scope: str | None = None, prefer_remote: bool = True) -> list[PlayerKill]:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
@@ -9073,7 +9195,11 @@ def run_gui(config_path: Path) -> int:
             return clone_player_list(rank_players)
         buffered_players = manual_scope_buffers.get(clean_scope) or []
         if buffered_players:
-            return clone_player_list(buffered_players)
+            completed_players = merge_manual_player_kills(
+                complete_manual_player_names(buffered_players, clean_scope, references=rank_players or None)
+            )
+            manual_scope_buffers[clean_scope] = clone_player_list(completed_players)
+            return clone_player_list(completed_players)
         if rank_players:
             manual_scope_buffers[clean_scope] = clone_player_list(rank_players)
             return clone_player_list(rank_players)
@@ -9097,7 +9223,7 @@ def run_gui(config_path: Path) -> int:
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
         players = manual_scope_display_players(clean_scope, prefer_remote=prefer_remote)
-        set_manual_players(players)
+        set_manual_players(players, scope=clean_scope)
         sync_kills_rank_tab_with_manual_scope(clean_scope)
         manual_status_var.set("Mostrando rank geral" if clean_scope == "general" else "Mostrando rank diario")
 
@@ -9654,9 +9780,8 @@ def run_gui(config_path: Path) -> int:
         players: list[PlayerKill] = []
         for row in manual_rows:
             name = row["name_var"].get().strip()
-            if not name:
-                continue
             players.append(PlayerKill(name=name, kills=normalize_kill_value(row["kills_var"].get())))
+        players = complete_manual_player_names(players, current_manual_scope())
         return merge_manual_player_kills(players)
 
     def update_manual_metrics() -> None:
@@ -9700,7 +9825,8 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             return
-        players = merge_manual_player_kills(manual_scope_buffers.get(clean_scope, []))
+        players = merge_manual_player_kills(complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope))
+        manual_scope_buffers[clean_scope] = clone_player_list(players)
         if clean_scope == "general":
             kills_global_ranking = clone_player_list(players)
         else:
@@ -9983,7 +10109,7 @@ def run_gui(config_path: Path) -> int:
             manual_scope_dirty.add(scope_key)
             refresh_local_rank_from_manual_scope(scope_key)
 
-        set_manual_players(manual_scope_buffers[active_scope])
+        set_manual_players(manual_scope_buffers[active_scope], scope=active_scope)
         sync_kills_rank_tab_with_manual_scope(active_scope)
         clear_manual_metric_overrides()
         manual_last_local_edit_at = time.monotonic()
@@ -10160,13 +10286,17 @@ def run_gui(config_path: Path) -> int:
         minimum_rows: int = 8,
         total_players: int | None = None,
         total_kills: int | None = None,
+        scope: str | None = None,
     ) -> None:
         nonlocal manual_applying_remote, manual_remote_count_override, manual_remote_total_override
         manual_applying_remote = True
         manual_remote_count_override = total_players
         manual_remote_total_override = total_kills
         try:
-            players = merge_manual_player_kills(players)
+            clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+            if clean_scope not in {"daily", "general"}:
+                clean_scope = current_manual_scope()
+            players = merge_manual_player_kills(complete_manual_player_names(players, clean_scope))
             for row in manual_rows:
                 row["frame"].destroy()
             manual_rows.clear()
@@ -15421,7 +15551,12 @@ def run_gui(config_path: Path) -> int:
                     return
                 manual_poll_quiet_cycles = 0
                 manual_last_remote_signature = signature
-                set_manual_players(players, total_players=state.total_players, total_kills=state.total_kills)
+                set_manual_players(
+                    players,
+                    total_players=state.total_players,
+                    total_kills=state.total_kills,
+                    scope=current_manual_scope(),
+                )
                 if state.updated_by:
                     set_text_var(manual_source_var, state.updated_by)
                 if force:
@@ -15570,6 +15705,7 @@ def run_gui(config_path: Path) -> int:
                         kills_state.players,
                         total_players=kills_state.total_players,
                         total_kills=kills_state.total_kills,
+                        scope=current_manual_scope(),
                     )
                     if kills_state.updated_by:
                         set_text_var(manual_source_var, kills_state.updated_by)
@@ -16871,7 +17007,7 @@ def run_gui(config_path: Path) -> int:
         manual_scope_buffers["general"] = parse_players_payload(saved_manual_by_scope.get("general", []))
     if not (manual_scope_buffers["daily"] or manual_scope_buffers["general"]):
         manual_scope_buffers[manual_active_scope] = clone_player_list(saved_manual_players)
-    set_manual_players(manual_scope_display_players(manual_active_scope, prefer_remote=False))
+    set_manual_players(manual_scope_display_players(manual_active_scope, prefer_remote=False), scope=manual_active_scope)
     sync_kills_rank_tab_with_manual_scope(manual_active_scope)
     manual_last_signature = manual_signature(collect_manual_players(), manual_active_scope)
     saved_ff_queue_entries = parse_ff_queue_payload(config.get("ff_queue_items", []))
