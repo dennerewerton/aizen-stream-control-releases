@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from freefire_kill_sender import (  # noqa: E402
     FFQueueEntry,
+    chat_command_token,
     derive_ff_overlay_config_endpoint,
     PlayerKill,
     derive_ff_queue_action_endpoint,
@@ -31,6 +32,7 @@ from freefire_kill_sender import (  # noqa: E402
     kills_scope_label,
     merge_ff_queue_entries,
     normalize_live_chat_payload,
+    normalize_chat_command,
     normalize_kills_scope_value,
     overlay_rank_players,
     parse_ff_queue_state,
@@ -749,6 +751,21 @@ def verify_contracts() -> None:
         raise RuntimeError(f"Comando TikFinity em messageText nao foi reconhecido: {parsed_command_chat!r}")
     if is_live_chat_event_payload(like_event) or normalize_live_chat_payload(like_event, "TikFinity WebSocket") is not None:
         raise RuntimeError("Evento de like do TikFinity foi tratado como chat.")
+    command_checks = {
+        "!pix": ("!pix", ""),
+        "!PIX agora": ("!pix", "agora"),
+        "\u200b!pix chave": ("!pix", "chave"),
+        "！pix chave": ("!pix", "chave"),
+        "@Aizen !pix chave": ("!pix", "chave"),
+        "!pix, chave": ("!pix", "chave"),
+        "boa !pix": ("", ""),
+    }
+    for raw_message, expected in command_checks.items():
+        actual = chat_command_token(raw_message)
+        if actual != expected:
+            raise RuntimeError(f"Parser de comando TikFinity divergente: {raw_message!r} -> {actual!r}")
+    if normalize_chat_command("pix,") != "!pix" or normalize_chat_command("！PIX") != "!pix":
+        raise RuntimeError("Normalizacao de comando da aba Comandos falhou.")
 
     print("Contratos Jarvis FF OK: endpoints e parsers locais validados.")
 

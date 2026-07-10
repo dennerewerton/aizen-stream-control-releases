@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.79"
+APP_VERSION = "2.6.80"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1718,13 +1718,33 @@ def parse_chat_commands_payload(payload: Any) -> list[ChatCommand]:
     return commands
 
 
+def clean_chat_command_text(value: Any) -> str:
+    text = str(value or "")
+    replacements = {
+        "\ufeff": "",
+        "\u200b": "",
+        "\u200c": "",
+        "\u200d": "",
+        "\u2060": "",
+        "\uff01": "!",
+        "\ufe57": "!",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def normalize_chat_command(command: Any) -> str:
-    text = str(command or "").strip().split(maxsplit=1)[0] if str(command or "").strip() else ""
+    text = clean_chat_command_text(command)
     if not text:
         return ""
+    text = text.split(maxsplit=1)[0].lstrip("`'\"“”‘’([{")
     if not text.startswith("!"):
         text = f"!{text}"
-    return text.casefold()
+    match = re.match(r"!([^\s,;:!?]+)", text)
+    if not match:
+        return ""
+    return f"!{match.group(1)}".casefold()
 
 
 def chat_command_payload(commands: list[ChatCommand]) -> list[dict[str, Any]]:
@@ -1786,13 +1806,24 @@ def chat_timer_payload(timers: list[ChatTimer]) -> list[dict[str, Any]]:
 
 
 def chat_command_token(message_text: str) -> tuple[str, str]:
-    text = str(message_text or "").strip()
+    text = clean_chat_command_text(message_text)
     if not text:
         return "", ""
-    parts = text.split(maxsplit=1)
-    token = normalize_chat_command(parts[0])
-    args = parts[1].strip() if len(parts) > 1 else ""
-    return token, args
+    for token_match in re.finditer(r"\S+", text):
+        raw_token = token_match.group(0)
+        clean_token = raw_token.lstrip("`'\"“”‘’([{")
+        if clean_token.startswith("@"):
+            continue
+        if not clean_token.startswith("!"):
+            return "", ""
+        segment = text[token_match.start():]
+        command_match = re.match(r"[`'\"“”‘’([{]*!(?P<name>[^\s,;:!?]+)[,;:!?]*", segment)
+        if not command_match:
+            return "", ""
+        token = normalize_chat_command(f"!{command_match.group('name')}")
+        args = segment[command_match.end():].strip()
+        return token, args
+    return "", ""
 
 
 def render_chat_command_response(template: str, message: LiveChatMessage, command: str, args: str) -> str:
@@ -6014,6 +6045,7 @@ def run_gui(config_path: Path) -> int:
     bot_reply_queue: queue.Queue[dict[str, Any]] = queue.Queue()
     bot_send_result_queue: queue.Queue[tuple[bool, str, dict[str, Any]]] = queue.Queue()
     bot_command_last_sent: dict[str, float] = {}
+    bot_command_last_missed: dict[str, float] = {}
     bot_sending = False
     bot_next_allowed_at = 0.0
     app_closing = False
@@ -13136,28 +13168,43 @@ def run_gui(config_path: Path) -> int:
     def handle_custom_chat_commands(message: LiveChatMessage) -> None:
         if not chat_commands_enabled_var.get():
             return
-        if not message.comment.strip().startswith("!"):
-            return
         if message.platform == "Aizen" or should_ignore_bot_user(message):
             return
         token, args = chat_command_token(message.comment)
         if not token:
             return
         now = time.time()
-        default_cooldown = bot_default_cooldown_seconds()
+        matched_command = False
         for command in collect_custom_commands():
-            if not command.enabled or command.command != token:
+            if command.command != token:
                 continue
-            cooldown = command.cooldown_seconds if command.cooldown_seconds > 0 else default_cooldown
+            matched_command = True
+            if not command.enabled:
+                bot_status_var.set(f"{token} desativado")
+                if now - bot_command_last_missed.get(f"disabled:{token}", 0.0) >= 10:
+                    bot_command_last_missed[f"disabled:{token}"] = now
+                    log(f"Comando do chat recebido, mas esta desativado: {token}")
+                return
+            cooldown = max(0, command.cooldown_seconds)
             last_sent = bot_command_last_sent.get(command.command, 0.0)
             if cooldown and now - last_sent < cooldown:
                 remaining = int(cooldown - (now - last_sent))
                 bot_status_var.set(f"Cooldown {remaining}s")
+                if now - bot_command_last_missed.get(f"cooldown:{token}", 0.0) >= 10:
+                    bot_command_last_missed[f"cooldown:{token}"] = now
+                    log(f"Comando {token} recebido, aguardando cooldown ({remaining}s).")
                 return
             response = render_chat_command_response(command.response, message, command.command, args)
             bot_command_last_sent[command.command] = now
+            bot_status_var.set(f"Comando {token}")
+            log(f"Comando do chat reconhecido: {message.username}: {token}")
             queue_bot_reply(response, message, command.command, args)
             return
+        if not matched_command:
+            bot_status_var.set(f"{token} sem cadastro")
+            if now - bot_command_last_missed.get(f"missing:{token}", 0.0) >= 10:
+                bot_command_last_missed[f"missing:{token}"] = now
+                log(f"Comando do chat recebido, mas nao existe comando ativo para: {token}")
 
     def test_custom_command_row(row: dict[str, Any]) -> None:
         command = normalize_chat_command(row["command"].get()) or "!teste"
