@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.81",
-    "notes":  "Livepix: dashboard inicia com valores ocultos por botao de olho e totais usam dados completos/resumos da conta quando disponiveis.",
+    "version":  "2.6.82",
+    "notes":  "Livepix: painel de historico limpo, sem resumo tecnico de carteira/avisos dentro da lista.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.81/AizenStreamControl.exe",
-                    "sha256":  "843814c8b240e8cf773bd8e819ccf3051149da271f592fd400bef25aefc2f205"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.82/AizenStreamControl.exe",
+                    "sha256":  "5f2897a9d2306472af279c9fa26ecdd9800221532609c16c97987660ee15ac3f"
                 }
 }

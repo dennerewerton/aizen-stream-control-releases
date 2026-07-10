@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.81"
+APP_VERSION = "2.6.82"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -16199,19 +16199,9 @@ def run_gui(config_path: Path) -> int:
     livepix_events_card = card(livepix_right, "Últimos Livepix recebidos", "Histórico sincronizado da conta, pagamentos, mensagens e webhooks locais.")
     livepix_events_card.grid(row=1, column=0, sticky="nsew", pady=(8, 12))
     livepix_events_card.columnconfigure(0, weight=1)
-    livepix_events_card.rowconfigure(4, weight=1)
-    livepix_history_info = ctk.CTkFrame(livepix_events_card, fg_color=panel, corner_radius=0)
-    livepix_history_info.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 8))
-    livepix_history_info.columnconfigure(0, weight=1)
-    livepix_history_info.columnconfigure(1, weight=1)
-    ctk.CTkLabel(livepix_history_info, textvariable=livepix_wallet_var, text_color=teal, font=("Segoe UI Semibold", 12), anchor="w").grid(
-        row=0, column=0, sticky="ew", padx=(0, 10), pady=2
-    )
-    ctk.CTkLabel(livepix_history_info, textvariable=livepix_extra_var, text_color=blue, font=("Segoe UI", 12), anchor="e", wraplength=420).grid(
-        row=0, column=1, sticky="ew", padx=(10, 0), pady=2
-    )
+    livepix_events_card.rowconfigure(3, weight=1)
     livepix_control_actions = ctk.CTkFrame(livepix_events_card, fg_color=panel, corner_radius=0)
-    livepix_control_actions.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
+    livepix_control_actions.grid(row=2, column=0, sticky="ew", padx=18, pady=(8, 10))
     button(livepix_control_actions, "Sincronizar", lambda: sync_livepix_from_api(show_error_dialog=True), "accent", width=104).pack(side=tk.LEFT, padx=(0, 8))
     button(livepix_control_actions, "Pular alerta", lambda: livepix_control("skip"), "default", width=105).pack(side=tk.LEFT, padx=(0, 8))
     button(livepix_control_actions, "Reexibir", lambda: livepix_control("replay"), "default", width=90).pack(side=tk.LEFT, padx=(0, 8))
@@ -16227,7 +16217,7 @@ def run_gui(config_path: Path) -> int:
         scrollbar_button_color=border,
         scrollbar_button_hover_color=accent,
     )
-    livepix_events_frame.grid(row=4, column=0, sticky="nsew", padx=18, pady=(0, 18))
+    livepix_events_frame.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
     livepix_events_frame.columnconfigure(0, weight=1)
     render_livepix_events.frame = livepix_events_frame  # type: ignore[attr-defined]
     update_livepix_endpoint_text()
