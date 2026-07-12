@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.110"
+APP_VERSION = "2.6.112"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6188,6 +6188,7 @@ def run_gui(config_path: Path) -> int:
     manual_sync_after_id: str | None = None
     manual_poll_after_id: str | None = None
     manual_visual_after_id: str | None = None
+    manual_visual_sort_pending = False
     manual_config_after_id: str | None = None
     kills_visual_after_id: str | None = None
     manual_fetching = False
@@ -9942,6 +9943,7 @@ def run_gui(config_path: Path) -> int:
                 fill_visible_manual_missing_names_from_rank(current_scope)
                 update_manual_metrics()
         else:
+            fill_visible_manual_missing_names_from_rank(current_scope)
             update_manual_metrics()
         set_text_var(
             kills_overlay_status_var,
@@ -10015,7 +10017,9 @@ def run_gui(config_path: Path) -> int:
         nonlocal manual_applying_remote
         scope = current_manual_scope()
         if manual_table_render_pending and manual_table_render_scope == scope:
-            return clone_player_list(manual_scope_buffers.get(scope, []))
+            return merge_manual_player_kills(
+                complete_manual_player_names(manual_scope_buffers.get(scope, []), scope)
+            )
         players: list[PlayerKill] = []
         for row in manual_rows:
             name = row["name_var"].get().strip()
@@ -10149,22 +10153,26 @@ def run_gui(config_path: Path) -> int:
         return changed
 
     def run_manual_visual_refresh() -> None:
-        nonlocal manual_visual_after_id
+        nonlocal manual_visual_after_id, manual_visual_sort_pending
         manual_visual_after_id = None
         if app_closing or manual_applying_remote:
             return
         scope = current_manual_scope()
         if scope not in {"daily", "general"}:
             scope = "daily"
-        sort_manual_rows_by_kills()
+        should_sort = manual_visual_sort_pending
+        manual_visual_sort_pending = False
+        if should_sort:
+            sort_manual_rows_by_kills()
         manual_scope_buffers[scope] = clone_player_list(collect_manual_players())
         refresh_local_rank_from_manual_scope(scope)
         update_manual_metrics()
 
-    def schedule_manual_visual_refresh(delay_ms: int = 140) -> None:
-        nonlocal manual_visual_after_id
+    def schedule_manual_visual_refresh(delay_ms: int = 160, sort_rows: bool = True) -> None:
+        nonlocal manual_visual_after_id, manual_visual_sort_pending
         if app_closing or manual_applying_remote:
             return
+        manual_visual_sort_pending = manual_visual_sort_pending or sort_rows
         if manual_visual_after_id is not None:
             try:
                 root.after_cancel(manual_visual_after_id)
@@ -10173,13 +10181,14 @@ def run_gui(config_path: Path) -> int:
         manual_visual_after_id = root.after(delay_ms, run_manual_visual_refresh)
 
     def cancel_manual_visual_refresh() -> None:
-        nonlocal manual_visual_after_id
+        nonlocal manual_visual_after_id, manual_visual_sort_pending
         if manual_visual_after_id is not None:
             try:
                 root.after_cancel(manual_visual_after_id)
             except tk.TclError:
                 pass
             manual_visual_after_id = None
+        manual_visual_sort_pending = False
 
     def run_kills_visual_refresh() -> None:
         nonlocal kills_visual_after_id
@@ -10259,7 +10268,7 @@ def run_gui(config_path: Path) -> int:
                 pass
         manual_config_after_id = root.after(delay_ms, run_manual_config_autosave)
 
-    def on_manual_change(*_args: Any) -> None:
+    def on_manual_change(*_args: Any, sort_rows: bool = True) -> None:
         nonlocal manual_last_local_edit_at
         if manual_applying_remote:
             return
@@ -10272,7 +10281,7 @@ def run_gui(config_path: Path) -> int:
             schedule_manual_config_autosave()
         except NameError:
             pass
-        schedule_manual_visual_refresh()
+        schedule_manual_visual_refresh(sort_rows=sort_rows)
 
     def manual_autocomplete_key(value: str) -> str:
         normalized = unicodedata.normalize("NFKD", str(value or "").casefold())
@@ -10493,9 +10502,9 @@ def run_gui(config_path: Path) -> int:
         manual_rows.append(row)
         name_var.trace_add(
             "write",
-            lambda *_args, target_row=row: (on_manual_change(), refresh_manual_name_suggestions(target_row)),
+            lambda *_args, target_row=row: (on_manual_change(sort_rows=False), refresh_manual_name_suggestions(target_row)),
         )
-        kills_var.trace_add("write", on_manual_change)
+        kills_var.trace_add("write", lambda *_args: on_manual_change(sort_rows=True))
         name_entry.bind("<FocusIn>", lambda _event, target_row=row: refresh_manual_name_suggestions(target_row))
         name_entry.bind("<FocusOut>", lambda _event, target_row=row: root.after(140, lambda: hide_manual_name_suggestions(target_row)))
         name_entry.bind("<Return>", lambda _event, target_row=row: select_first_manual_name_suggestion(target_row))
