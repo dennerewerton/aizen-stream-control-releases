@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.95",
-    "notes":  "Versao leve: remove OpenCV/Numpy do executavel, reduzindo o app de cerca de 87 MB para 38 MB e deixando abertura/atualizacao mais rapidas. A captura OCR antiga mostra aviso e o painel Kills FF manual segue normal.",
+    "version":  "2.6.96",
+    "notes":  "Melhora estabilidade em lives longas: limita cache de usuarios do chat, avatares e mensagens vistas no sorteio para evitar crescimento de memoria e travamentos apos muito tempo aberto.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.95/AizenStreamControl.exe",
-                    "sha256":  "b28e6023aa2318447a7ce16aa2be9e01b4b8cff4356c533af32f9da063566ddc"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.96/AizenStreamControl.exe",
+                    "sha256":  "831f85649525a2d3c16ac397de8f24096f633818b38eb3fed213da7d93551ff4"
                 }
 }

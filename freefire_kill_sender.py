@@ -77,12 +77,15 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.95"
+APP_VERSION = "2.6.96"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
 LOG_QUEUE_SOFT_LIMIT = 1500
 LOG_TEXT_MAX_LINES = 1200
+CHAT_USER_CACHE_LIMIT = 600
+AVATAR_IMAGE_CACHE_LIMIT = 240
+RAFFLE_SEEN_MESSAGES_LIMIT = 2500
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
@@ -5646,6 +5649,7 @@ class TikfinityRaffleWorker:
         self.participant_names_seen: dict[str, str] = {}
         self.user_command_times: dict[str, float] = {}
         self.seen_messages: set[str] = set()
+        self.seen_message_order: list[str] = []
         self.blocked_attempts: list[dict[str, Any]] = []
         self.current_winner: RaffleWinner | None = None
         self.drawn_winners: list[RaffleWinner] = []
@@ -5972,6 +5976,12 @@ class TikfinityRaffleWorker:
             if message_id in self.seen_messages:
                 return
             self.seen_messages.add(message_id)
+            self.seen_message_order.append(message_id)
+            if len(self.seen_message_order) > RAFFLE_SEEN_MESSAGES_LIMIT:
+                stale_messages = self.seen_message_order[: len(self.seen_message_order) - RAFFLE_SEEN_MESSAGES_LIMIT]
+                del self.seen_message_order[: len(self.seen_message_order) - RAFFLE_SEEN_MESSAGES_LIMIT]
+                for stale_message_id in stale_messages:
+                    self.seen_messages.discard(stale_message_id)
 
         participant_key = self._participant_key(username, user_id)
         with self.lock:
@@ -6733,6 +6743,14 @@ def run_gui(config_path: Path) -> int:
 
             threading.Thread(target=load, daemon=True).start()
         return None
+
+    def prune_avatar_image_cache() -> None:
+        while len(avatar_image_cache) > AVATAR_IMAGE_CACHE_LIMIT:
+            try:
+                oldest_key = next(iter(avatar_image_cache))
+            except StopIteration:
+                return
+            avatar_image_cache.pop(oldest_key, None)
 
     def configure_avatar_label(label: Any, name: str, avatar_url: str, size: int) -> None:
         image = request_avatar_image(avatar_url, size)
@@ -12377,6 +12395,13 @@ def run_gui(config_path: Path) -> int:
             return f"{message.platform}|{message.user_id}|{message.message_id}"
         return f"{message.platform}|{message.user_id}|{message.username}|{message.comment}|{message.received_at}"
 
+    def rebuild_recent_chat_users() -> None:
+        chat_users.clear()
+        for recent_message in chat_messages[-chat_max_messages() :]:
+            user_key = recent_message.user_id or normalize_player_key(recent_message.username)
+            if user_key:
+                chat_users[user_key] = recent_message
+
     def normalize_bot_confirmation_text(value: Any) -> str:
         return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
 
@@ -12762,6 +12787,9 @@ def run_gui(config_path: Path) -> int:
             del chat_messages[: len(chat_messages) - limit]
             for old_message in removed:
                 chat_seen_messages.discard(live_chat_key(old_message))
+            rebuild_recent_chat_users()
+        elif len(chat_users) > CHAT_USER_CACHE_LIMIT:
+            rebuild_recent_chat_users()
         chat_message_count_var.set(str(len(chat_messages)))
         chat_user_count_var.set(str(len(chat_users)))
         chat_platform_var.set(message.platform or "-")
@@ -16432,6 +16460,7 @@ def run_gui(config_path: Path) -> int:
                 avatar_image_cache[key] = ctk.CTkImage(light_image=image, dark_image=image, size=(size, size))
             else:
                 avatar_image_cache[key] = None
+            prune_avatar_image_cache()
             update_chat_avatar_widgets(url, size)
             updated = True
         if updated:
