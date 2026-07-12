@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.137"
+APP_VERSION = "2.6.138"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3434,6 +3434,7 @@ def complete_player_names_from_references(players: list[PlayerKill], references:
             for player in players
         ]
 
+    named_input_count = sum(1 for player in players if str(player.name or "").strip())
     used_keys = {
         normalize_player_key(player.name)
         for player in players
@@ -3483,7 +3484,12 @@ def complete_player_names_from_references(players: list[PlayerKill], references:
         if candidate is None and index < len(source_players):
             indexed_candidate = source_players[index]
             indexed_key = normalize_player_key(indexed_candidate.name)
-            if indexed_candidate.name.strip() and normalize_kill_value(indexed_candidate.kills) == kills and indexed_key not in used_keys:
+            indexed_kills = normalize_kill_value(indexed_candidate.kills)
+            if (
+                indexed_candidate.name.strip()
+                and indexed_key not in used_keys
+                and (indexed_kills == kills or named_input_count == 0)
+            ):
                 candidate = indexed_candidate
         if candidate is None:
             for kill_candidate in source_by_kills.get(kills, []):
@@ -6656,9 +6662,26 @@ def run_gui(config_path: Path) -> int:
             "Fila de avatares cheia",
         )
 
-    def start_livepix_history_load() -> None:
+    def should_load_livepix_history(force: bool = False) -> bool:
+        if force:
+            return True
+        try:
+            if livepix_enabled_var.get():
+                return True
+        except NameError:
+            pass
+        if livepix_webhook_server is not None or livepix_overlay_frame is not None:
+            return True
+        try:
+            return is_livepix_tab_active()
+        except NameError:
+            return False
+
+    def start_livepix_history_load(force: bool = False) -> None:
         nonlocal livepix_events_loading, livepix_history_load_generation
         if app_closing or livepix_events_loaded or livepix_events_loading:
+            return
+        if not should_load_livepix_history(force):
             return
         livepix_events_loading = True
         livepix_history_load_generation += 1
@@ -9772,7 +9795,7 @@ def run_gui(config_path: Path) -> int:
 
     def remember_current_manual_scope() -> None:
         scope = current_manual_scope()
-        manual_scope_buffers[scope] = clone_player_list(collect_manual_players())
+        manual_scope_buffers[scope] = clone_player_list(collect_manual_players(scope=scope))
 
     def refresh_manual_table_for_scope(scope: str | None = None, prefer_remote: bool = True) -> None:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
@@ -9796,7 +9819,7 @@ def run_gui(config_path: Path) -> int:
             new_scope = "daily"
             manual_scope_var.set("Diario")
         if previous_scope in {"daily", "general"}:
-            manual_scope_buffers[previous_scope] = clone_player_list(collect_manual_players())
+            manual_scope_buffers[previous_scope] = clone_player_list(collect_manual_players(scope=previous_scope))
         manual_active_scope = new_scope
         config["kills_manual_scope"] = new_scope
         refresh_manual_table_for_scope(new_scope, prefer_remote=True)
@@ -10335,7 +10358,7 @@ def run_gui(config_path: Path) -> int:
         current_scope = current_manual_scope()
         if current_scope not in manual_scope_dirty:
             display_players = manual_scope_display_players(current_scope, prefer_remote=True)
-            current_players = collect_manual_players(fill_missing_names=False)
+            current_players = collect_manual_players(fill_missing_names=False, scope=current_scope)
             if manual_signature(display_players, current_scope) != manual_signature(current_players, current_scope):
                 set_manual_players(display_players, scope=current_scope)
                 sync_kills_rank_tab_with_manual_scope(current_scope)
@@ -10414,18 +10437,20 @@ def run_gui(config_path: Path) -> int:
             value = 15
         return max(10, min(120, value))
 
-    def collect_manual_players(fill_missing_names: bool = True) -> list[PlayerKill]:
+    def collect_manual_players(fill_missing_names: bool = True, scope: str | None = None) -> list[PlayerKill]:
         nonlocal manual_applying_remote
-        scope = current_manual_scope()
-        if manual_table_render_pending and manual_table_render_scope == scope:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        if manual_table_render_pending and manual_table_render_scope == clean_scope:
             return merge_manual_player_kills(
-                complete_manual_player_names(manual_scope_buffers.get(scope, []), scope)
+                complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope)
             )
         players: list[PlayerKill] = []
         for row in manual_rows:
             name = row["name_var"].get().strip()
             players.append(PlayerKill(name=name, kills=normalize_kill_value(row["kills_var"].get())))
-        players = complete_manual_player_names(players, scope)
+        players = complete_manual_player_names(players, clean_scope)
         if fill_missing_names and not manual_applying_remote:
             missing_name_updates = [
                 (row, player.name.strip())
@@ -10511,6 +10536,7 @@ def run_gui(config_path: Path) -> int:
             for row in manual_rows
             if row["name_var"].get().strip()
         }
+        named_visible_count = len(used_keys)
         references_by_kills: dict[int, list[PlayerKill]] = {}
         for player in references:
             name = player.name.strip()
@@ -10533,10 +10559,11 @@ def run_gui(config_path: Path) -> int:
                 if index < len(references):
                     indexed_candidate = references[index]
                     indexed_key = normalize_player_key(indexed_candidate.name)
+                    indexed_kills = normalize_kill_value(indexed_candidate.kills)
                     if (
                         indexed_candidate.name.strip()
-                        and normalize_kill_value(indexed_candidate.kills) == kills
                         and indexed_key not in used_keys
+                        and (indexed_kills == kills or named_visible_count == 0)
                     ):
                         candidate = indexed_candidate
                 if candidate is None:
@@ -10555,7 +10582,7 @@ def run_gui(config_path: Path) -> int:
             manual_applying_remote = previous_applying_remote
 
         if changed:
-            manual_scope_buffers[clean_scope] = clone_player_list(collect_manual_players(fill_missing_names=False))
+            manual_scope_buffers[clean_scope] = clone_player_list(collect_manual_players(fill_missing_names=False, scope=clean_scope))
             refresh_local_rank_from_manual_scope(clean_scope)
         return changed
 
@@ -10571,7 +10598,7 @@ def run_gui(config_path: Path) -> int:
         manual_visual_sort_pending = False
         if should_sort:
             sort_manual_rows_by_kills()
-        players = collect_manual_players()
+        players = collect_manual_players(scope=scope)
         apply_local_rank_players(scope, players, schedule_refresh=False)
         if not manual_bulk_updating:
             schedule_kills_visual_refresh()
@@ -10639,7 +10666,7 @@ def run_gui(config_path: Path) -> int:
             clean_scope = "daily"
         repair_manual_scope_buffer_names(clean_scope)
         if clean_scope == current_manual_scope() and not manual_table_render_pending:
-            manual_scope_buffers[clean_scope] = clone_player_list(collect_manual_players(fill_missing_names=False))
+            manual_scope_buffers[clean_scope] = clone_player_list(collect_manual_players(fill_missing_names=False, scope=clean_scope))
             repair_manual_scope_buffer_names(clean_scope)
         endpoint_url = normalize_endpoint_url(sync_url_var.get())
         jarvis_base_url = normalize_endpoint_url(jarvis_base_url_var.get()).rstrip("/")
@@ -10934,7 +10961,7 @@ def run_gui(config_path: Path) -> int:
         active_scope = current_manual_scope()
         if active_scope not in {"daily", "general"}:
             active_scope = "daily"
-        manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players())
+        manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players(scope=active_scope))
 
         previous_bulk_updating = manual_bulk_updating
         manual_bulk_updating = True
@@ -12493,7 +12520,7 @@ def run_gui(config_path: Path) -> int:
         threading.Thread(target=run, daemon=True).start()
 
     def ff_overlay_snapshot() -> tuple[list[PlayerKill], list[dict[str, Any]], int, int]:
-        players = overlay_rank_players(kills_daily_ranking, kills_global_ranking, collect_manual_players())
+        players = overlay_rank_players(kills_daily_ranking, kills_global_ranking, collect_manual_players(scope=current_manual_scope()))
         queue_items = queue_summary_items(collect_ff_queue_entries())
         total_kills = sum(player.kills for player in players)
         active_rooms = sum(int(item["rooms"]) for item in queue_items)
@@ -12746,7 +12773,7 @@ def run_gui(config_path: Path) -> int:
             try:
                 response_text = send_ff_overlay_realtime_update(
                     endpoint_url,
-                    collect_manual_players(),
+                    collect_manual_players(scope=current_manual_scope()),
                     collect_ff_queue_entries(),
                     options=ff_overlay_options_payload(),
                     device_id=str(local_config.get("device_id", "")),
@@ -15888,7 +15915,7 @@ def run_gui(config_path: Path) -> int:
 
     def pump_livepix_queue() -> None:
         nonlocal livepix_dashboard_state, livepix_sync_running, livepix_events_loaded, livepix_events_loading
-        nonlocal livepix_pump_after_id
+        nonlocal livepix_history_render_pending, livepix_pump_after_id
         livepix_pump_after_id = None
         if app_closing:
             return
@@ -15912,6 +15939,11 @@ def run_gui(config_path: Path) -> int:
                     added = merge_livepix_events(loaded_events, refresh=False, persist=False)
                     if loaded_events or added:
                         log(f"Historico Livepix carregado em segundo plano ({len(loaded_events)} evento(s)).")
+                if is_livepix_tab_active() or livepix_overlay_frame is not None:
+                    render_livepix_events(force=True)
+                    render_livepix_overlay()
+                else:
+                    livepix_history_render_pending = True
                 schedule_livepix_dashboard_refresh()
             elif kind == "history_load_error":
                 livepix_events_loading = False
@@ -16149,7 +16181,7 @@ def run_gui(config_path: Path) -> int:
             manual_scope = "daily"
         config["kills_manual_scope"] = manual_scope
         manual_scope_var.set(kills_scope_label(config["kills_manual_scope"]))
-        manual_scope_buffers[manual_scope] = clone_player_list(collect_manual_players())
+        manual_scope_buffers[manual_scope] = clone_player_list(collect_manual_players(scope=manual_scope))
         config["manual_kills"] = player_payload(manual_scope_buffers.get(manual_scope, []))
         config["manual_kills_by_scope"] = {
             "daily": player_payload(manual_scope_buffers.get("daily", [])),
@@ -16380,7 +16412,21 @@ def run_gui(config_path: Path) -> int:
         repair_manual_scope_buffer_names("general", references=kills_global_ranking)
         fill_visible_manual_missing_names_from_rank(active_scope)
         sort_manual_rows_by_kills()
-        manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players())
+        if active_scope == current_manual_scope():
+            unresolved_rows = [
+                index
+                for index, row in enumerate(manual_rows, start=1)
+                if not row["name_var"].get().strip() and normalize_kill_value(row["kills_var"].get()) > 0
+            ]
+            if unresolved_rows:
+                manual_status_var.set("Nick pendente")
+                log(
+                    "Nao enviei Kills FF: existem linhas com kills sem nick "
+                    f"({', '.join(str(index) for index in unresolved_rows[:6])})."
+                )
+                messagebox.showinfo("Kills FF", "Preencha o nick dos jogadores que possuem kills antes de salvar.")
+                return
+        manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players(scope=active_scope))
         repair_manual_scope_buffer_names(active_scope)
         daily_players = merge_manual_player_kills(manual_scope_buffers.get("daily", []))
         general_players = merge_manual_player_kills(manual_scope_buffers.get("general", []))
@@ -16818,7 +16864,7 @@ def run_gui(config_path: Path) -> int:
             if force:
                 set_text_var(kills_overlay_status_var, "Jarvis respondeu sem rank do dia/geral")
             signature = manual_signature(players)
-            current_signature = manual_signature(collect_manual_players())
+            current_signature = manual_signature(collect_manual_players(scope=current_manual_scope()))
             if signature != current_signature:
                 if time.monotonic() - manual_last_local_edit_at < 1.2 and not force:
                     manual_poll_quiet_cycles = min(manual_poll_quiet_cycles + 1, 8)
@@ -16938,7 +16984,7 @@ def run_gui(config_path: Path) -> int:
             kills_has_rankings = bool(kills_state.daily_ranking or kills_state.global_ranking)
             remote_kills_signature = manual_signature([] if kills_has_rankings else kills_state.players)
             remote_queue_signature = ff_queue_signature(queue_state.entries)
-            current_kills_signature = manual_signature([] if kills_has_rankings else collect_manual_players())
+            current_kills_signature = manual_signature([] if kills_has_rankings else collect_manual_players(scope=current_manual_scope()))
             current_queue_signature = ff_queue_signature(collect_ff_queue_entries())
             if kills_has_rankings:
                 rank_signature = kills_rank_signature_for_state(kills_state)
@@ -18382,7 +18428,7 @@ def run_gui(config_path: Path) -> int:
         manual_scope_buffers[manual_active_scope] = clone_player_list(saved_manual_players)
     set_manual_players(manual_scope_display_players(manual_active_scope, prefer_remote=False), scope=manual_active_scope)
     sync_kills_rank_tab_with_manual_scope(manual_active_scope)
-    manual_last_signature = manual_signature(collect_manual_players(), manual_active_scope)
+    manual_last_signature = manual_signature(collect_manual_players(scope=manual_active_scope), manual_active_scope)
     saved_ff_queue_entries = parse_ff_queue_payload(config.get("ff_queue_items", []))
     if ff_queue_site_sync_hidden:
         ff_queue_last_signature = ff_queue_signature(saved_ff_queue_entries)
@@ -18569,6 +18615,8 @@ def run_gui(config_path: Path) -> int:
                 refresh_kills_rank_table(force=True)
             if kills_ignored_render_pending or not kills_ignored_rows:
                 refresh_kills_ignored_list(force=True)
+        if livepix_active:
+            start_livepix_history_load(force=True)
         if livepix_active and (livepix_history_render_pending or not livepix_widgets):
             render_livepix_events(force=True)
         if raffle_active and raffle_participant_render_pending:
@@ -18606,6 +18654,7 @@ def run_gui(config_path: Path) -> int:
     device_name_var.trace_add("write", update_local_source_labels)
     chat_commands_enabled_var.trace_add("write", ensure_bot_runtime)
     chat_timers_enabled_var.trace_add("write", ensure_bot_runtime)
+    livepix_enabled_var.trace_add("write", lambda *_args: start_livepix_history_load(force=livepix_enabled_var.get()))
     bot_delivery_method_var.trace_add("write", refresh_tikfinity_direct_bridge)
     pump_log()
     if not (kills_ff_site_sync_hidden and ff_overlay_site_sync_hidden):

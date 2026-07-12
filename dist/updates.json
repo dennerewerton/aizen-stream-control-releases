@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.137",
-    "notes":  "Menos trabalho em repouso: o processamento de avatares agora dorme quando nao ha imagens pendentes, acorda rapido ao pedir avatar e cancela callbacks ao fechar.",
+    "version":  "2.6.138",
+    "notes":  "Corrige nomes do Kills FF no rank Geral ao salvar/alternar Diario-Geral, bloqueia envio com kills sem nick e deixa o historico Livepix carregar sob demanda quando estiver ativo ou visivel.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.137/AizenStreamControl.exe",
-                    "sha256":  "4b8ac833df7722698df8d6c8938193faff8514ee065bf566e9b8e59549dc3000"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.138/AizenStreamControl.exe",
+                    "sha256":  "46942bad13f924e6b6142788f1a3e8ee4ce5bff65e5a0960df44de74da05521b"
                 }
 }
