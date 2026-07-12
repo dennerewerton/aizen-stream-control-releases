@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.133"
+APP_VERSION = "2.6.134"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -106,6 +106,7 @@ LIVEPIX_DASHBOARD_REFRESH_DELAY_MS = 180
 KILLS_VISUAL_REFRESH_DELAY_MS = 220
 KILLS_RANK_RENDER_LIMIT = 100
 KILLS_OVERLAY_RENDER_LIMIT = 50
+STARTUP_IDLE_TASK_DELAY_MS = 650
 BACKGROUND_IDLE_PUMP_MS = 2000
 SYNC_QUEUE_IDLE_PUMP_MS = 1200
 SYNC_QUEUE_PROCESSED_PUMP_MS = 140
@@ -18476,6 +18477,26 @@ def run_gui(config_path: Path) -> int:
             delay_ms = BACKGROUND_IDLE_PUMP_MS
         root.after(delay_ms, pump_deferred_kills_render)
 
+    def run_startup_ui_tasks() -> None:
+        if app_closing:
+            return
+        update_chat_endpoint_text()
+        apply_chat_overlay_settings()
+        refresh_chat_messages(force=True)
+        refresh_participant_list([])
+        if not kills_ff_site_sync_hidden and not apply_kills_rank_cache():
+            refresh_kills_rank_table()
+            refresh_kills_ignored_list()
+        if not ff_queue_site_sync_hidden:
+            apply_tikfinity_ff_state({})
+
+    def run_startup_runtime_tasks() -> None:
+        if app_closing:
+            return
+        ensure_bot_runtime()
+        if chat_commands_enabled_var.get() or chat_timers_enabled_var.get():
+            root.after(700, lambda: ensure_chat_listener_for_bot())
+
     device_name_var.trace_add("write", update_local_source_labels)
     chat_commands_enabled_var.trace_add("write", ensure_bot_runtime)
     chat_timers_enabled_var.trace_add("write", ensure_bot_runtime)
@@ -18499,18 +18520,8 @@ def run_gui(config_path: Path) -> int:
         root.after(1400, lambda: fetch_ff_queue(force=False))
     if not ff_queue_site_sync_hidden:
         schedule_ff_queue_poll()
-    update_chat_endpoint_text()
-    ensure_bot_runtime()
-    if chat_commands_enabled_var.get() or chat_timers_enabled_var.get():
-        root.after(700, lambda: ensure_chat_listener_for_bot())
-    apply_chat_overlay_settings()
-    refresh_chat_messages(force=True)
-    refresh_participant_list([])
-    if not kills_ff_site_sync_hidden and not apply_kills_rank_cache():
-        refresh_kills_rank_table()
-        refresh_kills_ignored_list()
-    if not ff_queue_site_sync_hidden:
-        apply_tikfinity_ff_state({})
+    root.after(STARTUP_IDLE_TASK_DELAY_MS, run_startup_ui_tasks)
+    root.after(STARTUP_IDLE_TASK_DELAY_MS + 250, run_startup_runtime_tasks)
     log("Kills FF ativo em modo manual. Abas Fila FF, Overlay FF e Chat Ao Vivo seguem ocultas.")
     root.mainloop()
     return 0

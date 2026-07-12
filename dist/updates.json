@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.133",
-    "notes":  "Kills FF mais leve: tabelas de ranking agora so recriam partes alteradas e respostas simples do Jarvis sao aceitas como sucesso para evitar leituras extras.",
+    "version":  "2.6.134",
+    "notes":  "Abertura mais leve: cache/rank do Kills FF, chat/sorteio e runtime do bot agora carregam em idle logo apos a janela abrir, reduzindo travas no inicio.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.133/AizenStreamControl.exe",
-                    "sha256":  "ebf9685681999a4bda3b4ca76b04b90a3f131c7dc8b5247150117595545bed33"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.134/AizenStreamControl.exe",
+                    "sha256":  "3c2b07a9f338a18cd6dd16e21f0820234a7e24056ca6ff441dd22817b155a49f"
                 }
 }
