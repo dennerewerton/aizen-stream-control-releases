@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.90",
-    "notes":  "Otimiza a abertura: a aba Chat Ao Vivo, quando oculta, nao monta seus widgets pesados; leitor do TikFinity, comandos e timers continuam ativos.",
+    "version":  "2.6.91",
+    "notes":  "Otimiza abertura: abas ocultas Fila FF e Overlay FF nao montam mais tabelas, listas, sliders e preview; Kills FF, comandos e leitor TikFinity seguem ativos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.90/AizenStreamControl.exe",
-                    "sha256":  "91787c8d1b927a29c8718f68ff02e433f7ba906176e50b7a3f4d2ce94cda3846"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.91/AizenStreamControl.exe",
+                    "sha256":  "f288ee4ffba11db322abac443781120a213c1269eee26f5c6553b22df12d24b4"
                 }
 }

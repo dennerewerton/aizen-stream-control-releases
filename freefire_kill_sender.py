@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.90"
+APP_VERSION = "2.6.91"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6099,7 +6099,16 @@ def run_gui(config_path: Path) -> int:
     kills_daily_ranking: list[PlayerKill] = []
     kills_global_ranking: list[PlayerKill] = []
     kills_ignored_players: list[IgnoredKillPlayer] = []
+    ff_queue_actions: Any | None = None
+    ff_queue_summary_frame: Any | None = None
+    ff_queue_table_frame: Any | None = None
     ff_queue_summary_widgets: list[Any] = []
+    ff_overlay_actions: Any | None = None
+    ff_overlay_site_actions: Any | None = None
+    ff_overlay_preview_frame: Any | None = None
+    tikfinity_ff_mappings_frame: Any | None = None
+    tikfinity_ff_users_frame: Any | None = None
+    tikfinity_ff_history_frame: Any | None = None
     manual_sync_after_id: str | None = None
     manual_poll_after_id: str | None = None
     manual_fetching = False
@@ -7571,621 +7580,623 @@ def run_gui(config_path: Path) -> int:
     kills_overlay_daily_frame = build_kills_overlay_rank_tab(kills_overlay_daily_tab)
     kills_overlay_global_frame = build_kills_overlay_rank_tab(kills_overlay_global_tab)
 
-    ff_queue_left = ctk.CTkScrollableFrame(
-        ff_queue_tab,
-        fg_color=bg,
-        corner_radius=0,
-        scrollbar_button_color=chip_bg,
-        scrollbar_button_hover_color=accent,
-    )
-    ff_queue_left.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
-    ff_queue_left.columnconfigure(0, weight=1)
-    ff_queue_left.rowconfigure(2, weight=1)
-
-    ff_queue_right = ctk.CTkFrame(ff_queue_tab, fg_color=bg, corner_radius=0)
-    ff_queue_right.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=0)
-    ff_queue_right.columnconfigure(0, weight=1)
-    ff_queue_right.rowconfigure(0, weight=1)
-
-    ff_queue_sync_card = card(
-        ff_queue_left,
-        "Fila Free Fire em tempo real",
-        "Controle a fila de jogadores e mantenha tudo sincronizado com o painel Jarvis.",
-    )
-    ff_queue_sync_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
-    ff_queue_sync_card.columnconfigure(1, weight=1)
-    ff_queue_sync_card.columnconfigure(3, weight=1)
-    section_label(ff_queue_sync_card, "URL da fila/Jarvis", 2)
-    entry(ff_queue_sync_card, ff_queue_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
-    section_label(ff_queue_sync_card, "Sala", 3)
-    entry(ff_queue_sync_card, ff_queue_room_var, width=180).grid(row=3, column=1, sticky="w", padx=18, pady=5)
-    section_label(ff_queue_sync_card, "Ler fila a cada", 3, column=2)
-    ff_poll_row = ctk.CTkFrame(ff_queue_sync_card, fg_color=panel, corner_radius=0)
-    ff_poll_row.grid(row=3, column=3, sticky="ew", padx=18, pady=5)
-    entry(ff_poll_row, ff_queue_poll_seconds_var, width=80).pack(side=tk.LEFT)
-    ctk.CTkLabel(ff_poll_row, text="segundos", text_color=muted, font=("Segoe UI", 12)).pack(side=tk.LEFT, padx=(8, 18))
-    ctk.CTkCheckBox(
-        ff_poll_row,
-        text="Sincronizar automaticamente",
-        variable=ff_queue_enabled_var,
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).pack(side=tk.LEFT)
-
-    ff_queue_metrics = ctk.CTkFrame(ff_queue_left, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    ff_queue_metrics.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
-    for column in range(2):
-        ff_queue_metrics.columnconfigure(column, weight=1)
-    for col, label in enumerate(("Na fila", "Jogando")):
-        ctk.CTkLabel(ff_queue_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
-            row=0, column=col, sticky="w", padx=18, pady=(14, 0)
+    if not ff_queue_site_sync_hidden:
+        ff_queue_left = ctk.CTkScrollableFrame(
+            ff_queue_tab,
+            fg_color=bg,
+            corner_radius=0,
+            scrollbar_button_color=chip_bg,
+            scrollbar_button_hover_color=accent,
         )
-    ctk.CTkLabel(ff_queue_metrics, textvariable=ff_queue_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
-        row=1, column=0, sticky="w", padx=18, pady=(0, 14)
-    )
-    ctk.CTkLabel(ff_queue_metrics, textvariable=ff_queue_playing_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
-        row=1, column=1, sticky="w", padx=18, pady=(0, 14)
-    )
-    ff_queue_summary_card = card(
-        ff_queue_right,
-        "Resumo de salas",
-        "Lista visual igual ao site: jogadores únicos e salas pendentes por estado.",
-    )
-    ff_queue_summary_card.grid(row=0, column=0, sticky="nsew", padx=(8, 12), pady=(12, 12))
-    ff_queue_summary_card.columnconfigure(0, weight=1)
-    ff_queue_summary_card.rowconfigure(3, weight=1)
-    ff_queue_summary_metrics = ctk.CTkFrame(
-        ff_queue_summary_card,
-        fg_color=panel_alt,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-    )
-    ff_queue_summary_metrics.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 10))
-    ff_queue_summary_metrics.columnconfigure(0, weight=1)
-    ff_queue_summary_metrics.columnconfigure(1, weight=1)
-    for column, (label, var) in enumerate(
-        (
-            ("Jogadores", ff_queue_summary_count_var),
-            ("Salas", ff_queue_summary_rooms_var),
+        ff_queue_left.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+        ff_queue_left.columnconfigure(0, weight=1)
+        ff_queue_left.rowconfigure(2, weight=1)
+
+        ff_queue_right = ctk.CTkFrame(ff_queue_tab, fg_color=bg, corner_radius=0)
+        ff_queue_right.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=0)
+        ff_queue_right.columnconfigure(0, weight=1)
+        ff_queue_right.rowconfigure(0, weight=1)
+
+        ff_queue_sync_card = card(
+            ff_queue_left,
+            "Fila Free Fire em tempo real",
+            "Controle a fila de jogadores e mantenha tudo sincronizado com o painel Jarvis.",
         )
-    ):
-        ctk.CTkLabel(ff_queue_summary_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
-            row=0, column=column, sticky="w", padx=12, pady=(10, 0)
-        )
-        ctk.CTkLabel(ff_queue_summary_metrics, textvariable=var, text_color=teal, font=("Segoe UI Semibold", 22)).grid(
-            row=1, column=column, sticky="w", padx=12, pady=(0, 10)
-        )
-    ff_queue_summary_frame = ctk.CTkScrollableFrame(
-        ff_queue_summary_card,
-        fg_color=field,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-        height=180,
-        scrollbar_button_color="#3a1518",
-        scrollbar_button_hover_color="#5a1d22",
-    )
-    ff_queue_summary_frame.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
-    ff_queue_summary_frame.columnconfigure(0, weight=1)
-
-    ff_queue_manual_card = card(
-        ff_queue_left,
-        "Adicionar jogador manualmente",
-        "Mesmo cadastro do site: nome, ID do membro, ID FF e quantidade de salas.",
-    )
-    ff_queue_manual_card.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
-    ff_queue_manual_card.columnconfigure(1, weight=1)
-    ff_queue_manual_card.columnconfigure(3, weight=1)
-    section_label(ff_queue_manual_card, "Nome", 2)
-    entry(ff_queue_manual_card, ff_queue_manual_name_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
-    section_label(ff_queue_manual_card, "ID membro", 3)
-    entry(ff_queue_manual_card, ff_queue_manual_user_id_var).grid(row=3, column=1, sticky="ew", padx=18, pady=4)
-    section_label(ff_queue_manual_card, "ID FF", 3, column=2)
-    entry(ff_queue_manual_card, ff_queue_manual_ff_id_var).grid(row=3, column=3, sticky="ew", padx=18, pady=4)
-    section_label(ff_queue_manual_card, "Salas", 4)
-    entry(ff_queue_manual_card, ff_queue_manual_rooms_var, width=90).grid(row=4, column=1, sticky="w", padx=18, pady=(4, 14))
-    ff_queue_manual_actions = ctk.CTkFrame(ff_queue_manual_card, fg_color=panel, corner_radius=0)
-    ff_queue_manual_actions.grid(row=4, column=2, columnspan=2, sticky="e", padx=18, pady=(4, 14))
-    button(ff_queue_manual_actions, "Adicionar no Jarvis", lambda: add_ff_queue_manual_member(), "accent", width=142).pack(
-        side=tk.LEFT, padx=(0, 8)
-    )
-    button(ff_queue_manual_actions, "Limpar", lambda: clear_ff_queue_manual_form(), "ghost", width=80).pack(side=tk.LEFT)
-
-    tikfinity_ff_card = card(
-        ff_queue_left,
-        "Salas por Gifts TikFinity",
-        "Converta moedas de presentes em salas e vincule espectadores ao cadastro da Fila FF.",
-    )
-    tikfinity_ff_card.grid(row=4, column=0, sticky="ew", padx=12, pady=8)
-    tikfinity_ff_card.columnconfigure(1, weight=1)
-    tikfinity_ff_card.columnconfigure(3, weight=1)
-    section_label(tikfinity_ff_card, "URL Jarvis", 2)
-    entry(tikfinity_ff_card, tikfinity_ff_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
-    section_label(tikfinity_ff_card, "Perfil", 3)
-    entry(tikfinity_ff_card, tikfinity_ff_profile_var, width=120).grid(row=3, column=1, sticky="w", padx=18, pady=4)
-    section_label(tikfinity_ff_card, "Moedas por sala", 3, column=2)
-    entry(tikfinity_ff_card, tikfinity_ff_coins_var, width=100).grid(row=3, column=3, sticky="w", padx=18, pady=4)
-    section_label(tikfinity_ff_card, "Token webhook", 4)
-    entry(tikfinity_ff_card, tikfinity_ff_token_var).grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
-    section_label(tikfinity_ff_card, "Webhook", 5)
-    ctk.CTkEntry(
-        tikfinity_ff_card,
-        textvariable=tikfinity_ff_webhook_var,
-        fg_color=field,
-        border_color=border,
-        text_color=fg,
-        state="readonly",
-    ).grid(row=5, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
-    tikfinity_ff_toggle_row = ctk.CTkFrame(tikfinity_ff_card, fg_color=panel, corner_radius=0)
-    tikfinity_ff_toggle_row.grid(row=6, column=0, columnspan=4, sticky="ew", padx=18, pady=(6, 4))
-    ctk.CTkCheckBox(
-        tikfinity_ff_toggle_row,
-        text="Ativar gifts do TikFinity",
-        variable=tikfinity_ff_enabled_var,
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).pack(side=tk.LEFT, padx=(0, 12))
-    ctk.CTkLabel(tikfinity_ff_toggle_row, textvariable=tikfinity_ff_summary_var, text_color=muted, font=("Segoe UI", 11)).pack(
-        side=tk.LEFT, fill=tk.X, expand=True
-    )
-    ctk.CTkLabel(tikfinity_ff_toggle_row, textvariable=tikfinity_ff_status_var, text_color=accent, font=("Segoe UI Semibold", 11)).pack(
-        side=tk.RIGHT
-    )
-    tikfinity_ff_actions = ctk.CTkFrame(tikfinity_ff_card, fg_color=panel, corner_radius=0)
-    tikfinity_ff_actions.grid(row=7, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 10))
-    button(tikfinity_ff_actions, "Buscar", lambda: fetch_tikfinity_ff_panel(force=True), "default", width=82).pack(side=tk.LEFT, padx=(0, 6))
-    button(tikfinity_ff_actions, "Salvar config", lambda: save_tikfinity_ff_config(), "accent", width=112).pack(side=tk.LEFT, padx=(0, 6))
-    button(tikfinity_ff_actions, "Copiar webhook", lambda: copy_tikfinity_ff_webhook(), "default", width=126).pack(side=tk.LEFT, padx=(0, 6))
-    button(tikfinity_ff_actions, "Limpar histórico", lambda: clear_tikfinity_ff_history(), "danger", width=126).pack(side=tk.LEFT)
-
-    tikfinity_ff_map_card = ctk.CTkFrame(tikfinity_ff_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    tikfinity_ff_map_card.grid(row=8, column=0, columnspan=4, sticky="ew", padx=18, pady=(2, 10))
-    tikfinity_ff_map_card.columnconfigure(1, weight=1)
-    tikfinity_ff_map_card.columnconfigure(3, weight=1)
-    section_label(tikfinity_ff_map_card, "TikTok", 0)
-    entry(tikfinity_ff_map_card, tikfinity_ff_map_handle_var).grid(row=0, column=1, sticky="ew", padx=10, pady=4)
-    section_label(tikfinity_ff_map_card, "ID membro", 0, column=2)
-    entry(tikfinity_ff_map_card, tikfinity_ff_map_user_id_var).grid(row=0, column=3, sticky="ew", padx=10, pady=4)
-    section_label(tikfinity_ff_map_card, "Nome", 1)
-    entry(tikfinity_ff_map_card, tikfinity_ff_map_display_var).grid(row=1, column=1, sticky="ew", padx=10, pady=4)
-    section_label(tikfinity_ff_map_card, "ID FF", 1, column=2)
-    entry(tikfinity_ff_map_card, tikfinity_ff_map_ff_id_var).grid(row=1, column=3, sticky="ew", padx=10, pady=4)
-    button(tikfinity_ff_map_card, "Vincular TikTok", lambda: add_tikfinity_ff_mapping(), "accent", width=130).grid(
-        row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(6, 10)
-    )
-
-    ctk.CTkLabel(tikfinity_ff_card, text="Vínculos", text_color=fg, font=("Segoe UI Semibold", 13)).grid(
-        row=9, column=0, columnspan=4, sticky="w", padx=18, pady=(4, 2)
-    )
-    tikfinity_ff_mappings_frame = ctk.CTkScrollableFrame(
-        tikfinity_ff_card,
-        fg_color=field,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-        height=112,
-        scrollbar_button_color=border,
-        scrollbar_button_hover_color=accent,
-    )
-    tikfinity_ff_mappings_frame.grid(row=10, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 8))
-    tikfinity_ff_mappings_frame.columnconfigure(0, weight=1)
-    ctk.CTkLabel(tikfinity_ff_card, text="Moedas acumuladas", text_color=fg, font=("Segoe UI Semibold", 13)).grid(
-        row=11, column=0, columnspan=4, sticky="w", padx=18, pady=(4, 2)
-    )
-    tikfinity_ff_users_frame = ctk.CTkScrollableFrame(
-        tikfinity_ff_card,
-        fg_color=field,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-        height=126,
-        scrollbar_button_color=border,
-        scrollbar_button_hover_color=accent,
-    )
-    tikfinity_ff_users_frame.grid(row=12, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 8))
-    tikfinity_ff_users_frame.columnconfigure(0, weight=1)
-    ctk.CTkLabel(tikfinity_ff_card, text="Histórico recente", text_color=fg, font=("Segoe UI Semibold", 13)).grid(
-        row=13, column=0, columnspan=4, sticky="w", padx=18, pady=(4, 2)
-    )
-    tikfinity_ff_history_frame = ctk.CTkScrollableFrame(
-        tikfinity_ff_card,
-        fg_color=field,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-        height=126,
-        scrollbar_button_color=border,
-        scrollbar_button_hover_color=accent,
-    )
-    tikfinity_ff_history_frame.grid(row=14, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
-    tikfinity_ff_history_frame.columnconfigure(0, weight=1)
-    ff_queue_manual_card.grid_remove()
-    tikfinity_ff_card.grid_remove()
-
-    ff_queue_card = card(
-        ff_queue_left,
-        "Fila FF",
-        "Organize jogadores por ordem, status e observações. As alterações podem ir para o Jarvis em tempo real.",
-    )
-    ff_queue_card.grid(row=2, column=0, sticky="nsew", padx=12, pady=(8, 12))
-    ff_queue_card.columnconfigure(0, weight=1)
-    ff_queue_card.rowconfigure(3, weight=1)
-    ff_queue_header = ctk.CTkFrame(ff_queue_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
-    ff_queue_header.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 0))
-    ff_queue_header.columnconfigure(0, weight=1)
-    ctk.CTkLabel(ff_queue_header, text="Nick", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
-        row=0, column=0, sticky="w", padx=14, pady=(0, 6)
-    )
-    ctk.CTkLabel(ff_queue_header, text="Observação", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
-        row=0, column=1, sticky="w", padx=12, pady=(0, 6)
-    )
-    ctk.CTkLabel(ff_queue_header, text="Salas", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
-        row=0, column=2, sticky="w", padx=12, pady=(0, 6)
-    )
-    ctk.CTkLabel(ff_queue_header, text="Status", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
-        row=0, column=3, sticky="w", padx=12, pady=(0, 6)
-    )
-    ff_queue_table_frame = ctk.CTkScrollableFrame(
-        ff_queue_card,
-        fg_color=field,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-        height=430,
-        scrollbar_button_color=border,
-        scrollbar_button_hover_color=accent,
-    )
-    ff_queue_table_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=18, pady=(0, 12))
-    ff_queue_table_frame.columnconfigure(0, weight=1)
-    ff_queue_actions = ctk.CTkFrame(ff_queue_card, fg_color=panel, corner_radius=0)
-    ff_queue_actions.grid(row=4, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
-
-    ff_overlay_controls = ctk.CTkScrollableFrame(
-        ff_overlay_tab,
-        fg_color=bg,
-        corner_radius=0,
-        scrollbar_button_color=chip_bg,
-        scrollbar_button_hover_color=accent,
-    )
-    ff_overlay_controls.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
-    ff_overlay_controls.columnconfigure(0, weight=1)
-
-    ff_overlay_sync_card = card(
-        ff_overlay_controls,
-        "Overlay FF sincronizado",
-        "Mostra Kills FF e Fila FF usando os mesmos dados em tempo real do painel Jarvis.",
-    )
-    ff_overlay_sync_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
-    ff_overlay_sync_card.columnconfigure(1, weight=1)
-    ctk.CTkLabel(
-        ff_overlay_sync_card,
-        text="Usa as URLs configuradas em Kills FF e Fila FF. O overlay atualiza quando o app lê ou envia dados para o Jarvis.",
-        text_color=muted,
-        font=("Segoe UI", 11),
-        wraplength=340,
-        justify="left",
-    ).grid(row=2, column=0, columnspan=2, sticky="ew", padx=18, pady=(10, 6))
-    section_label(ff_overlay_sync_card, "URL Overlay/Jarvis", 3)
-    entry(ff_overlay_sync_card, ff_overlay_url_var).grid(row=3, column=1, sticky="ew", padx=18, pady=5)
-    ff_overlay_realtime_row = ctk.CTkFrame(ff_overlay_sync_card, fg_color=panel, corner_radius=0)
-    ff_overlay_realtime_row.grid(row=4, column=0, columnspan=2, sticky="ew", padx=18, pady=(4, 2))
-    ff_overlay_realtime_row.columnconfigure(0, weight=1)
-    ctk.CTkLabel(
-        ff_overlay_realtime_row,
-        text="Kills FF em modo manual: use os botões Salvar ou Atualizar.",
-        text_color=fg,
-        font=("Segoe UI Semibold", 12),
-    ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
-    ctk.CTkCheckBox(
-        ff_overlay_realtime_row,
-        text="Sincronizar Fila FF automaticamente",
-        variable=ff_queue_enabled_var,
-        command=lambda: schedule_ff_queue_poll(),
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).grid(row=1, column=0, sticky="w", padx=(0, 12), pady=4)
-    ctk.CTkCheckBox(
-        ff_overlay_realtime_row,
-        text="Sincronizar Overlay FF automaticamente",
-        variable=ff_overlay_enabled_var,
-        command=lambda: schedule_ff_overlay_sync(100),
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).grid(row=2, column=0, sticky="w", padx=(0, 12), pady=4)
-    ff_overlay_actions = ctk.CTkFrame(ff_overlay_sync_card, fg_color=panel, corner_radius=0)
-    ff_overlay_actions.grid(row=5, column=0, columnspan=2, sticky="ew", padx=18, pady=(8, 18))
-
-    ff_overlay_site_card = card(
-        ff_overlay_controls,
-        "Overlay OBS do site",
-        "Carregue e salve a configuracao usada na URL /freefire/overlay do Jarvis.",
-    )
-    ff_overlay_site_card.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
-    ff_overlay_site_card.columnconfigure(1, weight=1)
-    ff_overlay_site_card.columnconfigure(3, weight=1)
-    section_label(ff_overlay_site_card, "Endpoint config", 2)
-    entry(ff_overlay_site_card, ff_overlay_config_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
-    section_label(ff_overlay_site_card, "Perfil", 3)
-    entry(ff_overlay_site_card, ff_overlay_site_profile_var, width=150).grid(row=3, column=1, sticky="w", padx=18, pady=5)
-    section_label(ff_overlay_site_card, "Nome do perfil", 3, column=2)
-    entry(ff_overlay_site_card, ff_overlay_site_label_var).grid(row=3, column=3, sticky="ew", padx=18, pady=5)
-    section_label(ff_overlay_site_card, "URL OBS", 4)
-    entry(ff_overlay_site_card, ff_overlay_site_obs_url_var).grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
-
-    ff_overlay_site_toggles = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel, corner_radius=0)
-    ff_overlay_site_toggles.grid(row=5, column=0, columnspan=4, sticky="ew", padx=18, pady=(6, 6))
-    for toggle_column in range(3):
-        ff_overlay_site_toggles.columnconfigure(toggle_column, weight=1)
-    for toggle_index, (text, var) in enumerate(
-        (
-            ("Rank geral", ff_overlay_site_enabled_general_var),
-            ("Rank do dia", ff_overlay_site_enabled_daily_var),
-            ("Fila FF", ff_overlay_site_enabled_queue_var),
-            ("Fundo blocos", ff_overlay_site_panel_bg_var),
-            ("Mostrar #", ff_overlay_site_rank_prefix_var),
-            ("Medalhas", ff_overlay_site_medals_var),
-        )
-    ):
+        ff_queue_sync_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+        ff_queue_sync_card.columnconfigure(1, weight=1)
+        ff_queue_sync_card.columnconfigure(3, weight=1)
+        section_label(ff_queue_sync_card, "URL da fila/Jarvis", 2)
+        entry(ff_queue_sync_card, ff_queue_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+        section_label(ff_queue_sync_card, "Sala", 3)
+        entry(ff_queue_sync_card, ff_queue_room_var, width=180).grid(row=3, column=1, sticky="w", padx=18, pady=5)
+        section_label(ff_queue_sync_card, "Ler fila a cada", 3, column=2)
+        ff_poll_row = ctk.CTkFrame(ff_queue_sync_card, fg_color=panel, corner_radius=0)
+        ff_poll_row.grid(row=3, column=3, sticky="ew", padx=18, pady=5)
+        entry(ff_poll_row, ff_queue_poll_seconds_var, width=80).pack(side=tk.LEFT)
+        ctk.CTkLabel(ff_poll_row, text="segundos", text_color=muted, font=("Segoe UI", 12)).pack(side=tk.LEFT, padx=(8, 18))
         ctk.CTkCheckBox(
-            ff_overlay_site_toggles,
-            text=text,
-            variable=var,
+            ff_poll_row,
+            text="Sincronizar automaticamente",
+            variable=ff_queue_enabled_var,
             fg_color=accent,
             hover_color=accent_hover,
             border_color=border,
             text_color=fg,
-        ).grid(row=toggle_index // 3, column=toggle_index % 3, sticky="w", padx=(0, 12), pady=4)
+        ).pack(side=tk.LEFT)
 
-    section_label(ff_overlay_site_card, "Layout", 6)
-    combo(ff_overlay_site_card, ff_overlay_site_layout_var, ["horizontal", "vertical", "grid"], width=150).grid(
-        row=6, column=1, sticky="w", padx=18, pady=5
-    )
-    section_label(ff_overlay_site_card, "Fonte", 6, column=2)
-    combo(ff_overlay_site_card, ff_overlay_site_font_var, ["impact", "bebas", "rajdhani", "inter", "mono"], width=150).grid(
-        row=6, column=3, sticky="w", padx=18, pady=5
-    )
-    section_label(ff_overlay_site_card, "Animacao", 7)
-    combo(ff_overlay_site_card, ff_overlay_site_animation_var, ["none", "fade", "slide", "pop"], width=150).grid(
-        row=7, column=1, sticky="w", padx=18, pady=5
-    )
-    section_label(ff_overlay_site_card, "Refresh ms", 7, column=2)
-    entry(ff_overlay_site_card, ff_overlay_site_refresh_var, width=110).grid(row=7, column=3, sticky="w", padx=18, pady=5)
-    section_label(ff_overlay_site_card, "Troca seg.", 8)
-    entry(ff_overlay_site_card, ff_overlay_site_switch_var, width=110).grid(row=8, column=1, sticky="w", padx=18, pady=5)
-    section_label(ff_overlay_site_card, "Largura bloco", 8, column=2)
-    entry(ff_overlay_site_card, ff_overlay_site_panel_width_var, width=110).grid(row=8, column=3, sticky="w", padx=18, pady=5)
-    section_label(ff_overlay_site_card, "Limites", 9)
-    ff_overlay_site_limits = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel, corner_radius=0)
-    ff_overlay_site_limits.grid(row=9, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
-    entry(ff_overlay_site_limits, ff_overlay_site_limit_general_var, width=70).pack(side=tk.LEFT)
-    ctk.CTkLabel(ff_overlay_site_limits, text="geral", text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(6, 12))
-    entry(ff_overlay_site_limits, ff_overlay_site_limit_daily_var, width=70).pack(side=tk.LEFT)
-    ctk.CTkLabel(ff_overlay_site_limits, text="dia", text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(6, 12))
-    entry(ff_overlay_site_limits, ff_overlay_site_limit_queue_var, width=70).pack(side=tk.LEFT)
-    ctk.CTkLabel(ff_overlay_site_limits, text="fila", text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(6, 12))
-
-    ff_overlay_site_dimensions = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    ff_overlay_site_dimensions.grid(row=10, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 6))
-    for dimension_column in range(6):
-        ff_overlay_site_dimensions.columnconfigure(dimension_column, weight=1)
-    ctk.CTkLabel(
-        ff_overlay_site_dimensions,
-        text="Tamanho e espaçamento",
-        text_color=fg,
-        font=("Segoe UI Semibold", 12),
-        anchor="w",
-    ).grid(row=0, column=0, columnspan=6, sticky="ew", padx=12, pady=(10, 2))
-    for index, (label, var, width) in enumerate(
-        (
-            ("Gap", ff_overlay_site_gap_var, 70),
-            ("Padding", ff_overlay_site_padding_var, 70),
-            ("Título", ff_overlay_site_title_size_var, 70),
-            ("Linha", ff_overlay_site_row_size_var, 70),
-            ("Valor", ff_overlay_site_value_size_var, 70),
-            ("Altura", ff_overlay_site_row_height_var, 70),
+        ff_queue_metrics = ctk.CTkFrame(ff_queue_left, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+        ff_queue_metrics.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+        for column in range(2):
+            ff_queue_metrics.columnconfigure(column, weight=1)
+        for col, label in enumerate(("Na fila", "Jogando")):
+            ctk.CTkLabel(ff_queue_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+                row=0, column=col, sticky="w", padx=18, pady=(14, 0)
+            )
+        ctk.CTkLabel(ff_queue_metrics, textvariable=ff_queue_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+            row=1, column=0, sticky="w", padx=18, pady=(0, 14)
         )
-    ):
-        ctk.CTkLabel(ff_overlay_site_dimensions, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
-            row=1, column=index, sticky="w", padx=12, pady=(4, 0)
+        ctk.CTkLabel(ff_queue_metrics, textvariable=ff_queue_playing_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+            row=1, column=1, sticky="w", padx=18, pady=(0, 14)
         )
-        entry(ff_overlay_site_dimensions, var, width=width).grid(row=2, column=index, sticky="ew", padx=12, pady=(0, 10))
-
-    ff_overlay_site_colors = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    ff_overlay_site_colors.grid(row=11, column=0, columnspan=4, sticky="ew", padx=18, pady=6)
-    for color_column in range(6):
-        ff_overlay_site_colors.columnconfigure(color_column, weight=1)
-    ctk.CTkLabel(
-        ff_overlay_site_colors,
-        text="Fundo, linha e acento",
-        text_color=fg,
-        font=("Segoe UI Semibold", 12),
-        anchor="w",
-    ).grid(row=0, column=0, columnspan=6, sticky="ew", padx=12, pady=(10, 2))
-    for index, (label, var, width) in enumerate(
-        (
-            ("Fundo", ff_overlay_site_panel_bg_color_var, 92),
-            ("Opac.", ff_overlay_site_panel_bg_opacity_var, 70),
-            ("Raio", ff_overlay_site_panel_radius_var, 70),
-            ("Linha", ff_overlay_site_row_bg_color_var, 92),
-            ("Opac.", ff_overlay_site_row_bg_opacity_var, 70),
-            ("Acento", ff_overlay_site_accent_width_var, 70),
+        ff_queue_summary_card = card(
+            ff_queue_right,
+            "Resumo de salas",
+            "Lista visual igual ao site: jogadores únicos e salas pendentes por estado.",
         )
-    ):
-        ctk.CTkLabel(ff_overlay_site_colors, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
-            row=1, column=index, sticky="w", padx=12, pady=(4, 0)
+        ff_queue_summary_card.grid(row=0, column=0, sticky="nsew", padx=(8, 12), pady=(12, 12))
+        ff_queue_summary_card.columnconfigure(0, weight=1)
+        ff_queue_summary_card.rowconfigure(3, weight=1)
+        ff_queue_summary_metrics = ctk.CTkFrame(
+            ff_queue_summary_card,
+            fg_color=panel_alt,
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
         )
-        entry(ff_overlay_site_colors, var, width=width).grid(row=2, column=index, sticky="ew", padx=12, pady=(0, 10))
-
-    ff_overlay_site_panels = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    ff_overlay_site_panels.grid(row=12, column=0, columnspan=4, sticky="ew", padx=18, pady=6)
-    for panel_column in range(3):
-        ff_overlay_site_panels.columnconfigure(panel_column, weight=1)
-    ctk.CTkLabel(
-        ff_overlay_site_panels,
-        text="Títulos e cores por painel",
-        text_color=fg,
-        font=("Segoe UI Semibold", 12),
-        anchor="w",
-    ).grid(row=0, column=0, columnspan=3, sticky="ew", padx=12, pady=(10, 2))
-    for column, (panel_key, panel_title) in enumerate((("general", "Geral"), ("daily", "Dia"), ("queue", "Fila"))):
-        panel_box = ctk.CTkFrame(ff_overlay_site_panels, fg_color=field, corner_radius=10, border_width=1, border_color=border)
-        panel_box.grid(row=1, column=column, sticky="nsew", padx=8, pady=(4, 12))
-        panel_box.columnconfigure(1, weight=1)
-        ctk.CTkLabel(panel_box, text=panel_title, text_color=fg, font=("Segoe UI Semibold", 12), anchor="w").grid(
-            row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 2)
-        )
-        for row_index, (label, field_key) in enumerate(
+        ff_queue_summary_metrics.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 10))
+        ff_queue_summary_metrics.columnconfigure(0, weight=1)
+        ff_queue_summary_metrics.columnconfigure(1, weight=1)
+        for column, (label, var) in enumerate(
             (
-                ("Título", "title"),
-                ("Cor título", "title_color"),
-                ("Cor #", "rank_color"),
-                ("Cor nome", "name_color"),
-                ("Cor valor", "value_color"),
-                ("Cor acento", "accent_color"),
-            ),
-            start=1,
+                ("Jogadores", ff_queue_summary_count_var),
+                ("Salas", ff_queue_summary_rooms_var),
+            )
         ):
-            ctk.CTkLabel(panel_box, text=label, text_color=muted, font=("Segoe UI", 10)).grid(
-                row=row_index, column=0, sticky="w", padx=(10, 6), pady=3
+            ctk.CTkLabel(ff_queue_summary_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+                row=0, column=column, sticky="w", padx=12, pady=(10, 0)
             )
-            entry(panel_box, ff_overlay_site_panel_vars[panel_key][field_key], width=104).grid(
-                row=row_index, column=1, sticky="ew", padx=(0, 10), pady=3
+            ctk.CTkLabel(ff_queue_summary_metrics, textvariable=var, text_color=teal, font=("Segoe UI Semibold", 22)).grid(
+                row=1, column=column, sticky="w", padx=12, pady=(0, 10)
             )
-    ctk.CTkLabel(
-        ff_overlay_site_card,
-        textvariable=ff_overlay_site_status_var,
-        text_color=accent,
-        font=("Segoe UI Semibold", 12),
-        anchor="w",
-    ).grid(row=13, column=0, columnspan=4, sticky="ew", padx=18, pady=(6, 0))
-    ff_overlay_site_actions = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel, corner_radius=0)
-    ff_overlay_site_actions.grid(row=14, column=0, columnspan=4, sticky="ew", padx=18, pady=(10, 18))
+        ff_queue_summary_frame = ctk.CTkScrollableFrame(
+            ff_queue_summary_card,
+            fg_color=field,
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
+            height=180,
+            scrollbar_button_color="#3a1518",
+            scrollbar_button_hover_color="#5a1d22",
+        )
+        ff_queue_summary_frame.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
+        ff_queue_summary_frame.columnconfigure(0, weight=1)
 
-    ff_overlay_metrics = ctk.CTkFrame(
-        ff_overlay_controls,
-        fg_color=panel_alt,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-    )
-    ff_overlay_metrics.grid(row=2, column=0, sticky="ew", padx=12, pady=8)
-    for column in range(3):
-        ff_overlay_metrics.columnconfigure(column, weight=1)
-    for col, (label, value_var) in enumerate(
-        (
-            ("Jogadores", manual_count_var),
-            ("Kills", manual_total_var),
-            ("Fila ativa", ff_queue_count_var),
+        ff_queue_manual_card = card(
+            ff_queue_left,
+            "Adicionar jogador manualmente",
+            "Mesmo cadastro do site: nome, ID do membro, ID FF e quantidade de salas.",
         )
-    ):
-        ctk.CTkLabel(ff_overlay_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
-            row=0, column=col, sticky="w", padx=16, pady=(12, 0)
+        ff_queue_manual_card.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
+        ff_queue_manual_card.columnconfigure(1, weight=1)
+        ff_queue_manual_card.columnconfigure(3, weight=1)
+        section_label(ff_queue_manual_card, "Nome", 2)
+        entry(ff_queue_manual_card, ff_queue_manual_name_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
+        section_label(ff_queue_manual_card, "ID membro", 3)
+        entry(ff_queue_manual_card, ff_queue_manual_user_id_var).grid(row=3, column=1, sticky="ew", padx=18, pady=4)
+        section_label(ff_queue_manual_card, "ID FF", 3, column=2)
+        entry(ff_queue_manual_card, ff_queue_manual_ff_id_var).grid(row=3, column=3, sticky="ew", padx=18, pady=4)
+        section_label(ff_queue_manual_card, "Salas", 4)
+        entry(ff_queue_manual_card, ff_queue_manual_rooms_var, width=90).grid(row=4, column=1, sticky="w", padx=18, pady=(4, 14))
+        ff_queue_manual_actions = ctk.CTkFrame(ff_queue_manual_card, fg_color=panel, corner_radius=0)
+        ff_queue_manual_actions.grid(row=4, column=2, columnspan=2, sticky="e", padx=18, pady=(4, 14))
+        button(ff_queue_manual_actions, "Adicionar no Jarvis", lambda: add_ff_queue_manual_member(), "accent", width=142).pack(
+            side=tk.LEFT, padx=(0, 8)
         )
-        ctk.CTkLabel(ff_overlay_metrics, textvariable=value_var, text_color=teal, font=("Segoe UI Semibold", 24)).grid(
-            row=1, column=col, sticky="w", padx=16, pady=(0, 12)
-        )
-    ff_overlay_options = card(ff_overlay_controls, "Aparencia do overlay", "Controle a janela que fica sobre o jogo ou OBS.")
-    ff_overlay_options.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
-    ff_overlay_options.columnconfigure(1, weight=1)
-    ctk.CTkLabel(ff_overlay_options, text="Opacidade", text_color=muted, font=("Segoe UI", 11)).grid(
-        row=2, column=0, sticky="w", padx=18, pady=(10, 4)
-    )
-    ff_overlay_opacity_slider = ctk.CTkSlider(
-        ff_overlay_options,
-        from_=35,
-        to=100,
-        number_of_steps=65,
-        variable=ff_overlay_opacity_var,
-        command=lambda _value: apply_ff_overlay_settings(refresh=True),
-    )
-    ff_overlay_opacity_slider.grid(row=2, column=1, sticky="ew", padx=8, pady=(10, 4))
-    ctk.CTkLabel(ff_overlay_options, textvariable=ff_overlay_opacity_text, text_color=muted, font=("Segoe UI", 11)).grid(
-        row=2, column=2, sticky="e", padx=(8, 18), pady=(10, 4)
-    )
-    ctk.CTkLabel(ff_overlay_options, text="Largura", text_color=muted, font=("Segoe UI", 11)).grid(
-        row=3, column=0, sticky="w", padx=18, pady=4
-    )
-    ff_overlay_width_slider = ctk.CTkSlider(
-        ff_overlay_options,
-        from_=420,
-        to=1400,
-        number_of_steps=98,
-        variable=ff_overlay_width_var,
-        command=lambda _value: apply_ff_overlay_settings(refresh=True),
-    )
-    ff_overlay_width_slider.grid(row=3, column=1, sticky="ew", padx=8, pady=4)
-    ctk.CTkLabel(ff_overlay_options, textvariable=ff_overlay_size_text, text_color=fg, font=("Segoe UI Semibold", 11)).grid(
-        row=3, column=2, sticky="e", padx=(8, 18), pady=4
-    )
-    ctk.CTkLabel(ff_overlay_options, text="Altura", text_color=muted, font=("Segoe UI", 11)).grid(
-        row=4, column=0, sticky="w", padx=18, pady=4
-    )
-    ff_overlay_height_slider = ctk.CTkSlider(
-        ff_overlay_options,
-        from_=240,
-        to=900,
-        number_of_steps=66,
-        variable=ff_overlay_height_var,
-        command=lambda _value: apply_ff_overlay_settings(refresh=True),
-    )
-    ff_overlay_height_slider.grid(row=4, column=1, sticky="ew", padx=8, pady=4)
-    ff_overlay_toggle_row = ctk.CTkFrame(ff_overlay_options, fg_color=panel, corner_radius=0)
-    ff_overlay_toggle_row.grid(row=5, column=0, columnspan=3, sticky="ew", padx=18, pady=(8, 18))
-    for col in range(3):
-        ff_overlay_toggle_row.columnconfigure(col, weight=1)
-    ctk.CTkCheckBox(
-        ff_overlay_toggle_row,
-        text="Mostrar Kills FF",
-        variable=ff_overlay_show_kills_var,
-        command=lambda: refresh_ff_overlay(force=True),
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
-    ctk.CTkCheckBox(
-        ff_overlay_toggle_row,
-        text="Mostrar Fila FF",
-        variable=ff_overlay_show_queue_var,
-        command=lambda: refresh_ff_overlay(force=True),
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).grid(row=0, column=1, sticky="w", padx=(0, 12), pady=4)
-    ctk.CTkCheckBox(
-        ff_overlay_toggle_row,
-        text="Compacto",
-        variable=ff_overlay_compact_var,
-        command=lambda: refresh_ff_overlay(force=True),
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).grid(row=0, column=2, sticky="w", padx=(0, 12), pady=4)
+        button(ff_queue_manual_actions, "Limpar", lambda: clear_ff_queue_manual_form(), "ghost", width=80).pack(side=tk.LEFT)
 
-    ff_overlay_preview_card = card(ff_overlay_tab, "Preview Overlay FF", "Visual que sera usado na janela de overlay.")
-    ff_overlay_preview_card.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=(12, 12))
-    ff_overlay_preview_card.columnconfigure(0, weight=1)
-    ff_overlay_preview_card.rowconfigure(2, weight=1)
-    ff_overlay_preview_frame = ctk.CTkFrame(
-        ff_overlay_preview_card,
-        fg_color="#050609",
-        corner_radius=14,
-        border_width=1,
-        border_color=accent,
-    )
-    ff_overlay_preview_frame.grid(row=2, column=0, sticky="nsew", padx=18, pady=(8, 18))
-    ff_overlay_preview_frame.columnconfigure(0, weight=1)
+        tikfinity_ff_card = card(
+            ff_queue_left,
+            "Salas por Gifts TikFinity",
+            "Converta moedas de presentes em salas e vincule espectadores ao cadastro da Fila FF.",
+        )
+        tikfinity_ff_card.grid(row=4, column=0, sticky="ew", padx=12, pady=8)
+        tikfinity_ff_card.columnconfigure(1, weight=1)
+        tikfinity_ff_card.columnconfigure(3, weight=1)
+        section_label(tikfinity_ff_card, "URL Jarvis", 2)
+        entry(tikfinity_ff_card, tikfinity_ff_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
+        section_label(tikfinity_ff_card, "Perfil", 3)
+        entry(tikfinity_ff_card, tikfinity_ff_profile_var, width=120).grid(row=3, column=1, sticky="w", padx=18, pady=4)
+        section_label(tikfinity_ff_card, "Moedas por sala", 3, column=2)
+        entry(tikfinity_ff_card, tikfinity_ff_coins_var, width=100).grid(row=3, column=3, sticky="w", padx=18, pady=4)
+        section_label(tikfinity_ff_card, "Token webhook", 4)
+        entry(tikfinity_ff_card, tikfinity_ff_token_var).grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
+        section_label(tikfinity_ff_card, "Webhook", 5)
+        ctk.CTkEntry(
+            tikfinity_ff_card,
+            textvariable=tikfinity_ff_webhook_var,
+            fg_color=field,
+            border_color=border,
+            text_color=fg,
+            state="readonly",
+        ).grid(row=5, column=1, columnspan=3, sticky="ew", padx=18, pady=4)
+        tikfinity_ff_toggle_row = ctk.CTkFrame(tikfinity_ff_card, fg_color=panel, corner_radius=0)
+        tikfinity_ff_toggle_row.grid(row=6, column=0, columnspan=4, sticky="ew", padx=18, pady=(6, 4))
+        ctk.CTkCheckBox(
+            tikfinity_ff_toggle_row,
+            text="Ativar gifts do TikFinity",
+            variable=tikfinity_ff_enabled_var,
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).pack(side=tk.LEFT, padx=(0, 12))
+        ctk.CTkLabel(tikfinity_ff_toggle_row, textvariable=tikfinity_ff_summary_var, text_color=muted, font=("Segoe UI", 11)).pack(
+            side=tk.LEFT, fill=tk.X, expand=True
+        )
+        ctk.CTkLabel(tikfinity_ff_toggle_row, textvariable=tikfinity_ff_status_var, text_color=accent, font=("Segoe UI Semibold", 11)).pack(
+            side=tk.RIGHT
+        )
+        tikfinity_ff_actions = ctk.CTkFrame(tikfinity_ff_card, fg_color=panel, corner_radius=0)
+        tikfinity_ff_actions.grid(row=7, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 10))
+        button(tikfinity_ff_actions, "Buscar", lambda: fetch_tikfinity_ff_panel(force=True), "default", width=82).pack(side=tk.LEFT, padx=(0, 6))
+        button(tikfinity_ff_actions, "Salvar config", lambda: save_tikfinity_ff_config(), "accent", width=112).pack(side=tk.LEFT, padx=(0, 6))
+        button(tikfinity_ff_actions, "Copiar webhook", lambda: copy_tikfinity_ff_webhook(), "default", width=126).pack(side=tk.LEFT, padx=(0, 6))
+        button(tikfinity_ff_actions, "Limpar histórico", lambda: clear_tikfinity_ff_history(), "danger", width=126).pack(side=tk.LEFT)
+
+        tikfinity_ff_map_card = ctk.CTkFrame(tikfinity_ff_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+        tikfinity_ff_map_card.grid(row=8, column=0, columnspan=4, sticky="ew", padx=18, pady=(2, 10))
+        tikfinity_ff_map_card.columnconfigure(1, weight=1)
+        tikfinity_ff_map_card.columnconfigure(3, weight=1)
+        section_label(tikfinity_ff_map_card, "TikTok", 0)
+        entry(tikfinity_ff_map_card, tikfinity_ff_map_handle_var).grid(row=0, column=1, sticky="ew", padx=10, pady=4)
+        section_label(tikfinity_ff_map_card, "ID membro", 0, column=2)
+        entry(tikfinity_ff_map_card, tikfinity_ff_map_user_id_var).grid(row=0, column=3, sticky="ew", padx=10, pady=4)
+        section_label(tikfinity_ff_map_card, "Nome", 1)
+        entry(tikfinity_ff_map_card, tikfinity_ff_map_display_var).grid(row=1, column=1, sticky="ew", padx=10, pady=4)
+        section_label(tikfinity_ff_map_card, "ID FF", 1, column=2)
+        entry(tikfinity_ff_map_card, tikfinity_ff_map_ff_id_var).grid(row=1, column=3, sticky="ew", padx=10, pady=4)
+        button(tikfinity_ff_map_card, "Vincular TikTok", lambda: add_tikfinity_ff_mapping(), "accent", width=130).grid(
+            row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(6, 10)
+        )
+
+        ctk.CTkLabel(tikfinity_ff_card, text="Vínculos", text_color=fg, font=("Segoe UI Semibold", 13)).grid(
+            row=9, column=0, columnspan=4, sticky="w", padx=18, pady=(4, 2)
+        )
+        tikfinity_ff_mappings_frame = ctk.CTkScrollableFrame(
+            tikfinity_ff_card,
+            fg_color=field,
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
+            height=112,
+            scrollbar_button_color=border,
+            scrollbar_button_hover_color=accent,
+        )
+        tikfinity_ff_mappings_frame.grid(row=10, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 8))
+        tikfinity_ff_mappings_frame.columnconfigure(0, weight=1)
+        ctk.CTkLabel(tikfinity_ff_card, text="Moedas acumuladas", text_color=fg, font=("Segoe UI Semibold", 13)).grid(
+            row=11, column=0, columnspan=4, sticky="w", padx=18, pady=(4, 2)
+        )
+        tikfinity_ff_users_frame = ctk.CTkScrollableFrame(
+            tikfinity_ff_card,
+            fg_color=field,
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
+            height=126,
+            scrollbar_button_color=border,
+            scrollbar_button_hover_color=accent,
+        )
+        tikfinity_ff_users_frame.grid(row=12, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 8))
+        tikfinity_ff_users_frame.columnconfigure(0, weight=1)
+        ctk.CTkLabel(tikfinity_ff_card, text="Histórico recente", text_color=fg, font=("Segoe UI Semibold", 13)).grid(
+            row=13, column=0, columnspan=4, sticky="w", padx=18, pady=(4, 2)
+        )
+        tikfinity_ff_history_frame = ctk.CTkScrollableFrame(
+            tikfinity_ff_card,
+            fg_color=field,
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
+            height=126,
+            scrollbar_button_color=border,
+            scrollbar_button_hover_color=accent,
+        )
+        tikfinity_ff_history_frame.grid(row=14, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
+        tikfinity_ff_history_frame.columnconfigure(0, weight=1)
+        ff_queue_manual_card.grid_remove()
+        tikfinity_ff_card.grid_remove()
+
+        ff_queue_card = card(
+            ff_queue_left,
+            "Fila FF",
+            "Organize jogadores por ordem, status e observações. As alterações podem ir para o Jarvis em tempo real.",
+        )
+        ff_queue_card.grid(row=2, column=0, sticky="nsew", padx=12, pady=(8, 12))
+        ff_queue_card.columnconfigure(0, weight=1)
+        ff_queue_card.rowconfigure(3, weight=1)
+        ff_queue_header = ctk.CTkFrame(ff_queue_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
+        ff_queue_header.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 0))
+        ff_queue_header.columnconfigure(0, weight=1)
+        ctk.CTkLabel(ff_queue_header, text="Nick", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+            row=0, column=0, sticky="w", padx=14, pady=(0, 6)
+        )
+        ctk.CTkLabel(ff_queue_header, text="Observação", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+            row=0, column=1, sticky="w", padx=12, pady=(0, 6)
+        )
+        ctk.CTkLabel(ff_queue_header, text="Salas", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+            row=0, column=2, sticky="w", padx=12, pady=(0, 6)
+        )
+        ctk.CTkLabel(ff_queue_header, text="Status", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
+            row=0, column=3, sticky="w", padx=12, pady=(0, 6)
+        )
+        ff_queue_table_frame = ctk.CTkScrollableFrame(
+            ff_queue_card,
+            fg_color=field,
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
+            height=430,
+            scrollbar_button_color=border,
+            scrollbar_button_hover_color=accent,
+        )
+        ff_queue_table_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=18, pady=(0, 12))
+        ff_queue_table_frame.columnconfigure(0, weight=1)
+        ff_queue_actions = ctk.CTkFrame(ff_queue_card, fg_color=panel, corner_radius=0)
+        ff_queue_actions.grid(row=4, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
+
+    if not ff_overlay_site_sync_hidden:
+        ff_overlay_controls = ctk.CTkScrollableFrame(
+            ff_overlay_tab,
+            fg_color=bg,
+            corner_radius=0,
+            scrollbar_button_color=chip_bg,
+            scrollbar_button_hover_color=accent,
+        )
+        ff_overlay_controls.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=0)
+        ff_overlay_controls.columnconfigure(0, weight=1)
+
+        ff_overlay_sync_card = card(
+            ff_overlay_controls,
+            "Overlay FF sincronizado",
+            "Mostra Kills FF e Fila FF usando os mesmos dados em tempo real do painel Jarvis.",
+        )
+        ff_overlay_sync_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+        ff_overlay_sync_card.columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            ff_overlay_sync_card,
+            text="Usa as URLs configuradas em Kills FF e Fila FF. O overlay atualiza quando o app lê ou envia dados para o Jarvis.",
+            text_color=muted,
+            font=("Segoe UI", 11),
+            wraplength=340,
+            justify="left",
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", padx=18, pady=(10, 6))
+        section_label(ff_overlay_sync_card, "URL Overlay/Jarvis", 3)
+        entry(ff_overlay_sync_card, ff_overlay_url_var).grid(row=3, column=1, sticky="ew", padx=18, pady=5)
+        ff_overlay_realtime_row = ctk.CTkFrame(ff_overlay_sync_card, fg_color=panel, corner_radius=0)
+        ff_overlay_realtime_row.grid(row=4, column=0, columnspan=2, sticky="ew", padx=18, pady=(4, 2))
+        ff_overlay_realtime_row.columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            ff_overlay_realtime_row,
+            text="Kills FF em modo manual: use os botões Salvar ou Atualizar.",
+            text_color=fg,
+            font=("Segoe UI Semibold", 12),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
+        ctk.CTkCheckBox(
+            ff_overlay_realtime_row,
+            text="Sincronizar Fila FF automaticamente",
+            variable=ff_queue_enabled_var,
+            command=lambda: schedule_ff_queue_poll(),
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=1, column=0, sticky="w", padx=(0, 12), pady=4)
+        ctk.CTkCheckBox(
+            ff_overlay_realtime_row,
+            text="Sincronizar Overlay FF automaticamente",
+            variable=ff_overlay_enabled_var,
+            command=lambda: schedule_ff_overlay_sync(100),
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=2, column=0, sticky="w", padx=(0, 12), pady=4)
+        ff_overlay_actions = ctk.CTkFrame(ff_overlay_sync_card, fg_color=panel, corner_radius=0)
+        ff_overlay_actions.grid(row=5, column=0, columnspan=2, sticky="ew", padx=18, pady=(8, 18))
+
+        ff_overlay_site_card = card(
+            ff_overlay_controls,
+            "Overlay OBS do site",
+            "Carregue e salve a configuracao usada na URL /freefire/overlay do Jarvis.",
+        )
+        ff_overlay_site_card.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+        ff_overlay_site_card.columnconfigure(1, weight=1)
+        ff_overlay_site_card.columnconfigure(3, weight=1)
+        section_label(ff_overlay_site_card, "Endpoint config", 2)
+        entry(ff_overlay_site_card, ff_overlay_config_url_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+        section_label(ff_overlay_site_card, "Perfil", 3)
+        entry(ff_overlay_site_card, ff_overlay_site_profile_var, width=150).grid(row=3, column=1, sticky="w", padx=18, pady=5)
+        section_label(ff_overlay_site_card, "Nome do perfil", 3, column=2)
+        entry(ff_overlay_site_card, ff_overlay_site_label_var).grid(row=3, column=3, sticky="ew", padx=18, pady=5)
+        section_label(ff_overlay_site_card, "URL OBS", 4)
+        entry(ff_overlay_site_card, ff_overlay_site_obs_url_var).grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+
+        ff_overlay_site_toggles = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel, corner_radius=0)
+        ff_overlay_site_toggles.grid(row=5, column=0, columnspan=4, sticky="ew", padx=18, pady=(6, 6))
+        for toggle_column in range(3):
+            ff_overlay_site_toggles.columnconfigure(toggle_column, weight=1)
+        for toggle_index, (text, var) in enumerate(
+            (
+                ("Rank geral", ff_overlay_site_enabled_general_var),
+                ("Rank do dia", ff_overlay_site_enabled_daily_var),
+                ("Fila FF", ff_overlay_site_enabled_queue_var),
+                ("Fundo blocos", ff_overlay_site_panel_bg_var),
+                ("Mostrar #", ff_overlay_site_rank_prefix_var),
+                ("Medalhas", ff_overlay_site_medals_var),
+            )
+        ):
+            ctk.CTkCheckBox(
+                ff_overlay_site_toggles,
+                text=text,
+                variable=var,
+                fg_color=accent,
+                hover_color=accent_hover,
+                border_color=border,
+                text_color=fg,
+            ).grid(row=toggle_index // 3, column=toggle_index % 3, sticky="w", padx=(0, 12), pady=4)
+
+        section_label(ff_overlay_site_card, "Layout", 6)
+        combo(ff_overlay_site_card, ff_overlay_site_layout_var, ["horizontal", "vertical", "grid"], width=150).grid(
+            row=6, column=1, sticky="w", padx=18, pady=5
+        )
+        section_label(ff_overlay_site_card, "Fonte", 6, column=2)
+        combo(ff_overlay_site_card, ff_overlay_site_font_var, ["impact", "bebas", "rajdhani", "inter", "mono"], width=150).grid(
+            row=6, column=3, sticky="w", padx=18, pady=5
+        )
+        section_label(ff_overlay_site_card, "Animacao", 7)
+        combo(ff_overlay_site_card, ff_overlay_site_animation_var, ["none", "fade", "slide", "pop"], width=150).grid(
+            row=7, column=1, sticky="w", padx=18, pady=5
+        )
+        section_label(ff_overlay_site_card, "Refresh ms", 7, column=2)
+        entry(ff_overlay_site_card, ff_overlay_site_refresh_var, width=110).grid(row=7, column=3, sticky="w", padx=18, pady=5)
+        section_label(ff_overlay_site_card, "Troca seg.", 8)
+        entry(ff_overlay_site_card, ff_overlay_site_switch_var, width=110).grid(row=8, column=1, sticky="w", padx=18, pady=5)
+        section_label(ff_overlay_site_card, "Largura bloco", 8, column=2)
+        entry(ff_overlay_site_card, ff_overlay_site_panel_width_var, width=110).grid(row=8, column=3, sticky="w", padx=18, pady=5)
+        section_label(ff_overlay_site_card, "Limites", 9)
+        ff_overlay_site_limits = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel, corner_radius=0)
+        ff_overlay_site_limits.grid(row=9, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+        entry(ff_overlay_site_limits, ff_overlay_site_limit_general_var, width=70).pack(side=tk.LEFT)
+        ctk.CTkLabel(ff_overlay_site_limits, text="geral", text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(6, 12))
+        entry(ff_overlay_site_limits, ff_overlay_site_limit_daily_var, width=70).pack(side=tk.LEFT)
+        ctk.CTkLabel(ff_overlay_site_limits, text="dia", text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(6, 12))
+        entry(ff_overlay_site_limits, ff_overlay_site_limit_queue_var, width=70).pack(side=tk.LEFT)
+        ctk.CTkLabel(ff_overlay_site_limits, text="fila", text_color=muted, font=("Segoe UI", 11)).pack(side=tk.LEFT, padx=(6, 12))
+
+        ff_overlay_site_dimensions = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+        ff_overlay_site_dimensions.grid(row=10, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 6))
+        for dimension_column in range(6):
+            ff_overlay_site_dimensions.columnconfigure(dimension_column, weight=1)
+        ctk.CTkLabel(
+            ff_overlay_site_dimensions,
+            text="Tamanho e espaçamento",
+            text_color=fg,
+            font=("Segoe UI Semibold", 12),
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=6, sticky="ew", padx=12, pady=(10, 2))
+        for index, (label, var, width) in enumerate(
+            (
+                ("Gap", ff_overlay_site_gap_var, 70),
+                ("Padding", ff_overlay_site_padding_var, 70),
+                ("Título", ff_overlay_site_title_size_var, 70),
+                ("Linha", ff_overlay_site_row_size_var, 70),
+                ("Valor", ff_overlay_site_value_size_var, 70),
+                ("Altura", ff_overlay_site_row_height_var, 70),
+            )
+        ):
+            ctk.CTkLabel(ff_overlay_site_dimensions, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+                row=1, column=index, sticky="w", padx=12, pady=(4, 0)
+            )
+            entry(ff_overlay_site_dimensions, var, width=width).grid(row=2, column=index, sticky="ew", padx=12, pady=(0, 10))
+
+        ff_overlay_site_colors = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+        ff_overlay_site_colors.grid(row=11, column=0, columnspan=4, sticky="ew", padx=18, pady=6)
+        for color_column in range(6):
+            ff_overlay_site_colors.columnconfigure(color_column, weight=1)
+        ctk.CTkLabel(
+            ff_overlay_site_colors,
+            text="Fundo, linha e acento",
+            text_color=fg,
+            font=("Segoe UI Semibold", 12),
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=6, sticky="ew", padx=12, pady=(10, 2))
+        for index, (label, var, width) in enumerate(
+            (
+                ("Fundo", ff_overlay_site_panel_bg_color_var, 92),
+                ("Opac.", ff_overlay_site_panel_bg_opacity_var, 70),
+                ("Raio", ff_overlay_site_panel_radius_var, 70),
+                ("Linha", ff_overlay_site_row_bg_color_var, 92),
+                ("Opac.", ff_overlay_site_row_bg_opacity_var, 70),
+                ("Acento", ff_overlay_site_accent_width_var, 70),
+            )
+        ):
+            ctk.CTkLabel(ff_overlay_site_colors, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+                row=1, column=index, sticky="w", padx=12, pady=(4, 0)
+            )
+            entry(ff_overlay_site_colors, var, width=width).grid(row=2, column=index, sticky="ew", padx=12, pady=(0, 10))
+
+        ff_overlay_site_panels = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+        ff_overlay_site_panels.grid(row=12, column=0, columnspan=4, sticky="ew", padx=18, pady=6)
+        for panel_column in range(3):
+            ff_overlay_site_panels.columnconfigure(panel_column, weight=1)
+        ctk.CTkLabel(
+            ff_overlay_site_panels,
+            text="Títulos e cores por painel",
+            text_color=fg,
+            font=("Segoe UI Semibold", 12),
+            anchor="w",
+        ).grid(row=0, column=0, columnspan=3, sticky="ew", padx=12, pady=(10, 2))
+        for column, (panel_key, panel_title) in enumerate((("general", "Geral"), ("daily", "Dia"), ("queue", "Fila"))):
+            panel_box = ctk.CTkFrame(ff_overlay_site_panels, fg_color=field, corner_radius=10, border_width=1, border_color=border)
+            panel_box.grid(row=1, column=column, sticky="nsew", padx=8, pady=(4, 12))
+            panel_box.columnconfigure(1, weight=1)
+            ctk.CTkLabel(panel_box, text=panel_title, text_color=fg, font=("Segoe UI Semibold", 12), anchor="w").grid(
+                row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 2)
+            )
+            for row_index, (label, field_key) in enumerate(
+                (
+                    ("Título", "title"),
+                    ("Cor título", "title_color"),
+                    ("Cor #", "rank_color"),
+                    ("Cor nome", "name_color"),
+                    ("Cor valor", "value_color"),
+                    ("Cor acento", "accent_color"),
+                ),
+                start=1,
+            ):
+                ctk.CTkLabel(panel_box, text=label, text_color=muted, font=("Segoe UI", 10)).grid(
+                    row=row_index, column=0, sticky="w", padx=(10, 6), pady=3
+                )
+                entry(panel_box, ff_overlay_site_panel_vars[panel_key][field_key], width=104).grid(
+                    row=row_index, column=1, sticky="ew", padx=(0, 10), pady=3
+                )
+        ctk.CTkLabel(
+            ff_overlay_site_card,
+            textvariable=ff_overlay_site_status_var,
+            text_color=accent,
+            font=("Segoe UI Semibold", 12),
+            anchor="w",
+        ).grid(row=13, column=0, columnspan=4, sticky="ew", padx=18, pady=(6, 0))
+        ff_overlay_site_actions = ctk.CTkFrame(ff_overlay_site_card, fg_color=panel, corner_radius=0)
+        ff_overlay_site_actions.grid(row=14, column=0, columnspan=4, sticky="ew", padx=18, pady=(10, 18))
+
+        ff_overlay_metrics = ctk.CTkFrame(
+            ff_overlay_controls,
+            fg_color=panel_alt,
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
+        )
+        ff_overlay_metrics.grid(row=2, column=0, sticky="ew", padx=12, pady=8)
+        for column in range(3):
+            ff_overlay_metrics.columnconfigure(column, weight=1)
+        for col, (label, value_var) in enumerate(
+            (
+                ("Jogadores", manual_count_var),
+                ("Kills", manual_total_var),
+                ("Fila ativa", ff_queue_count_var),
+            )
+        ):
+            ctk.CTkLabel(ff_overlay_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+                row=0, column=col, sticky="w", padx=16, pady=(12, 0)
+            )
+            ctk.CTkLabel(ff_overlay_metrics, textvariable=value_var, text_color=teal, font=("Segoe UI Semibold", 24)).grid(
+                row=1, column=col, sticky="w", padx=16, pady=(0, 12)
+            )
+        ff_overlay_options = card(ff_overlay_controls, "Aparencia do overlay", "Controle a janela que fica sobre o jogo ou OBS.")
+        ff_overlay_options.grid(row=3, column=0, sticky="ew", padx=12, pady=8)
+        ff_overlay_options.columnconfigure(1, weight=1)
+        ctk.CTkLabel(ff_overlay_options, text="Opacidade", text_color=muted, font=("Segoe UI", 11)).grid(
+            row=2, column=0, sticky="w", padx=18, pady=(10, 4)
+        )
+        ff_overlay_opacity_slider = ctk.CTkSlider(
+            ff_overlay_options,
+            from_=35,
+            to=100,
+            number_of_steps=65,
+            variable=ff_overlay_opacity_var,
+            command=lambda _value: apply_ff_overlay_settings(refresh=True),
+        )
+        ff_overlay_opacity_slider.grid(row=2, column=1, sticky="ew", padx=8, pady=(10, 4))
+        ctk.CTkLabel(ff_overlay_options, textvariable=ff_overlay_opacity_text, text_color=muted, font=("Segoe UI", 11)).grid(
+            row=2, column=2, sticky="e", padx=(8, 18), pady=(10, 4)
+        )
+        ctk.CTkLabel(ff_overlay_options, text="Largura", text_color=muted, font=("Segoe UI", 11)).grid(
+            row=3, column=0, sticky="w", padx=18, pady=4
+        )
+        ff_overlay_width_slider = ctk.CTkSlider(
+            ff_overlay_options,
+            from_=420,
+            to=1400,
+            number_of_steps=98,
+            variable=ff_overlay_width_var,
+            command=lambda _value: apply_ff_overlay_settings(refresh=True),
+        )
+        ff_overlay_width_slider.grid(row=3, column=1, sticky="ew", padx=8, pady=4)
+        ctk.CTkLabel(ff_overlay_options, textvariable=ff_overlay_size_text, text_color=fg, font=("Segoe UI Semibold", 11)).grid(
+            row=3, column=2, sticky="e", padx=(8, 18), pady=4
+        )
+        ctk.CTkLabel(ff_overlay_options, text="Altura", text_color=muted, font=("Segoe UI", 11)).grid(
+            row=4, column=0, sticky="w", padx=18, pady=4
+        )
+        ff_overlay_height_slider = ctk.CTkSlider(
+            ff_overlay_options,
+            from_=240,
+            to=900,
+            number_of_steps=66,
+            variable=ff_overlay_height_var,
+            command=lambda _value: apply_ff_overlay_settings(refresh=True),
+        )
+        ff_overlay_height_slider.grid(row=4, column=1, sticky="ew", padx=8, pady=4)
+        ff_overlay_toggle_row = ctk.CTkFrame(ff_overlay_options, fg_color=panel, corner_radius=0)
+        ff_overlay_toggle_row.grid(row=5, column=0, columnspan=3, sticky="ew", padx=18, pady=(8, 18))
+        for col in range(3):
+            ff_overlay_toggle_row.columnconfigure(col, weight=1)
+        ctk.CTkCheckBox(
+            ff_overlay_toggle_row,
+            text="Mostrar Kills FF",
+            variable=ff_overlay_show_kills_var,
+            command=lambda: refresh_ff_overlay(force=True),
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
+        ctk.CTkCheckBox(
+            ff_overlay_toggle_row,
+            text="Mostrar Fila FF",
+            variable=ff_overlay_show_queue_var,
+            command=lambda: refresh_ff_overlay(force=True),
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 12), pady=4)
+        ctk.CTkCheckBox(
+            ff_overlay_toggle_row,
+            text="Compacto",
+            variable=ff_overlay_compact_var,
+            command=lambda: refresh_ff_overlay(force=True),
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=0, column=2, sticky="w", padx=(0, 12), pady=4)
+
+        ff_overlay_preview_card = card(ff_overlay_tab, "Preview Overlay FF", "Visual que sera usado na janela de overlay.")
+        ff_overlay_preview_card.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=(12, 12))
+        ff_overlay_preview_card.columnconfigure(0, weight=1)
+        ff_overlay_preview_card.rowconfigure(2, weight=1)
+        ff_overlay_preview_frame = ctk.CTkFrame(
+            ff_overlay_preview_card,
+            fg_color="#050609",
+            corner_radius=14,
+            border_width=1,
+            border_color=accent,
+        )
+        ff_overlay_preview_frame.grid(row=2, column=0, sticky="nsew", padx=18, pady=(8, 18))
+        ff_overlay_preview_frame.columnconfigure(0, weight=1)
 
     if not chat_tab_hidden:
         chat_connection_card = card(
@@ -10931,6 +10942,8 @@ def run_gui(config_path: Path) -> int:
         panel_user_id: str = "",
         ff_player_id: str = "",
     ) -> None:
+        if ff_queue_site_sync_hidden or ff_queue_table_frame is None:
+            return
         row_index = len(ff_queue_rows)
         row_frame = ctk.CTkFrame(
             ff_queue_table_frame,
@@ -11396,6 +11409,13 @@ def run_gui(config_path: Path) -> int:
         users = payload.get("users") if isinstance(payload.get("users"), list) else []
         history = payload.get("history") if isinstance(payload.get("history"), list) else []
         tikfinity_ff_summary_var.set(f"{len(mappings)} vínculos | {len(users)} usuários | {len(history)} eventos")
+        if (
+            ff_queue_site_sync_hidden
+            or tikfinity_ff_mappings_frame is None
+            or tikfinity_ff_users_frame is None
+            or tikfinity_ff_history_frame is None
+        ):
+            return
 
         tikfinity_ff_clear_widget_list(tikfinity_ff_widgets)
         if not mappings:
@@ -11902,8 +11922,9 @@ def run_gui(config_path: Path) -> int:
         if not force and getattr(refresh_ff_overlay, "_signature", None) == signature:
             return
         refresh_ff_overlay._signature = signature  # type: ignore[attr-defined]
-        try:
+        if ff_overlay_preview_frame is not None:
             render_ff_overlay_panel(ff_overlay_preview_frame, ff_overlay_widgets, preview=True)
+        try:
             if ff_overlay_content_frame is not None:
                 render_ff_overlay_panel(ff_overlay_content_frame, getattr(refresh_ff_overlay, "_window_widgets", []), preview=False)
         except NameError:
@@ -17088,48 +17109,51 @@ def run_gui(config_path: Path) -> int:
         columns=3,
     )
 
-    grid_action_buttons(
-        ff_queue_actions,
-        [
-            ("Adicionar jogador", open_ff_queue_manual_dialog, "accent"),
-            ("Atender próximo", call_next_ff_queue, "accent"),
-            ("Marcar jogando", mark_called_playing, "default"),
-            ("Finalizar partida", finish_playing_ff_queue, "ghost"),
-            ("Enviar agora", lambda: send_ff_queue(force=True), "accent"),
-            ("Buscar Jarvis", lambda: fetch_ff_queue(force=True), "default"),
-            ("Sincronizar", lambda: run_ff_queue_remote_action("sync", label="Sincronizando fila"), "default"),
-            ("Limpar", clear_ff_queue, "danger"),
-            ("Salvar", save_form, "ghost"),
-        ],
-    )
+    if ff_queue_actions is not None:
+        grid_action_buttons(
+            ff_queue_actions,
+            [
+                ("Adicionar jogador", open_ff_queue_manual_dialog, "accent"),
+                ("Atender próximo", call_next_ff_queue, "accent"),
+                ("Marcar jogando", mark_called_playing, "default"),
+                ("Finalizar partida", finish_playing_ff_queue, "ghost"),
+                ("Enviar agora", lambda: send_ff_queue(force=True), "accent"),
+                ("Buscar Jarvis", lambda: fetch_ff_queue(force=True), "default"),
+                ("Sincronizar", lambda: run_ff_queue_remote_action("sync", label="Sincronizando fila"), "default"),
+                ("Limpar", clear_ff_queue, "danger"),
+                ("Salvar", save_form, "ghost"),
+            ],
+        )
 
-    grid_action_buttons(
-        ff_overlay_site_actions,
-        [
-            ("Carregar config", lambda: fetch_ff_overlay_site_config(force=True), "accent"),
-            ("Salvar no Jarvis", save_ff_overlay_site_config, "accent"),
-            ("Criar perfil", create_ff_overlay_site_profile, "default"),
-            ("Copiar URL OBS", copy_ff_overlay_site_url, "default"),
-            ("Abrir OBS", open_ff_overlay_site_url, "default"),
-            ("Salvar local", save_form, "ghost"),
-        ],
-        columns=3,
-    )
+    if ff_overlay_site_actions is not None:
+        grid_action_buttons(
+            ff_overlay_site_actions,
+            [
+                ("Carregar config", lambda: fetch_ff_overlay_site_config(force=True), "accent"),
+                ("Salvar no Jarvis", save_ff_overlay_site_config, "accent"),
+                ("Criar perfil", create_ff_overlay_site_profile, "default"),
+                ("Copiar URL OBS", copy_ff_overlay_site_url, "default"),
+                ("Abrir OBS", open_ff_overlay_site_url, "default"),
+                ("Salvar local", save_form, "ghost"),
+            ],
+            columns=3,
+        )
 
-    grid_action_buttons(
-        ff_overlay_actions,
-        [
-            ("Abrir overlay", open_ff_overlay_window, "accent"),
-            ("Atualizar Jarvis", refresh_overlay_from_jarvis, "accent"),
-            ("Enviar overlay", lambda: send_ff_overlay(force=True), "accent"),
-            ("Buscar overlay", lambda: fetch_ff_overlay(force=True), "default"),
-            ("Atualizar kills", lambda: fetch_panel_kills(force=True), "default"),
-            ("Buscar fila", lambda: fetch_ff_queue(force=True), "default"),
-            ("Salvar", save_form, "ghost"),
-            ("Fechar overlay", close_ff_overlay_window, "danger"),
-        ],
-        columns=4,
-    )
+    if ff_overlay_actions is not None:
+        grid_action_buttons(
+            ff_overlay_actions,
+            [
+                ("Abrir overlay", open_ff_overlay_window, "accent"),
+                ("Atualizar Jarvis", refresh_overlay_from_jarvis, "accent"),
+                ("Enviar overlay", lambda: send_ff_overlay(force=True), "accent"),
+                ("Buscar overlay", lambda: fetch_ff_overlay(force=True), "default"),
+                ("Atualizar kills", lambda: fetch_panel_kills(force=True), "default"),
+                ("Buscar fila", lambda: fetch_ff_queue(force=True), "default"),
+                ("Salvar", save_form, "ghost"),
+                ("Fechar overlay", close_ff_overlay_window, "danger"),
+            ],
+            columns=4,
+        )
     if chat_actions is not None:
         button(chat_actions, "Iniciar chat", start_chat_listener, "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
         button(chat_actions, "Abrir janela", open_chat_monitor_window, "default", width=112).pack(side=tk.LEFT, padx=(0, 8))
