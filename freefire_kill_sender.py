@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.87"
+APP_VERSION = "2.6.88"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -10423,6 +10423,8 @@ def run_gui(config_path: Path) -> int:
         )
 
     def refresh_ff_queue_summary(entries: list[FFQueueEntry] | None = None) -> None:
+        if ff_queue_site_sync_hidden:
+            return
         items = queue_summary_items(entries if entries is not None else collect_ff_queue_entries())
         signature = [("__totals__", ff_queue_remote_count_override, ff_queue_remote_rooms_override)] + [
             (
@@ -10544,6 +10546,8 @@ def run_gui(config_path: Path) -> int:
         return merge_ff_queue_entries(entries)
 
     def update_ff_queue_metrics() -> None:
+        if ff_queue_site_sync_hidden:
+            return
         entries = collect_ff_queue_entries()
         count_value = (
             ff_queue_remote_count_override
@@ -10996,6 +11000,10 @@ def run_gui(config_path: Path) -> int:
         total_credits: int | None = None,
     ) -> None:
         nonlocal ff_queue_applying_remote, ff_queue_remote_count_override, ff_queue_remote_rooms_override
+        if ff_queue_site_sync_hidden:
+            ff_queue_remote_count_override = total_members
+            ff_queue_remote_rooms_override = total_credits
+            return
         ff_queue_applying_remote = True
         try:
             ff_queue_remote_count_override = total_members
@@ -14969,7 +14977,8 @@ def run_gui(config_path: Path) -> int:
         config["ff_overlay_auto_sync"] = bool(ff_overlay_enabled_var.get()) and not ff_overlay_site_sync_hidden
         config["ff_queue_poll_seconds"] = ff_queue_poll_interval_seconds()
         config["ff_queue_room"] = ff_queue_room_var.get().strip() or "principal"
-        config["ff_queue_items"] = ff_queue_payload(collect_ff_queue_entries())
+        if not ff_queue_site_sync_hidden:
+            config["ff_queue_items"] = ff_queue_payload(collect_ff_queue_entries())
         tikfinity_ff_url = normalize_endpoint_url(tikfinity_ff_url_var.get())
         if jarvis_base_url and not tikfinity_ff_url:
             tikfinity_ff_url = derive_tikfinity_ff_gifts_endpoint(jarvis_base_url)
@@ -16750,7 +16759,6 @@ def run_gui(config_path: Path) -> int:
     livepix_events_frame.columnconfigure(0, weight=1)
     render_livepix_events.frame = livepix_events_frame  # type: ignore[attr-defined]
     update_livepix_endpoint_text()
-    refresh_livepix_dashboard()
 
     appearance_body = ctk.CTkScrollableFrame(
         appearance_tab,
@@ -17110,8 +17118,11 @@ def run_gui(config_path: Path) -> int:
     sync_kills_rank_tab_with_manual_scope(manual_active_scope)
     manual_last_signature = manual_signature(collect_manual_players(), manual_active_scope)
     saved_ff_queue_entries = parse_ff_queue_payload(config.get("ff_queue_items", []))
-    set_ff_queue_entries(saved_ff_queue_entries)
-    ff_queue_last_signature = ff_queue_signature(collect_ff_queue_entries())
+    if ff_queue_site_sync_hidden:
+        ff_queue_last_signature = ff_queue_signature(saved_ff_queue_entries)
+    else:
+        set_ff_queue_entries(saved_ff_queue_entries)
+        ff_queue_last_signature = ff_queue_signature(collect_ff_queue_entries())
     set_custom_commands(parse_chat_commands_payload(config.get("chat_commands", [])))
     set_chat_timers(parse_chat_timers_payload(config.get("chat_timers", [])))
     if not ff_queue_site_sync_hidden:
@@ -17271,6 +17282,7 @@ def run_gui(config_path: Path) -> int:
     if not chat_listener_hidden:
         pump_chat_event_queue()
     pump_livepix_queue()
+    root.after(650, refresh_livepix_dashboard)
     root.after(1200, auto_sync_livepix_on_start)
     pump_bot_send_results()
     pump_chat_timers()

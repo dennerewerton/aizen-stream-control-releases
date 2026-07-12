@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.87",
-    "notes":  "Estabilidade: filas de chat, logs, Livepix e sincronizacao agora processam em lotes para evitar travadas em rajadas de eventos.",
+    "version":  "2.6.88",
+    "notes":  "Otimização de abertura: Fila FF oculta nao reidrata linhas salvas, preserva configuracao sem limpar dados e Livepix renderiza historico apos abrir a janela.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.87/AizenStreamControl.exe",
-                    "sha256":  "361a18f67c66ffd488652dbaadff07315cf7541a3b0b3b4f4d662b209ba4ab64"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.88/AizenStreamControl.exe",
+                    "sha256":  "ea6d21d8ef4090373d89a2c049eebc8b114e0d1fd1e40f71b81cf4878d81a0a7"
                 }
 }
