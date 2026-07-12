@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.130"
+APP_VERSION = "2.6.131"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -16084,11 +16084,15 @@ def run_gui(config_path: Path) -> int:
         config["ui_theme"] = appearance_config_from_vars()
         return config
 
-    def save_current_config_silent() -> bool:
+    def save_current_config_silent(compact: bool = False) -> bool:
         nonlocal config_auto_save_running
         try:
             config_auto_save_running = True
-            save_config(config_path, update_config_from_form())
+            current_config = update_config_from_form()
+            if compact:
+                save_config_compact(config_path, current_config)
+            else:
+                save_config(config_path, current_config)
             return True
         except Exception as exc:
             log(f"Auto-save aguardando configuração válida: {exc}")
@@ -16101,7 +16105,7 @@ def run_gui(config_path: Path) -> int:
         config_auto_save_after_id = None
         if app_closing:
             return
-        save_current_config_silent()
+        save_current_config_silent(compact=True)
 
     def schedule_config_autosave(delay_ms: int = 1800) -> None:
         nonlocal config_auto_save_after_id
@@ -17581,7 +17585,7 @@ def run_gui(config_path: Path) -> int:
         nonlocal config_auto_save_after_id
         if app_closing:
             return
-        save_current_config_silent()
+        save_current_config_silent(compact=True)
         app_closing = True
         for after_id in (
             manual_sync_after_id,
