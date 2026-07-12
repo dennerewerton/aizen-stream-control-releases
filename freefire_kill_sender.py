@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.138"
+APP_VERSION = "2.6.139"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -106,6 +106,8 @@ LIVEPIX_DASHBOARD_REFRESH_DELAY_MS = 180
 KILLS_VISUAL_REFRESH_DELAY_MS = 220
 KILLS_RANK_RENDER_LIMIT = 100
 KILLS_OVERLAY_RENDER_LIMIT = 50
+KILLS_POST_TIMEOUT_SECONDS = 10
+KILLS_GET_TIMEOUT_SECONDS = 8
 STARTUP_IDLE_TASK_DELAY_MS = 650
 BACKGROUND_IDLE_PUMP_MS = 2000
 SYNC_QUEUE_IDLE_PUMP_MS = 1200
@@ -4283,7 +4285,7 @@ def send_kills_realtime_update(
         normalize_endpoint_url(endpoint_url),
         json=payload,
         headers=headers,
-        timeout=20,
+        timeout=KILLS_POST_TIMEOUT_SECONDS,
         allow_redirects=False,
     )
     if 300 <= response.status_code < 400:
@@ -4321,7 +4323,7 @@ def fetch_kills_realtime(
         base_url,
         params=params,
         headers=headers,
-        timeout=12,
+        timeout=KILLS_GET_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
     state = parse_realtime_state(response.text)
@@ -4338,7 +4340,7 @@ def fetch_kills_realtime(
             rank_url,
             params=rank_params,
             headers=headers,
-            timeout=12,
+            timeout=KILLS_GET_TIMEOUT_SECONDS,
             allow_redirects=False,
         )
         if 300 <= rank_response.status_code < 400:
@@ -4541,7 +4543,7 @@ def send_kills_action_update(
         derive_kills_action_endpoint(endpoint_url),
         json=payload,
         headers=headers,
-        timeout=20,
+        timeout=KILLS_POST_TIMEOUT_SECONDS,
         allow_redirects=False,
     )
     if 300 <= response.status_code < 400:
@@ -4735,7 +4737,7 @@ def send_kills_snapshot_update(
                     snapshot_url,
                     json=payload,
                     headers=headers,
-                    timeout=20,
+                    timeout=KILLS_POST_TIMEOUT_SECONDS,
                     allow_redirects=False,
                 )
                 if 300 <= response.status_code < 400:
@@ -10635,10 +10637,11 @@ def run_gui(config_path: Path) -> int:
             refresh_kills_rank_table()
         except NameError:
             pass
-        try:
-            refresh_ff_overlay()
-        except NameError:
-            pass
+        if not ff_overlay_site_sync_hidden or ff_overlay_preview_frame is not None or ff_overlay_content_frame is not None:
+            try:
+                refresh_ff_overlay()
+            except NameError:
+                pass
 
     def schedule_kills_visual_refresh(delay_ms: int = KILLS_VISUAL_REFRESH_DELAY_MS) -> None:
         nonlocal kills_visual_after_id
@@ -12695,6 +12698,8 @@ def run_gui(config_path: Path) -> int:
             ).grid(row=1, column=0, columnspan=2, sticky="nsew", padx=18, pady=30)
 
     def refresh_ff_overlay(force: bool = False) -> None:
+        if ff_overlay_site_sync_hidden and ff_overlay_preview_frame is None and ff_overlay_content_frame is None:
+            return
         players, queue_items, total_kills, active_rooms = ff_overlay_snapshot()
         signature = json.dumps(
             {

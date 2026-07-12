@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.138",
-    "notes":  "Corrige nomes do Kills FF no rank Geral ao salvar/alternar Diario-Geral, bloqueia envio com kills sem nick e deixa o historico Livepix carregar sob demanda quando estiver ativo ou visivel.",
+    "version":  "2.6.139",
+    "notes":  "Otimiza o fluxo de Kills FF: pula refresh do Overlay FF quando ele esta oculto e reduz timeouts do Jarvis/Kills para evitar sensacao de travamento em rede instavel.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.138/AizenStreamControl.exe",
-                    "sha256":  "46942bad13f924e6b6142788f1a3e8ee4ce5bff65e5a0960df44de74da05521b"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.139/AizenStreamControl.exe",
+                    "sha256":  "e1288f3783c06267ae0b76b082d3554c54e34cc1e8364e90605abfbb727e934a"
                 }
 }
