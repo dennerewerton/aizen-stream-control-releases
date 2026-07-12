@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.86",
-    "notes":  "Otimização: Kills FF atualiza tabelas em lote, evita renderização de chat oculto, reduz redraw do Livepix e confirma snapshot antes do modo lento.",
+    "version":  "2.6.87",
+    "notes":  "Estabilidade: filas de chat, logs, Livepix e sincronizacao agora processam em lotes para evitar travadas em rajadas de eventos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.86/AizenStreamControl.exe",
-                    "sha256":  "e092882f0233b18bbcee37e3e0959691a025c61d1300d49824ac5c6c74c44f05"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.87/AizenStreamControl.exe",
+                    "sha256":  "361a18f67c66ffd488652dbaadff07315cf7541a3b0b3b4f4d662b209ba4ab64"
                 }
 }

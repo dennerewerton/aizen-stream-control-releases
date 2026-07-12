@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.86"
+APP_VERSION = "2.6.87"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -12898,11 +12898,14 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         updated = False
-        while True:
+        processed_count = 0
+        batch_limit = 80
+        while processed_count < batch_limit:
             try:
                 kind, payload = chat_event_queue.get_nowait()
             except queue.Empty:
                 break
+            processed_count += 1
             if kind == "message":
                 raw_payload = payload.get("payload") if isinstance(payload, dict) else None
                 source = str(payload.get("source") or "") if isinstance(payload, dict) else ""
@@ -12914,13 +12917,21 @@ def run_gui(config_path: Path) -> int:
                     add_live_chat_message(message)
                     updated = True
                 elif is_live_chat_event_payload(raw_payload):
-                    log(f"Evento de chat recebido, mas nao exibido: {compact_json_preview(raw_payload)}")
+                    now = time.monotonic()
+                    pending_unknown = int(getattr(pump_chat_event_queue, "_pending_unknown", 0)) + 1
+                    last_unknown_log = float(getattr(pump_chat_event_queue, "_last_unknown_log_at", 0.0))
+                    pump_chat_event_queue._pending_unknown = pending_unknown  # type: ignore[attr-defined]
+                    if now - last_unknown_log >= 5.0:
+                        suffix = f" ({pending_unknown} eventos acumulados)" if pending_unknown > 1 else ""
+                        log(f"Evento de chat recebido, mas nao exibido{suffix}: {compact_json_preview(raw_payload)}")
+                        pump_chat_event_queue._pending_unknown = 0  # type: ignore[attr-defined]
+                        pump_chat_event_queue._last_unknown_log_at = now  # type: ignore[attr-defined]
             elif kind == "status":
                 chat_status_var.set(str(payload))
         if updated:
             refresh_chat_messages()
         if not app_closing:
-            root.after(120, pump_chat_event_queue)
+            root.after(15 if not chat_event_queue.empty() else 120, pump_chat_event_queue)
 
     def bot_safe_delay_seconds() -> int:
         try:
@@ -13513,11 +13524,13 @@ def run_gui(config_path: Path) -> int:
         nonlocal bot_sending, bot_next_allowed_at
         if app_closing:
             return
-        while True:
+        processed_results = 0
+        while processed_results < 20:
             try:
                 ok, detail, payload = bot_send_result_queue.get_nowait()
             except queue.Empty:
                 break
+            processed_results += 1
             bot_sending = False
             bot_next_allowed_at = time.time() + bot_safe_delay_seconds()
             update_bot_queue_count()
@@ -13539,6 +13552,9 @@ def run_gui(config_path: Path) -> int:
             else:
                 bot_status_var.set("Erro")
                 log(f"Erro ao enviar resposta do bot: {detail}")
+        if not bot_send_result_queue.empty():
+            root.after(50, pump_bot_send_results)
+            return
 
         if bot_sending:
             if not app_closing:
@@ -14754,11 +14770,14 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         processed = False
-        while True:
+        processed_count = 0
+        batch_limit = 12
+        while processed_count < batch_limit:
             try:
                 kind, payload = livepix_queue.get_nowait()
             except queue.Empty:
                 break
+            processed_count += 1
             processed = True
             if kind == "webhook":
                 event = parse_livepix_event(payload, source="webhook")
@@ -14893,7 +14912,7 @@ def run_gui(config_path: Path) -> int:
                     livepix_status_var.set("Erro")
                 log(f"Livepix erro: {payload}")
         if not app_closing:
-            root.after(160 if processed else 800, pump_livepix_queue)
+            root.after(25 if not livepix_queue.empty() else 160 if processed else 800, pump_livepix_queue)
 
     def appearance_config_from_vars() -> dict[str, str]:
         preset = appearance_preset_var.get().strip() or DEFAULT_THEME_NAME
@@ -15985,29 +16004,35 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         processed = False
-        while True:
+        processed_count = 0
+        batch_limit = 12
+        while processed_count < batch_limit:
             try:
                 kind, payload = sync_queue.get_nowait()
             except queue.Empty:
                 break
+            processed_count += 1
             processed = True
             handle_sync_event(kind, payload)
         if not app_closing:
-            root.after(120 if processed else 500, pump_sync_queue)
+            root.after(25 if not sync_queue.empty() else 120 if processed else 500, pump_sync_queue)
 
     def pump_ff_queue_sync_queue() -> None:
         if app_closing:
             return
         processed = False
-        while True:
+        processed_count = 0
+        batch_limit = 12
+        while processed_count < batch_limit:
             try:
                 kind, payload = ff_queue_sync_queue.get_nowait()
             except queue.Empty:
                 break
+            processed_count += 1
             processed = True
             handle_ff_queue_sync_event(kind, payload)
         if not app_closing:
-            root.after(120 if processed else 500, pump_ff_queue_sync_queue)
+            root.after(25 if not ff_queue_sync_queue.empty() else 120 if processed else 500, pump_ff_queue_sync_queue)
 
     def open_layout_window() -> None:
         window = ctk.CTkToplevel(root)
@@ -16214,11 +16239,14 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         updated = False
-        while True:
+        processed_count = 0
+        batch_limit = 20
+        while processed_count < batch_limit:
             try:
                 url, size, image = avatar_result_queue.get_nowait()
             except queue.Empty:
                 break
+            processed_count += 1
             key = (url, size)
             avatar_pending.discard(key)
             if image is not None:
@@ -16239,7 +16267,7 @@ def run_gui(config_path: Path) -> int:
             except Exception:
                 pass
         if not app_closing:
-            root.after(300, pump_avatar_results)
+            root.after(40 if not avatar_result_queue.empty() else 300, pump_avatar_results)
 
     def refresh_winner_messages(items: list[dict[str, str]]) -> None:
         rendered = "\n".join(
@@ -17053,19 +17081,23 @@ def run_gui(config_path: Path) -> int:
     def pump_log() -> None:
         if app_closing:
             return
-        processed = False
-        while True:
+        messages: list[str] = []
+        processed_count = 0
+        batch_limit = 200
+        while processed_count < batch_limit:
             try:
                 message = log_queue.get_nowait()
             except queue.Empty:
                 break
-            processed = True
+            processed_count += 1
+            messages.append(message)
+        if messages:
             log_text.configure(state="normal")
-            log_text.insert(tk.END, message + "\n")
+            log_text.insert(tk.END, "\n".join(messages) + "\n")
             log_text.see(tk.END)
             log_text.configure(state="disabled")
         if not app_closing:
-            root.after(150 if processed else 900, pump_log)
+            root.after(30 if not log_queue.empty() else 150 if messages else 900, pump_log)
 
     saved_manual_players = parse_players_payload(config.get("manual_kills", []))
     saved_manual_by_scope = config.get("manual_kills_by_scope")
