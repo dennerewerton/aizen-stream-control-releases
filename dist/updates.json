@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.139",
-    "notes":  "Otimiza o fluxo de Kills FF: pula refresh do Overlay FF quando ele esta oculto e reduz timeouts do Jarvis/Kills para evitar sensacao de travamento em rede instavel.",
+    "version":  "2.6.140",
+    "notes":  "Deixa o Salvar Kills FF mais leve: quando os jogadores ja tem nick, o app pula a busca/ordenacao de referencias do ranking e faz somente a normalizacao necessaria.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.139/AizenStreamControl.exe",
-                    "sha256":  "e1288f3783c06267ae0b76b082d3554c54e34cc1e8364e90605abfbb727e934a"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.140/AizenStreamControl.exe",
+                    "sha256":  "dd6d9f2765b7c962ca69982cdd4cd556208b3550a4b8f7cadaaa162ae03f0b19"
                 }
 }

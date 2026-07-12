@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.139"
+APP_VERSION = "2.6.140"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3423,6 +3423,18 @@ def sorted_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
 
 
 def complete_player_names_from_references(players: list[PlayerKill], references: list[PlayerKill] | None) -> list[PlayerKill]:
+    if all(str(player.name or "").strip() or normalize_kill_value(player.kills) <= 0 for player in players):
+        return [
+            PlayerKill(
+                name=str(player.name or "").strip(),
+                kills=normalize_kill_value(player.kills),
+                key=str(player.key or "").strip(),
+                ff_player_id=re.sub(r"\D+", "", str(player.ff_player_id or "")),
+                entries=normalize_kill_value(player.entries),
+            )
+            for player in players
+        ]
+
     source_players = sorted_player_kills(list(references or []))
     if not source_players:
         return [
