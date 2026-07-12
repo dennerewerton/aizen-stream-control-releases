@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.103",
-    "notes":  "Otimiza histórico Livepix: salva JSON compacto, escreve menos em disco e mantém os eventos mais recentes no cache local.",
+    "version":  "2.6.104",
+    "notes":  "Otimiza carregamento do Kills FF: a tabela manual preserva todos os jogadores no buffer e monta os widgets apenas ao abrir a aba.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.103/AizenStreamControl.exe",
-                    "sha256":  "dda6be76f5f2d10cfab8a19bb901064def5059a864b0f11fb0fb9ffd61096c4d"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.104/AizenStreamControl.exe",
+                    "sha256":  "f599898d37e9c981e2521b31a2d036b8cfe3c6877adb91613a7d22d9033c4e99"
                 }
 }

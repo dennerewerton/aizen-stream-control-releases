@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.103"
+APP_VERSION = "2.6.104"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6151,6 +6151,8 @@ def run_gui(config_path: Path) -> int:
     manual_rows: list[dict[str, Any]] = []
     manual_scope_buffers: dict[str, list[PlayerKill]] = {"daily": [], "general": []}
     manual_scope_dirty: set[str] = set()
+    manual_table_render_pending = False
+    manual_table_render_scope = ""
     manual_active_scope = normalize_kills_scope_value(config.get("kills_manual_scope", "daily"))
     if manual_active_scope not in {"daily", "general"}:
         manual_active_scope = "daily"
@@ -10000,11 +10002,14 @@ def run_gui(config_path: Path) -> int:
 
     def collect_manual_players(fill_missing_names: bool = True) -> list[PlayerKill]:
         nonlocal manual_applying_remote
+        scope = current_manual_scope()
+        if manual_table_render_pending and manual_table_render_scope == scope:
+            return clone_player_list(manual_scope_buffers.get(scope, []))
         players: list[PlayerKill] = []
         for row in manual_rows:
             name = row["name_var"].get().strip()
             players.append(PlayerKill(name=name, kills=normalize_kill_value(row["kills_var"].get())))
-        players = complete_manual_player_names(players, current_manual_scope())
+        players = complete_manual_player_names(players, scope)
         if fill_missing_names and not manual_applying_remote:
             missing_name_updates = [
                 (row, player.name.strip())
@@ -10631,8 +10636,10 @@ def run_gui(config_path: Path) -> int:
         total_players: int | None = None,
         total_kills: int | None = None,
         scope: str | None = None,
+        force_render: bool = False,
     ) -> None:
         nonlocal manual_applying_remote, manual_bulk_updating, manual_remote_count_override, manual_remote_total_override
+        nonlocal manual_table_render_pending, manual_table_render_scope
         previous_bulk_updating = manual_bulk_updating
         manual_applying_remote = True
         manual_bulk_updating = True
@@ -10643,6 +10650,14 @@ def run_gui(config_path: Path) -> int:
             if clean_scope not in {"daily", "general"}:
                 clean_scope = current_manual_scope()
             players = merge_manual_player_kills(complete_manual_player_names(players, clean_scope))
+            manual_scope_buffers[clean_scope] = clone_player_list(players)
+            if not force_render and not is_kills_ff_tab_active():
+                for row in manual_rows:
+                    row["frame"].destroy()
+                manual_rows.clear()
+                manual_table_render_pending = True
+                manual_table_render_scope = clean_scope
+                return
             for row in manual_rows:
                 row["frame"].destroy()
             manual_rows.clear()
@@ -10651,6 +10666,9 @@ def run_gui(config_path: Path) -> int:
             while len(manual_rows) < minimum_rows:
                 add_manual_row(notify=False)
             update_manual_row_numbers()
+            if manual_table_render_scope == clean_scope:
+                manual_table_render_pending = False
+                manual_table_render_scope = ""
         finally:
             manual_bulk_updating = previous_bulk_updating
             manual_applying_remote = False
@@ -17640,6 +17658,13 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         if is_kills_ff_tab_active():
+            if manual_table_render_pending:
+                render_scope = manual_table_render_scope if manual_table_render_scope in {"daily", "general"} else current_manual_scope()
+                set_manual_players(
+                    manual_scope_display_players(render_scope, prefer_remote=False),
+                    scope=render_scope,
+                    force_render=True,
+                )
             if kills_rank_render_pending or not kills_daily_rank_rows or not kills_global_rank_rows:
                 refresh_kills_rank_table(force=True)
             if kills_ignored_render_pending or not kills_ignored_rows:
