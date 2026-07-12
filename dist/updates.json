@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.146",
-    "notes":  "Reduz polling do chat e bot: chat usa intervalo adaptativo quando fica quieto e o pump do bot para quando nao ha fila pendente.",
+    "version":  "2.6.147",
+    "notes":  "Remove runtime-tmpdir fixo do PyInstaller: o app deixa de extrair _MEI na pasta de instalacao, reduzindo lixo, risco de erro ao criar diretorio temporario e peso na abertura.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.146/AizenStreamControl.exe",
-                    "sha256":  "13ea4307d4226246d41763a3b7d02f43b703a04b03347ca213b829e4d1e89fc6"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.147/AizenStreamControl.exe",
+                    "sha256":  "a5725ad08ab03de2ada4e8d17e7ad8e7f0bd4681daca330da6f6ff2f089048cd"
                 }
 }

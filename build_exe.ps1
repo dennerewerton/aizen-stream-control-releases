@@ -9,7 +9,6 @@ $pyInstallerArgs = @(
   "--onefile",
   "--windowed",
   "--noupx",
-  "--runtime-tmpdir", ".",
   "--name", "AizenStreamControl",
   "--icon", "assets/app_icon.ico",
   "--exclude-module", "cv2",
