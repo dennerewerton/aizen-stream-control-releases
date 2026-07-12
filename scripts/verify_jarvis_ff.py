@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 from freefire_kill_sender import (  # noqa: E402
     FFQueueEntry,
     chat_command_token,
+    complete_player_names_from_references,
     derive_ff_overlay_config_endpoint,
     PlayerKill,
     derive_ff_queue_action_endpoint,
@@ -682,6 +683,12 @@ def verify_contracts() -> None:
     overlay_global_fallback = overlay_rank_players([], split_rank_state.global_ranking, [PlayerKill("Manual", 99)])
     if [(item.name, item.kills) for item in overlay_global_fallback] != [("Geral", 21)]:
         raise RuntimeError(f"Overlay FF nao usou fallback do rank geral: {overlay_global_fallback!r}")
+    recovered_manual_names = complete_player_names_from_references(
+        [PlayerKill("", 48), PlayerKill("", 30), PlayerKill("", 29)],
+        [PlayerKill("Xiom TTK", 48), PlayerKill("Emy", 30), PlayerKill("!Souza", 29)],
+    )
+    if [(item.name, item.kills) for item in recovered_manual_names] != [("Xiom TTK", 48), ("Emy", 30), ("!Souza", 29)]:
+        raise RuntimeError(f"Recuperacao de nicks Kills FF divergente: {recovered_manual_names!r}")
 
     queue_state = parse_ff_queue_state(
         {

@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.121"
+APP_VERSION = "2.6.123"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3384,6 +3384,96 @@ def sorted_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
     return sorted(merged_player_kills(players), key=lambda item: (-item.kills, normalize_player_key(item.name)))
 
 
+def complete_player_names_from_references(players: list[PlayerKill], references: list[PlayerKill] | None) -> list[PlayerKill]:
+    source_players = sorted_player_kills(list(references or []))
+    if not source_players:
+        return [
+            PlayerKill(
+                name=str(player.name or "").strip(),
+                kills=normalize_kill_value(player.kills),
+                key=str(player.key or "").strip(),
+                ff_player_id=re.sub(r"\D+", "", str(player.ff_player_id or "")),
+                entries=normalize_kill_value(player.entries),
+            )
+            for player in players
+        ]
+
+    used_keys = {
+        normalize_player_key(player.name)
+        for player in players
+        if str(player.name or "").strip()
+    }
+    source_by_key: dict[str, PlayerKill] = {}
+    source_by_ff_id: dict[str, PlayerKill] = {}
+    source_by_kills: dict[int, list[PlayerKill]] = {}
+    for source_player in source_players:
+        source_name = str(source_player.name or "").strip()
+        if not source_name:
+            continue
+        source_key = normalize_player_key(source_player.key or source_name)
+        source_ff_id = re.sub(r"\D+", "", str(source_player.ff_player_id or ""))
+        source_kills = normalize_kill_value(source_player.kills)
+        if source_key:
+            source_by_key.setdefault(source_key, source_player)
+        if source_ff_id:
+            source_by_ff_id.setdefault(source_ff_id, source_player)
+        source_by_kills.setdefault(source_kills, []).append(source_player)
+
+    completed: list[PlayerKill] = []
+    for index, player in enumerate(players):
+        name = str(player.name or "").strip()
+        kills = normalize_kill_value(player.kills)
+        player_key = str(player.key or "").strip()
+        player_lookup_key = normalize_player_key(player_key)
+        ff_player_id = re.sub(r"\D+", "", str(player.ff_player_id or ""))
+        entries = normalize_kill_value(player.entries)
+        if name or kills <= 0:
+            completed.append(
+                PlayerKill(
+                    name=name,
+                    kills=kills,
+                    key=player_key,
+                    ff_player_id=ff_player_id,
+                    entries=entries,
+                )
+            )
+            continue
+
+        candidate: PlayerKill | None = None
+        if player_lookup_key:
+            candidate = source_by_key.get(player_lookup_key)
+        if candidate is None and ff_player_id:
+            candidate = source_by_ff_id.get(ff_player_id)
+        if candidate is None and index < len(source_players):
+            indexed_candidate = source_players[index]
+            indexed_key = normalize_player_key(indexed_candidate.name)
+            if indexed_candidate.name.strip() and normalize_kill_value(indexed_candidate.kills) == kills and indexed_key not in used_keys:
+                candidate = indexed_candidate
+        if candidate is None:
+            for kill_candidate in source_by_kills.get(kills, []):
+                candidate_key = normalize_player_key(kill_candidate.name)
+                if candidate_key not in used_keys:
+                    candidate = kill_candidate
+                    break
+
+        if candidate is None:
+            completed.append(PlayerKill(name=name, kills=kills, key=player_key, ff_player_id=ff_player_id, entries=entries))
+            continue
+
+        candidate_key = normalize_player_key(candidate.name)
+        used_keys.add(candidate_key)
+        completed.append(
+            PlayerKill(
+                name=candidate.name,
+                kills=kills,
+                key=player_key or candidate.key,
+                ff_player_id=ff_player_id or candidate.ff_player_id,
+                entries=max(entries, normalize_kill_value(candidate.entries)),
+            )
+        )
+    return completed
+
+
 def overlay_rank_players(
     daily_ranking: list[PlayerKill] | None,
     global_ranking: list[PlayerKill] | None,
@@ -6338,6 +6428,7 @@ def run_gui(config_path: Path) -> int:
     livepix_widgets: list[Any] = []
     livepix_history_render_pending = False
     livepix_dashboard_after_id: str | None = None
+    appearance_preview_pending = True
 
     def log(message: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
@@ -9454,80 +9545,29 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
-        source_players = sorted_rank_players(references if references is not None else manual_name_reference_players(clean_scope))
-        if not source_players:
-            return clone_player_list(players)
+        source_players = references if references is not None else manual_name_reference_players(clean_scope)
+        return complete_player_names_from_references(players, source_players)
 
-        used_keys = {
-            normalize_player_key(player.name)
-            for player in players
-            if str(player.name or "").strip()
-        }
-        source_by_kills: dict[int, list[PlayerKill]] = {}
-        for source_player in source_players:
-            source_by_kills.setdefault(normalize_kill_value(source_player.kills), []).append(source_player)
-
-        completed: list[PlayerKill] = []
-        for index, player in enumerate(players):
-            name = str(player.name or "").strip()
-            kills = normalize_kill_value(player.kills)
-            if name or kills <= 0:
-                completed.append(
-                    PlayerKill(
-                        name=name,
-                        kills=kills,
-                        key=player.key,
-                        ff_player_id=player.ff_player_id,
-                        entries=normalize_kill_value(player.entries),
-                    )
-                )
-                continue
-
-            candidate: PlayerKill | None = None
-            if index < len(source_players):
-                indexed_candidate = source_players[index]
-                indexed_key = normalize_player_key(indexed_candidate.name)
-                if indexed_candidate.name.strip() and normalize_kill_value(indexed_candidate.kills) == kills and indexed_key not in used_keys:
-                    candidate = indexed_candidate
-
-            if candidate is None:
-                kill_matches = [
-                    source_player
-                    for source_player in source_by_kills.get(kills, [])
-                    if normalize_player_key(source_player.name) not in used_keys
-                ]
-                if kill_matches:
-                    candidate = kill_matches[0]
-
-            if candidate is not None:
-                candidate_key = normalize_player_key(candidate.name)
-                used_keys.add(candidate_key)
-                completed.append(
-                    PlayerKill(
-                        name=candidate.name,
-                        kills=kills,
-                        key=player.key or candidate.key,
-                        ff_player_id=player.ff_player_id or candidate.ff_player_id,
-                        entries=max(normalize_kill_value(player.entries), normalize_kill_value(candidate.entries)),
-                    )
-                )
-            else:
-                completed.append(
-                    PlayerKill(
-                        name=name,
-                        kills=kills,
-                        key=player.key,
-                        ff_player_id=player.ff_player_id,
-                        entries=normalize_kill_value(player.entries),
-                    )
-                )
-        return completed
+    def repair_manual_scope_buffer_names(scope: str | None = None, references: list[PlayerKill] | None = None) -> bool:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        buffered_players = manual_scope_buffers.get(clean_scope, [])
+        if not buffered_players:
+            return False
+        completed_players = complete_manual_player_names(buffered_players, clean_scope, references=references)
+        if player_payload(completed_players) == player_payload(buffered_players):
+            return False
+        manual_scope_buffers[clean_scope] = clone_player_list(completed_players)
+        return True
 
     def manual_scope_display_players(scope: str | None = None, prefer_remote: bool = True) -> list[PlayerKill]:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
         rank_players = manual_scope_rank_players(clean_scope)
+        if rank_players:
+            repair_manual_scope_buffer_names(clean_scope, references=rank_players)
         if prefer_remote and rank_players and clean_scope not in manual_scope_dirty:
             manual_scope_buffers[clean_scope] = clone_player_list(rank_players)
             return clone_player_list(rank_players)
@@ -9560,8 +9600,13 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
+        repair_manual_scope_buffer_names(clean_scope)
         players = manual_scope_display_players(clean_scope, prefer_remote=prefer_remote)
         set_manual_players(players, scope=clean_scope)
+        try:
+            fill_visible_manual_missing_names_from_rank(clean_scope)
+        except NameError:
+            pass
         sync_kills_rank_tab_with_manual_scope(clean_scope)
         manual_status_var.set("Mostrando rank geral" if clean_scope == "general" else "Mostrando rank diario")
 
@@ -10078,6 +10123,8 @@ def run_gui(config_path: Path) -> int:
         else:
             kills_global_ranking = []
         kills_ignored_players = list(state.ignored_players or [])
+        repair_manual_scope_buffer_names("daily", references=kills_daily_ranking)
+        repair_manual_scope_buffer_names("general", references=kills_global_ranking)
         schedule_kills_visual_refresh(delay_ms=80)
         refresh_kills_ignored_list()
         current_scope = current_manual_scope()
@@ -10377,8 +10424,10 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
+        repair_manual_scope_buffer_names(clean_scope)
         if clean_scope == current_manual_scope() and not manual_table_render_pending:
             manual_scope_buffers[clean_scope] = clone_player_list(collect_manual_players(fill_missing_names=False))
+            repair_manual_scope_buffer_names(clean_scope)
         endpoint_url = normalize_endpoint_url(sync_url_var.get())
         jarvis_base_url = normalize_endpoint_url(jarvis_base_url_var.get()).rstrip("/")
         config["kills_realtime_url"] = endpoint_url
@@ -14890,6 +14939,12 @@ def run_gui(config_path: Path) -> int:
         except (AttributeError, tk.TclError):
             return False
 
+    def is_appearance_tab_active() -> bool:
+        try:
+            return tabview.get() == "Aparência"
+        except (AttributeError, tk.TclError):
+            return False
+
     def render_livepix_events(force: bool = False) -> None:
         nonlocal livepix_history_render_pending
         if "livepix_events_frame" not in globals() and not hasattr(render_livepix_events, "frame"):
@@ -15973,9 +16028,12 @@ def run_gui(config_path: Path) -> int:
         active_scope = normalize_kills_scope_value(local_config.get("kills_manual_scope", "daily"))
         if active_scope not in {"daily", "general"}:
             active_scope = "daily"
+        repair_manual_scope_buffer_names("daily", references=kills_daily_ranking)
+        repair_manual_scope_buffer_names("general", references=kills_global_ranking)
         fill_visible_manual_missing_names_from_rank(active_scope)
         sort_manual_rows_by_kills()
         manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players())
+        repair_manual_scope_buffer_names(active_scope)
         daily_players = merge_manual_player_kills(manual_scope_buffers.get("daily", []))
         general_players = merge_manual_player_kills(manual_scope_buffers.get("general", []))
         manual_scope_buffers["daily"] = clone_player_list(daily_players)
@@ -17727,6 +17785,16 @@ def run_gui(config_path: Path) -> int:
         finally:
             theme_swatch_updating = False
 
+    def refresh_appearance_preview_if_needed(force: bool = False) -> None:
+        nonlocal appearance_preview_pending
+        if not force and not appearance_preview_pending:
+            return
+        if not force and not is_appearance_tab_active():
+            return
+        update_logo_preview()
+        update_theme_swatches()
+        appearance_preview_pending = False
+
     logo_actions = ctk.CTkFrame(brand_card, fg_color=panel, corner_radius=0)
     logo_actions.grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=(8, 4))
     button(logo_actions, "Escolher imagem", choose_logo, "accent", width=140).pack(side=tk.LEFT, padx=(0, 8))
@@ -17771,8 +17839,7 @@ def run_gui(config_path: Path) -> int:
     button(appearance_actions, "Atualizar preview", update_theme_swatches, "default", width=130).pack(side=tk.LEFT, padx=(0, 8))
     button(appearance_actions, "Minimizar", hide_window, "default", width=96).pack(side=tk.LEFT, padx=(0, 8))
 
-    update_logo_preview()
-    update_theme_swatches()
+    logo_preview_label.configure(image=None, text="A")
 
     button(general_actions, "Salvar configurações", save_form, "accent", width=150).pack(side=tk.LEFT, padx=(0, 8))
     button(general_actions, "Minimizar", hide_window, "default", width=96).pack(side=tk.LEFT, padx=(0, 8))
@@ -18099,9 +18166,11 @@ def run_gui(config_path: Path) -> int:
         kills_active = is_kills_ff_tab_active()
         livepix_active = is_livepix_tab_active()
         raffle_active = is_raffle_tab_active()
+        appearance_active = is_appearance_tab_active()
         has_kills_pending = manual_table_render_pending or kills_rank_render_pending or kills_ignored_render_pending
         has_livepix_pending = livepix_history_render_pending
         has_raffle_pending = raffle_participant_render_pending and bool(raffle_participant_pending_items)
+        has_appearance_pending = appearance_preview_pending and appearance_active
         if kills_active:
             if manual_table_render_pending:
                 render_scope = manual_table_render_scope if manual_table_render_scope in {"daily", "general"} else current_manual_scope()
@@ -18118,9 +18187,11 @@ def run_gui(config_path: Path) -> int:
             render_livepix_events(force=True)
         if raffle_active and raffle_participant_render_pending:
             refresh_participant_list(raffle_participant_pending_items, force=True)
-        if kills_active or livepix_active or raffle_active:
+        if appearance_active and appearance_preview_pending:
+            refresh_appearance_preview_if_needed(force=True)
+        if kills_active or livepix_active or raffle_active or appearance_active:
             delay_ms = 350
-        elif has_kills_pending or has_livepix_pending or has_raffle_pending:
+        elif has_kills_pending or has_livepix_pending or has_raffle_pending or has_appearance_pending:
             delay_ms = 900
         else:
             delay_ms = BACKGROUND_IDLE_PUMP_MS

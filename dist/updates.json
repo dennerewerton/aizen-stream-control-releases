@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.121",
-    "notes":  "Carregamento mais leve de Comandos e Temporizador: linhas agora sao montadas em lote, evitando reindexacao e autosave repetidos durante a abertura do app.",
+    "version":  "2.6.123",
+    "notes":  "Kills FF: recupera nicks quando a tabela geral/diaria fica com kills mas sem nome, usando o rank do Jarvis/cache antes de renderizar e salvar. Tambem mantem o carregamento inicial mais leve na aba Aparencia.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.121/AizenStreamControl.exe",
-                    "sha256":  "40f63e1cf699d74c379244949b2674305948c1badbf592b6e5aaebfd5be22ee2"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.123/AizenStreamControl.exe",
+                    "sha256":  "9adf1401470e11c0caf6b800ccab3f4340fc600d5a26c868426243f2ff3d44eb"
                 }
 }
