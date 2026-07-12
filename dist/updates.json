@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.124",
-    "notes":  "Otimizacao do bot de comandos: comandos personalizados agora ficam em cache e cada mensagem do chat faz busca direta, reduzindo trabalho na UI durante live movimentada.",
+    "version":  "2.6.125",
+    "notes":  "Kills FF: envio mais rapido ao salvar; quando o snapshot completo nao e aceito, o app compara com o rank atual e envia so as diferencas antes de usar reset completo.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.124/AizenStreamControl.exe",
-                    "sha256":  "38a2da977e8077d103d512f217121eb7904eba80ed75f95ddc7712abae18d2b4"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.125/AizenStreamControl.exe",
+                    "sha256":  "5a809e383edca6386e1a67dcadb1be4310686a7913f51ba2d0280903a99e9cdd"
                 }
 }

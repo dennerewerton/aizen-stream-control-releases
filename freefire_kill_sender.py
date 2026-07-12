@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.124"
+APP_VERSION = "2.6.125"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4520,6 +4520,10 @@ def player_kill_map(players: list[PlayerKill]) -> dict[str, int]:
     return result
 
 
+def player_kill_detail_map(players: list[PlayerKill]) -> dict[str, PlayerKill]:
+    return {normalize_player_key(player.name): player for player in sorted_player_kills(players) if player.name.strip()}
+
+
 def kills_snapshot_matches_state(
     state: RealtimeState,
     daily_players: list[PlayerKill],
@@ -4578,6 +4582,24 @@ def response_acknowledges_kills_snapshot(response_text: str) -> bool:
     return status in {"ok", "success", "saved", "updated", "sincronizado"}
 
 
+def kills_delta_actions(
+    current_players: list[PlayerKill],
+    expected_players: list[PlayerKill],
+    scope: str,
+) -> list[tuple[str, PlayerKill, int | None, str]]:
+    current_map = player_kill_detail_map(current_players)
+    expected_map = player_kill_detail_map(expected_players)
+    actions: list[tuple[str, PlayerKill, int | None, str]] = []
+    for key, current_player in current_map.items():
+        if key not in expected_map:
+            actions.append(("delete", current_player, None, scope))
+    for key, expected_player in expected_map.items():
+        current_player = current_map.get(key)
+        if current_player is None or normalize_kill_value(current_player.kills) != normalize_kill_value(expected_player.kills):
+            actions.append(("set", expected_player, normalize_kill_value(expected_player.kills), scope))
+    return actions
+
+
 def send_kills_snapshot_update(
     endpoint_url: str,
     daily_players: list[PlayerKill],
@@ -4630,6 +4652,7 @@ def send_kills_snapshot_update(
         if candidate_url not in snapshot_urls:
             snapshot_urls.append(candidate_url)
     with requests.Session() as session:
+        final_state: RealtimeState | None = None
         for snapshot_url in snapshot_urls:
             try:
                 response = session.post(
@@ -4668,6 +4691,57 @@ def send_kills_snapshot_update(
                 raise
             except Exception:
                 pass
+
+        try:
+            current_state = fetch_kills_realtime(
+                endpoint_url,
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+            )
+            if kills_snapshot_matches_state(current_state, daily_players, general_players):
+                return current_state
+            current_daily = sorted_player_kills(current_state.daily_ranking or [])
+            current_general = sorted_player_kills(
+                current_state.global_ranking
+                or ([] if current_state.daily_ranking else current_state.players or [])
+            )
+            delta_actions = (
+                kills_delta_actions(current_daily, daily_players, "daily")
+                + kills_delta_actions(current_general, general_players, "general")
+            )
+            reset_replace_count = 2 + len(daily_players) + len(general_players)
+            if delta_actions and len(delta_actions) < reset_replace_count:
+                for action, player, kill_value, action_scope in delta_actions:
+                    final_state = send_kills_action_update(
+                        endpoint_url,
+                        action,
+                        player=player,
+                        kills=kill_value,
+                        scope=action_scope,
+                        device_id=device_id,
+                        device_name=device_name,
+                        room=room,
+                        token=token,
+                        session=session,
+                    )
+                try:
+                    fetched_state = fetch_kills_realtime(
+                        endpoint_url,
+                        device_id=device_id,
+                        device_name=device_name,
+                        room=room,
+                        token=token,
+                    )
+                    if kills_snapshot_matches_state(fetched_state, daily_players, general_players):
+                        return fetched_state
+                except Exception:
+                    pass
+                if final_state is not None and kills_snapshot_matches_state(final_state, daily_players, general_players):
+                    return final_state
+        except Exception:
+            pass
 
         final_state = send_kills_action_update(
             endpoint_url,

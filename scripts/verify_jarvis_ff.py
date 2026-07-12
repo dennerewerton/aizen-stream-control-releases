@@ -132,6 +132,7 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
             "profile": "streamer1",
             "webhook_url": "",
         },
+        "debug": {"kills_actions": []},
     }
     headers_seen: dict[str, dict[str, str]] = {
         "kills": {},
@@ -145,9 +146,9 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
     def log_message(self, *_args: Any) -> None:
         return
 
-    def _send_json(self, payload: dict[str, Any]) -> None:
+    def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
@@ -163,6 +164,10 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
             scope = str(payload.get("scope") or "both").strip().lower()
             if scope not in {"general", "daily", "both"}:
                 scope = "both"
+            self.state.setdefault("debug", {}).setdefault("kills_actions", []).append(action)
+            if action == "replace" and self.state.get("debug", {}).get("reject_snapshot"):
+                self._send_json({"ok": False, "error": "snapshot unsupported in mock"}, status=422)
+                return
 
             def clean_key(value: Any) -> str:
                 return " ".join(str(value or "").strip().casefold().split())
@@ -494,6 +499,9 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
             self.state["overlay"] = payload
             self.headers_seen["overlay"] = {key: value for key, value in self.headers.items()}
         else:
+            if mode == "kills_snapshot" and self.state.get("debug", {}).get("reject_snapshot"):
+                self._send_json({"ok": False, "error": "snapshot unsupported in mock"}, status=422)
+                return
             self.state["kills"] = payload
             self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
         self._send_json({"ok": True})
@@ -1049,6 +1057,30 @@ def verify(
         replaced_global = {item.name.casefold(): item.kills for item in replaced_snapshot.global_ranking or []}
         if replaced_daily != {"pedro": 1} or replaced_global:
             raise RuntimeError(f"Snapshot Kills FF somou ou manteve dados antigos: {replaced_snapshot!r}")
+        MockJarvisHandler.state["kills"] = {
+            "daily_ranking": [{"name": "AizenDelta", "kills": 10}, {"name": "JarvisDelta", "kills": 2}],
+            "ranking": [{"name": "AizenDelta", "kills": 20}, {"name": "JarvisDelta", "kills": 4}],
+            "ignored": {},
+        }
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {"kills_actions": [], "reject_snapshot": True}
+        delta_snapshot = send_kills_snapshot_update(
+            kills_url,
+            [PlayerKill("AizenDelta", 11), PlayerKill("JarvisDelta", 2)],
+            [PlayerKill("AizenDelta", 20), PlayerKill("JarvisDelta", 4)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        delta_daily = {item.name.casefold(): item.kills for item in delta_snapshot.daily_ranking or []}
+        delta_global = {item.name.casefold(): item.kills for item in delta_snapshot.global_ranking or []}
+        delta_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
+        if delta_daily != {"aizendelta": 11, "jarvisdelta": 2} or delta_global != {"aizendelta": 20, "jarvisdelta": 4}:
+            raise RuntimeError(f"Delta Kills FF divergente: {delta_snapshot!r}")
+        if "reset_daily" in delta_actions or "reset_general" in delta_actions or delta_actions.count("set") != 1:
+            raise RuntimeError(f"Delta Kills FF fez acoes demais: {delta_actions!r}")
+        MockJarvisHandler.state["debug"] = {"kills_actions": []}
 
     send_ff_queue_realtime_update(queue_url, queue, device_id, device_name, room, token)
     if queue_url.startswith("http://127.0.0.1:"):
