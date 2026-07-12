@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.136",
-    "notes":  "Menos travadas em segundo plano: bot, temporizadores e Livepix agora usam agendamento unico e ficam em repouso mais longo quando desligados/inativos.",
+    "version":  "2.6.137",
+    "notes":  "Menos trabalho em repouso: o processamento de avatares agora dorme quando nao ha imagens pendentes, acorda rapido ao pedir avatar e cancela callbacks ao fechar.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.136/AizenStreamControl.exe",
-                    "sha256":  "d2534b3e861c156684289a536453f595ff4882892f47862ecd34c12c6cf91722"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.137/AizenStreamControl.exe",
+                    "sha256":  "4b8ac833df7722698df8d6c8938193faff8514ee065bf566e9b8e59549dc3000"
                 }
 }

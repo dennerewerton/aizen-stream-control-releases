@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.136"
+APP_VERSION = "2.6.137"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6474,6 +6474,7 @@ def run_gui(config_path: Path) -> int:
     avatar_image_cache: dict[tuple[str, int], Any] = {}
     avatar_pending: set[tuple[str, int]] = set()
     avatar_workers_started = False
+    avatar_result_after_id: str | None = None
     winner_avatar_current: tuple[str, str] = ("", "-")
     manual_rows: list[dict[str, Any]] = []
     manual_scope_buffers: dict[str, list[PlayerKill]] = {"daily": [], "general": []}
@@ -7155,6 +7156,21 @@ def run_gui(config_path: Path) -> int:
         for index in range(AVATAR_DOWNLOAD_WORKERS):
             threading.Thread(target=avatar_download_worker, name=f"AizenAvatarLoad-{index + 1}", daemon=True).start()
 
+    def schedule_avatar_result_pump(delay_ms: int = 0) -> None:
+        nonlocal avatar_result_after_id
+        if app_closing:
+            return
+        try:
+            callback = pump_avatar_results
+        except NameError:
+            return
+        if avatar_result_after_id is not None:
+            try:
+                root.after_cancel(avatar_result_after_id)
+            except tk.TclError:
+                pass
+        avatar_result_after_id = root.after(max(0, delay_ms), callback)
+
     def avatar_download_worker() -> None:
         session = requests.Session()
         while True:
@@ -7193,6 +7209,7 @@ def run_gui(config_path: Path) -> int:
             ensure_avatar_workers()
             try:
                 avatar_request_queue.put_nowait(key)
+                schedule_avatar_result_pump(120)
             except queue.Full:
                 avatar_pending.discard(key)
         return None
@@ -17432,6 +17449,8 @@ def run_gui(config_path: Path) -> int:
                 wheel_canvas.create_rectangle(x, y, x + 5, y + 9, fill=color, outline="")
 
     def pump_avatar_results() -> None:
+        nonlocal avatar_result_after_id
+        avatar_result_after_id = None
         if app_closing:
             return
         updated = False
@@ -17464,7 +17483,8 @@ def run_gui(config_path: Path) -> int:
             except Exception:
                 pass
         if not app_closing:
-            root.after(40 if not avatar_result_queue.empty() else 300 if avatar_pending else 1500, pump_avatar_results)
+            delay_ms = 40 if not avatar_result_queue.empty() else 300 if avatar_pending else BACKGROUND_DISABLED_PUMP_MS
+            schedule_avatar_result_pump(delay_ms)
 
     def refresh_winner_messages(items: list[dict[str, str]]) -> None:
         rendered = "\n".join(
@@ -17727,7 +17747,7 @@ def run_gui(config_path: Path) -> int:
         nonlocal ff_queue_sync_after_id, ff_queue_poll_after_id
         nonlocal ff_overlay_sync_after_id, ff_overlay_poll_after_id
         nonlocal config_auto_save_after_id
-        nonlocal bot_pump_after_id, chat_timer_after_id, livepix_pump_after_id
+        nonlocal bot_pump_after_id, chat_timer_after_id, livepix_pump_after_id, avatar_result_after_id
         if app_closing:
             return
         save_current_config_silent(compact=True)
@@ -17746,6 +17766,7 @@ def run_gui(config_path: Path) -> int:
             bot_pump_after_id,
             chat_timer_after_id,
             livepix_pump_after_id,
+            avatar_result_after_id,
         ):
             if after_id is not None:
                 try:
@@ -17765,6 +17786,7 @@ def run_gui(config_path: Path) -> int:
         bot_pump_after_id = None
         chat_timer_after_id = None
         livepix_pump_after_id = None
+        avatar_result_after_id = None
         try:
             if raffle_worker is not None:
                 raffle_worker.stop()
@@ -18599,7 +18621,7 @@ def run_gui(config_path: Path) -> int:
     root.after(LIVEPIX_STARTUP_SYNC_DELAY_MS, auto_sync_livepix_on_start)
     schedule_bot_send_pump(0)
     schedule_chat_timer_pump(0)
-    pump_avatar_results()
+    schedule_avatar_result_pump(0)
     if not ff_queue_site_sync_hidden:
         root.after(1400, lambda: fetch_ff_queue(force=False))
     if not ff_queue_site_sync_hidden:
