@@ -12,9 +12,10 @@ $pyInstallerArgs = @(
   "--runtime-tmpdir", ".",
   "--name", "AizenStreamControl",
   "--icon", "assets/app_icon.ico",
+  "--exclude-module", "cv2",
+  "--exclude-module", "numpy",
   "--collect-data", "selenium",
   "--collect-data", "customtkinter",
-  "--add-data", "scripts/windows_ocr.ps1;scripts",
   "--add-data", "assets;assets",
   "--add-data", "config.example.json;."
 )

@@ -43,8 +43,14 @@ ImageGrab: Any | None = None
 def ensure_image_processing_modules() -> tuple[Any, Any]:
     global cv2, np
     if cv2 is None or np is None:
-        import cv2 as cv2_module
-        import numpy as numpy_module
+        try:
+            import cv2 as cv2_module
+            import numpy as numpy_module
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Captura/OCR automatico antigo nao esta incluido nesta versao leve. "
+                "Use o painel Kills FF manual para lancar as kills."
+            ) from exc
 
         cv2 = cv2_module
         np = numpy_module
@@ -71,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.94"
+APP_VERSION = "2.6.95"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )

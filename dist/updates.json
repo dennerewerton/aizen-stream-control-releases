@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.94",
-    "notes":  "Melhora carregamento inicial: cv2, numpy e captura de tela agora sao carregados somente quando OCR/captura antiga for usada, deixando a abertura do app mais leve.",
+    "version":  "2.6.95",
+    "notes":  "Versao leve: remove OpenCV/Numpy do executavel, reduzindo o app de cerca de 87 MB para 38 MB e deixando abertura/atualizacao mais rapidas. A captura OCR antiga mostra aviso e o painel Kills FF manual segue normal.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.94/AizenStreamControl.exe",
-                    "sha256":  "4563ea4357170c0671ce115a24000875a53cbafc45652a23fa58cf2ce4f303e6"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.95/AizenStreamControl.exe",
+                    "sha256":  "b28e6023aa2318447a7ce16aa2be9e01b4b8cff4356c533af32f9da063566ddc"
                 }
 }
