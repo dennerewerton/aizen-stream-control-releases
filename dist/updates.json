@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.102",
-    "notes":  "Otimiza logs: reduz o lote processado por ciclo para evitar travadas quando varios eventos chegam ao mesmo tempo.",
+    "version":  "2.6.103",
+    "notes":  "Otimiza histórico Livepix: salva JSON compacto, escreve menos em disco e mantém os eventos mais recentes no cache local.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.102/AizenStreamControl.exe",
-                    "sha256":  "e4986a02d24a0ead0d31dc0e837cf37f6b854ead1cc7e7906cce48601c44c357"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.103/AizenStreamControl.exe",
+                    "sha256":  "dda6be76f5f2d10cfab8a19bb901064def5059a864b0f11fb0fb9ffd61096c4d"
                 }
 }

@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.102"
+APP_VERSION = "2.6.103"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -89,6 +89,7 @@ AVATAR_IMAGE_CACHE_LIMIT = 240
 AVATAR_PENDING_LIMIT = 120
 AVATAR_DOWNLOAD_WORKERS = 3
 RAFFLE_SEEN_MESSAGES_LIMIT = 2500
+LIVEPIX_EVENT_STORAGE_LIMIT = 1000
 LIVEPIX_HISTORY_RENDER_LIMIT = 30
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
@@ -1300,7 +1301,8 @@ def load_livepix_events(path: Path) -> list[LivepixEvent]:
 
 
 def save_livepix_events(path: Path, events: list[LivepixEvent]) -> None:
-    path.write_text(json.dumps(livepix_events_to_payload(events[-1000:]), ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = livepix_events_to_payload(events[:LIVEPIX_EVENT_STORAGE_LIMIT])
+    path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 
 
 def format_livepix_amount(amount: int, currency: str = "BRL") -> str:
@@ -14056,7 +14058,7 @@ def run_gui(config_path: Path) -> int:
             existing[key] = event
             added += 1
         livepix_events.sort(key=lambda item: item.created_at or "", reverse=True)
-        del livepix_events[1000:]
+        del livepix_events[LIVEPIX_EVENT_STORAGE_LIMIT:]
         if added or updated:
             save_livepix_events(livepix_events_path(config_path), livepix_events)
         if refresh:
