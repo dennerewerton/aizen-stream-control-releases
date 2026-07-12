@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.145",
-    "notes":  "Torna os pumps sob demanda mais seguros: workers de Jarvis, Kills, Fila FF e Livepix nao agendam Tkinter fora do thread principal, reduzindo risco de travamento intermitente.",
+    "version":  "2.6.146",
+    "notes":  "Reduz polling do chat e bot: chat usa intervalo adaptativo quando fica quieto e o pump do bot para quando nao ha fila pendente.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.145/AizenStreamControl.exe",
-                    "sha256":  "2cf841cdb5a2afe02b996929fead10bc88e1bc685ef77c2555294875c67dd7a6"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.146/AizenStreamControl.exe",
+                    "sha256":  "13ea4307d4226246d41763a3b7d02f43b703a04b03347ca213b829e4d1e89fc6"
                 }
 }

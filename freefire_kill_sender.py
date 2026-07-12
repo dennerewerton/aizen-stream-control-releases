@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.145"
+APP_VERSION = "2.6.146"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -89,6 +89,7 @@ CHAT_EVENT_QUEUE_LIMIT = 800
 CHAT_EVENT_BATCH_LIMIT = 32
 CHAT_EVENT_BUSY_PUMP_MS = 20
 CHAT_EVENT_IDLE_PUMP_MS = 180
+CHAT_EVENT_QUIET_PUMP_MS = 500
 SYNC_QUEUE_LIMIT = 240
 FF_QUEUE_SYNC_QUEUE_LIMIT = 180
 LIVEPIX_QUEUE_LIMIT = 600
@@ -6581,6 +6582,7 @@ def run_gui(config_path: Path) -> int:
     chat_timer_runtime: dict[str, dict[str, Any]] = {}
     bot_reply_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=BOT_REPLY_QUEUE_LIMIT)
     bot_send_result_queue: queue.Queue[tuple[bool, str, dict[str, Any]]] = queue.Queue(maxsize=BOT_RESULT_QUEUE_LIMIT)
+    chat_event_quiet_cycles = 0
     bot_command_last_sent: dict[str, float] = {}
     bot_command_last_missed: dict[str, float] = {}
     bot_pending_confirmations: dict[str, dict[str, Any]] = {}
@@ -13892,9 +13894,11 @@ def run_gui(config_path: Path) -> int:
             return False
 
     def pump_chat_event_queue() -> None:
+        nonlocal chat_event_quiet_cycles
         if app_closing:
             return
         updated = False
+        processed = False
         processed_count = 0
         batch_limit = CHAT_EVENT_BATCH_LIMIT
         while processed_count < batch_limit:
@@ -13903,6 +13907,7 @@ def run_gui(config_path: Path) -> int:
             except queue.Empty:
                 break
             processed_count += 1
+            processed = True
             if kind == "message":
                 raw_payload = payload.get("payload") if isinstance(payload, dict) else None
                 source = str(payload.get("source") or "") if isinstance(payload, dict) else ""
@@ -13928,7 +13933,14 @@ def run_gui(config_path: Path) -> int:
         if updated:
             refresh_chat_messages()
         if not app_closing:
-            idle_delay_ms = CHAT_EVENT_IDLE_PUMP_MS if chat_event_runtime_active() else BACKGROUND_IDLE_PUMP_MS
+            if processed:
+                chat_event_quiet_cycles = 0
+            else:
+                chat_event_quiet_cycles = min(chat_event_quiet_cycles + 1, 8)
+            if chat_event_runtime_active():
+                idle_delay_ms = CHAT_EVENT_IDLE_PUMP_MS if chat_event_quiet_cycles < 3 else CHAT_EVENT_QUIET_PUMP_MS
+            else:
+                idle_delay_ms = BACKGROUND_IDLE_PUMP_MS
             root.after(
                 CHAT_EVENT_BUSY_PUMP_MS if not chat_event_queue.empty() else idle_delay_ms,
                 pump_chat_event_queue,
@@ -14723,13 +14735,6 @@ def run_gui(config_path: Path) -> int:
                     bot_status_var.set("Aguardando timer")
                 else:
                     bot_status_var.set("Aguardando comando")
-            if not app_closing:
-                idle_delay = 1000 if (
-                    chat_commands_enabled_var.get()
-                    or chat_timers_enabled_var.get()
-                    or bot_pending_confirmations
-                ) else BACKGROUND_DISABLED_PUMP_MS
-                schedule_bot_send_pump(idle_delay)
             return
 
         remaining = bot_next_allowed_at - time.time()
