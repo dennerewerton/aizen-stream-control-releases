@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.117"
+APP_VERSION = "2.6.118"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -89,8 +89,12 @@ CHAT_EVENT_QUEUE_LIMIT = 800
 CHAT_EVENT_BATCH_LIMIT = 32
 CHAT_EVENT_BUSY_PUMP_MS = 20
 CHAT_EVENT_IDLE_PUMP_MS = 180
+SYNC_QUEUE_LIMIT = 240
+FF_QUEUE_SYNC_QUEUE_LIMIT = 180
+LIVEPIX_QUEUE_LIMIT = 600
 BOT_REPLY_QUEUE_LIMIT = 80
 BOT_RESULT_QUEUE_LIMIT = 120
+AVATAR_RESULT_QUEUE_LIMIT = 180
 AVATAR_IMAGE_CACHE_LIMIT = 240
 AVATAR_PENDING_LIMIT = 120
 AVATAR_DOWNLOAD_WORKERS = 3
@@ -6190,10 +6194,10 @@ def run_gui(config_path: Path) -> int:
     config = load_config(config_path)
     theme_config = resolve_ui_theme(config)
     log_queue: queue.Queue[str] = queue.Queue()
-    sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
-    ff_queue_sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+    sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=SYNC_QUEUE_LIMIT)
+    ff_queue_sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=FF_QUEUE_SYNC_QUEUE_LIMIT)
     chat_event_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=CHAT_EVENT_QUEUE_LIMIT)
-    livepix_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+    livepix_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=LIVEPIX_QUEUE_LIMIT)
     chat_webhook_server: LocalChatWebhookServer | None = None
     livepix_webhook_server: LocalLivepixWebhookServer | None = None
     chat_websocket_worker: ChatWebSocketWorker | None = None
@@ -6222,7 +6226,7 @@ def run_gui(config_path: Path) -> int:
     chat_users: dict[str, LiveChatMessage] = {}
     chat_seen_messages: set[str] = set()
     avatar_request_queue: queue.Queue[tuple[str, int]] = queue.Queue(maxsize=AVATAR_PENDING_LIMIT)
-    avatar_result_queue: queue.Queue[tuple[str, int, Image.Image | None]] = queue.Queue()
+    avatar_result_queue: queue.Queue[tuple[str, int, Image.Image | None]] = queue.Queue(maxsize=AVATAR_RESULT_QUEUE_LIMIT)
     avatar_image_cache: dict[tuple[str, int], Any] = {}
     avatar_pending: set[tuple[str, int]] = set()
     avatar_workers_started = False
@@ -6342,6 +6346,55 @@ def run_gui(config_path: Path) -> int:
         except (queue.Empty, NotImplementedError):
             pass
         log_queue.put(f"[{stamp}] {message}")
+
+    def note_queue_drop(key: str, label: str, count: int = 1) -> None:
+        queue_drop_counts[key] = queue_drop_counts.get(key, 0) + max(1, count)
+        now = time.monotonic()
+        if now - queue_drop_last_log_at.get(key, 0.0) >= 8.0:
+            dropped = queue_drop_counts.get(key, 0)
+            log(f"{label}: {dropped} item(ns) antigo(s) omitido(s) para manter o app leve.")
+            queue_drop_counts[key] = 0
+            queue_drop_last_log_at[key] = now
+
+    def enqueue_limited_queue(
+        target_queue: queue.Queue[Any],
+        item: Any,
+        key: str,
+        label: str,
+    ) -> bool:
+        try:
+            target_queue.put_nowait(item)
+            return True
+        except queue.Full:
+            pass
+        try:
+            target_queue.get_nowait()
+            note_queue_drop(key, label)
+        except queue.Empty:
+            pass
+        try:
+            target_queue.put_nowait(item)
+            return True
+        except queue.Full:
+            note_queue_drop(key, label)
+            return False
+
+    def enqueue_sync_event(kind: str, payload: Any) -> bool:
+        return enqueue_limited_queue(sync_queue, (kind, payload), "sync", "Fila Jarvis cheia")
+
+    def enqueue_ff_queue_event(kind: str, payload: Any) -> bool:
+        return enqueue_limited_queue(ff_queue_sync_queue, (kind, payload), "ff_queue", "Fila FF cheia")
+
+    def enqueue_livepix_event(kind: str, payload: Any) -> bool:
+        return enqueue_limited_queue(livepix_queue, (kind, payload), "livepix", "Fila Livepix cheia")
+
+    def enqueue_avatar_result(url: str, size: int, image: Image.Image | None) -> bool:
+        return enqueue_limited_queue(
+            avatar_result_queue,
+            (url, size, image),
+            "avatar_result",
+            "Fila de avatares cheia",
+        )
 
     def set_text_var(var: tk.StringVar, value: Any) -> None:
         text = str(value)
@@ -6843,9 +6896,9 @@ def run_gui(config_path: Path) -> int:
                 if content_type and "image" not in content_type:
                     raise ValueError("URL nao retornou imagem.")
                 image = Image.open(BytesIO(response.content))
-                avatar_result_queue.put((clean_url, size, crop_avatar(image, size)))
+                enqueue_avatar_result(clean_url, size, crop_avatar(image, size))
             except Exception:
-                avatar_result_queue.put((clean_url, size, None))
+                enqueue_avatar_result(clean_url, size, None)
             finally:
                 avatar_request_queue.task_done()
 
@@ -9220,9 +9273,9 @@ def run_gui(config_path: Path) -> int:
         def run() -> None:
             try:
                 style = fetch_kills_style(endpoint_url, device_id=local_device_id, device_name=local_device_name, token=local_token)
-                sync_queue.put(("kills_style_loaded", {"style": style}))
+                enqueue_sync_event("kills_style_loaded", {"style": style})
             except Exception as exc:
-                sync_queue.put(("kills_style_error", {"error": str(exc), "label": "carregar estilo"}))
+                enqueue_sync_event("kills_style_error", {"error": str(exc), "label": "carregar estilo"})
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -9247,9 +9300,9 @@ def run_gui(config_path: Path) -> int:
         def run() -> None:
             try:
                 saved = send_kills_style_update(endpoint_url, style, device_id=local_device_id, device_name=local_device_name, token=local_token)
-                sync_queue.put(("kills_style_saved", {"style": saved}))
+                enqueue_sync_event("kills_style_saved", {"style": saved})
             except Exception as exc:
-                sync_queue.put(("kills_style_error", {"error": str(exc), "label": "salvar estilo"}))
+                enqueue_sync_event("kills_style_error", {"error": str(exc), "label": "salvar estilo"})
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -9545,9 +9598,9 @@ def run_gui(config_path: Path) -> int:
                     room=str(local_config.get("kills_sync_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                sync_queue.put(("kills_action_done", {"state": state, "action": action, "label": label or action}))
+                enqueue_sync_event("kills_action_done", {"state": state, "action": action, "label": label or action})
             except Exception as exc:
-                sync_queue.put(("kills_action_error", {"error": str(exc), "action": action, "label": label or action}))
+                enqueue_sync_event("kills_action_error", {"error": str(exc), "action": action, "label": label or action})
 
         threading.Thread(target=run, daemon=True).start()
         return True
@@ -11141,9 +11194,9 @@ def run_gui(config_path: Path) -> int:
                     room=str(local_config.get("ff_queue_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                ff_queue_sync_queue.put(("action_done", {"state": state, "action": action, "label": label or action}))
+                enqueue_ff_queue_event("action_done", {"state": state, "action": action, "label": label or action})
             except Exception as exc:
-                ff_queue_sync_queue.put(("action_error", {"error": str(exc), "action": action, "label": label or action}))
+                enqueue_ff_queue_event("action_error", {"error": str(exc), "action": action, "label": label or action})
 
         threading.Thread(target=run, daemon=True).start()
         return True
@@ -11707,9 +11760,9 @@ def run_gui(config_path: Path) -> int:
                     device_name=str(local_config.get("device_name", "")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                sync_queue.put(("ff_overlay_config_fetched", {"payload": payload, "force": force}))
+                enqueue_sync_event("ff_overlay_config_fetched", {"payload": payload, "force": force})
             except Exception as exc:
-                sync_queue.put(("ff_overlay_config_error", {"error": str(exc), "label": "carregar config"}))
+                enqueue_sync_event("ff_overlay_config_error", {"error": str(exc), "label": "carregar config"})
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -11744,9 +11797,9 @@ def run_gui(config_path: Path) -> int:
                     device_name=str(local_config.get("device_name", "")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                sync_queue.put(("ff_overlay_config_saved", {"payload": result, "label": label or action}))
+                enqueue_sync_event("ff_overlay_config_saved", {"payload": result, "label": label or action})
             except Exception as exc:
-                sync_queue.put(("ff_overlay_config_error", {"error": str(exc), "label": label or action}))
+                enqueue_sync_event("ff_overlay_config_error", {"error": str(exc), "label": label or action})
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -11956,9 +12009,9 @@ def run_gui(config_path: Path) -> int:
                     device_name=str(local_config.get("device_name", "")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                ff_queue_sync_queue.put(("tikfinity_ff_fetched", {"payload": payload, "force": force}))
+                enqueue_ff_queue_event("tikfinity_ff_fetched", {"payload": payload, "force": force})
             except Exception as exc:
-                ff_queue_sync_queue.put(("tikfinity_ff_error", {"error": str(exc), "label": "buscar TikFinity FF"}))
+                enqueue_ff_queue_event("tikfinity_ff_error", {"error": str(exc), "label": "buscar TikFinity FF"})
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -11991,9 +12044,9 @@ def run_gui(config_path: Path) -> int:
                     device_name=str(local_config.get("device_name", "")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                ff_queue_sync_queue.put(("tikfinity_ff_action_done", {"payload": result, "label": label or action}))
+                enqueue_ff_queue_event("tikfinity_ff_action_done", {"payload": result, "label": label or action})
             except Exception as exc:
-                ff_queue_sync_queue.put(("tikfinity_ff_error", {"error": str(exc), "label": label or action}))
+                enqueue_ff_queue_event("tikfinity_ff_error", {"error": str(exc), "label": label or action})
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -12148,7 +12201,7 @@ def run_gui(config_path: Path) -> int:
                     results["tikfinity"] = str(exc)
             else:
                 results["tikfinity"] = "Endpoint opcional nao configurado"
-            sync_queue.put(("jarvis_test", results))
+            enqueue_sync_event("jarvis_test", results)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -12414,9 +12467,9 @@ def run_gui(config_path: Path) -> int:
                     room=str(local_config.get("kills_sync_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                sync_queue.put(("overlay_sent", {"signature": signature, "response": response_text}))
+                enqueue_sync_event("overlay_sent", {"signature": signature, "response": response_text})
             except Exception as exc:
-                sync_queue.put(("overlay_send_error", str(exc)))
+                enqueue_sync_event("overlay_send_error", str(exc))
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -12456,18 +12509,16 @@ def run_gui(config_path: Path) -> int:
                     room=str(local_config.get("kills_sync_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                sync_queue.put(
-                    (
-                        "overlay_fetched",
-                        {
-                            "kills_state": kills_state,
-                            "queue_state": queue_state,
-                            "force": force,
-                        },
-                    )
+                enqueue_sync_event(
+                    "overlay_fetched",
+                    {
+                        "kills_state": kills_state,
+                        "queue_state": queue_state,
+                        "force": force,
+                    },
                 )
             except Exception as exc:
-                sync_queue.put(("overlay_fetch_error", {"error": str(exc), "force": force}))
+                enqueue_sync_event("overlay_fetch_error", {"error": str(exc), "force": force})
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -13575,15 +13626,6 @@ def run_gui(config_path: Path) -> int:
 
     def update_bot_queue_count() -> None:
         bot_queue_count_var.set(str(bot_reply_queue.qsize()))
-
-    def note_queue_drop(key: str, label: str) -> None:
-        queue_drop_counts[key] = queue_drop_counts.get(key, 0) + 1
-        now = time.monotonic()
-        if now - queue_drop_last_log_at.get(key, 0.0) >= 8.0:
-            dropped = queue_drop_counts.get(key, 0)
-            log(f"{label}: {dropped} item(ns) antigo(s) omitido(s) para manter o app leve.")
-            queue_drop_counts[key] = 0
-            queue_drop_last_log_at[key] = now
 
     def enqueue_bot_reply_payload(payload: dict[str, Any]) -> bool:
         try:
@@ -14920,7 +14962,7 @@ def run_gui(config_path: Path) -> int:
             row_index += 1
 
     def handle_livepix_webhook(payload: dict[str, Any]) -> None:
-        livepix_queue.put(("webhook", payload))
+        enqueue_livepix_event("webhook", payload)
 
     def fetch_livepix_webhook_details(payload: dict[str, Any]) -> None:
         try:
@@ -14938,11 +14980,11 @@ def run_gui(config_path: Path) -> int:
                 event = client.subscription(resource_id)
             if event is None:
                 event = parse_livepix_event(payload, source="webhook")
-            livepix_queue.put(("webhook_detail", event))
+            enqueue_livepix_event("webhook_detail", event)
         except Exception as exc:
             fallback = parse_livepix_event(payload, source="webhook")
-            livepix_queue.put(("webhook_detail", fallback))
-            livepix_queue.put(("status", f"Webhook recebido; detalhe API falhou: {livepix_error_detail(exc)}"))
+            enqueue_livepix_event("webhook_detail", fallback)
+            enqueue_livepix_event("status", f"Webhook recebido; detalhe API falhou: {livepix_error_detail(exc)}")
 
     def start_livepix_webhook() -> None:
         nonlocal livepix_webhook_server
@@ -15146,21 +15188,19 @@ def run_gui(config_path: Path) -> int:
                     and (event := parse_livepix_event(item, "payment", "api"))
                     and event.amount > 0
                 ] if isinstance(extras.get("receivables"), list) else []
-                livepix_queue.put(
-                    (
-                        "api_synced",
-                        {
-                            "account": account,
-                            "events": payments + messages + subscription_events + transaction_events + receivable_events,
-                            "wallet": wallet,
-                            "extras": extras,
-                            "raw": raw_payloads,
-                            "errors": sync_errors,
-                        },
-                    )
+                enqueue_livepix_event(
+                    "api_synced",
+                    {
+                        "account": account,
+                        "events": payments + messages + subscription_events + transaction_events + receivable_events,
+                        "wallet": wallet,
+                        "extras": extras,
+                        "raw": raw_payloads,
+                        "errors": sync_errors,
+                    },
                 )
             except Exception as exc:
-                livepix_queue.put(("api_sync_error", livepix_error_detail(exc)))
+                enqueue_livepix_event("api_sync_error", livepix_error_detail(exc))
 
         threading.Thread(target=run, name="AizenLivepixSync", daemon=True).start()
 
@@ -15200,9 +15240,9 @@ def run_gui(config_path: Path) -> int:
                     )
                 else:
                     data = client.create_payment(amount, currency, redirect_url)
-                livepix_queue.put(("checkout", data))
+                enqueue_livepix_event("checkout", data)
             except Exception as exc:
-                livepix_queue.put(("error", livepix_error_detail(exc)))
+                enqueue_livepix_event("error", livepix_error_detail(exc))
 
         threading.Thread(target=run, name="AizenLivepixCheckout", daemon=True).start()
 
@@ -15222,9 +15262,9 @@ def run_gui(config_path: Path) -> int:
         def run() -> None:
             try:
                 data = client.create_plan(slug, name, description, amount)
-                livepix_queue.put(("plan_created", data))
+                enqueue_livepix_event("plan_created", data)
             except Exception as exc:
-                livepix_queue.put(("error", livepix_error_detail(exc)))
+                enqueue_livepix_event("error", livepix_error_detail(exc))
 
         threading.Thread(target=run, name="AizenLivepixPlan", daemon=True).start()
 
@@ -15247,9 +15287,9 @@ def run_gui(config_path: Path) -> int:
         def run() -> None:
             try:
                 data = client.create_subscription(plan_id, recurrence, username, email, redirect_url)
-                livepix_queue.put(("checkout", data))
+                enqueue_livepix_event("checkout", data)
             except Exception as exc:
-                livepix_queue.put(("error", livepix_error_detail(exc)))
+                enqueue_livepix_event("error", livepix_error_detail(exc))
 
         threading.Thread(target=run, name="AizenLivepixSubscription", daemon=True).start()
 
@@ -15272,9 +15312,9 @@ def run_gui(config_path: Path) -> int:
         def run() -> None:
             try:
                 data = client.create_webhook(url)
-                livepix_queue.put(("status", f"Webhook cadastrado {data.get('id', '')}".strip()))
+                enqueue_livepix_event("status", f"Webhook cadastrado {data.get('id', '')}".strip())
             except Exception as exc:
-                livepix_queue.put(("error", livepix_error_detail(exc)))
+                enqueue_livepix_event("error", livepix_error_detail(exc))
 
         threading.Thread(target=run, name="AizenLivepixWebhookCreate", daemon=True).start()
 
@@ -15301,9 +15341,9 @@ def run_gui(config_path: Path) -> int:
                     client.set_autoplay(True)
                 elif action == "autoplay_off":
                     client.set_autoplay(False)
-                livepix_queue.put(("status", "Controle enviado"))
+                enqueue_livepix_event("status", "Controle enviado")
             except Exception as exc:
-                livepix_queue.put(("error", str(exc)))
+                enqueue_livepix_event("error", str(exc))
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -15933,22 +15973,20 @@ def run_gui(config_path: Path) -> int:
                     room=str(local_config.get("kills_sync_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                sync_queue.put(
-                    (
-                        "manual_rank_sent",
-                        {
-                            "count": len(daily_players) + len(general_players),
-                            "signature": signature,
-                            "scope": "both",
-                            "scopes": ["daily", "general"],
-                            "daily_count": len(daily_players),
-                            "general_count": len(general_players),
-                            "state": final_state,
-                        },
-                    )
+                enqueue_sync_event(
+                    "manual_rank_sent",
+                    {
+                        "count": len(daily_players) + len(general_players),
+                        "signature": signature,
+                        "scope": "both",
+                        "scopes": ["daily", "general"],
+                        "daily_count": len(daily_players),
+                        "general_count": len(general_players),
+                        "state": final_state,
+                    },
                 )
             except Exception as exc:
-                sync_queue.put(("send_error", str(exc)))
+                enqueue_sync_event("send_error", str(exc))
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -16000,9 +16038,9 @@ def run_gui(config_path: Path) -> int:
                     room=str(local_config.get("kills_sync_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                sync_queue.put(("fetched", {"state": state, "force": force}))
+                enqueue_sync_event("fetched", {"state": state, "force": force})
             except Exception as exc:
-                sync_queue.put(("fetch_error", {"error": str(exc), "force": force}))
+                enqueue_sync_event("fetch_error", {"error": str(exc), "force": force})
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -16047,9 +16085,9 @@ def run_gui(config_path: Path) -> int:
                     room=str(local_config.get("ff_queue_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                ff_queue_sync_queue.put(("sent", {"count": len(entries), "signature": signature, "response": response_text}))
+                enqueue_ff_queue_event("sent", {"count": len(entries), "signature": signature, "response": response_text})
             except Exception as exc:
-                ff_queue_sync_queue.put(("send_error", str(exc)))
+                enqueue_ff_queue_event("send_error", str(exc))
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -16090,9 +16128,9 @@ def run_gui(config_path: Path) -> int:
                     room=str(local_config.get("ff_queue_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                ff_queue_sync_queue.put(("fetched", {"state": state, "force": force}))
+                enqueue_ff_queue_event("fetched", {"state": state, "force": force})
             except Exception as exc:
-                ff_queue_sync_queue.put(("fetch_error", {"error": str(exc), "force": force}))
+                enqueue_ff_queue_event("fetch_error", {"error": str(exc), "force": force})
 
         threading.Thread(target=run, daemon=True).start()
 
