@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.118",
-    "notes":  "Evita acumulo de retornos antigos do Jarvis, Fila FF, Livepix e avatares: filas internas agora tem limite e descartam itens antigos de forma controlada para reduzir travamentos em picos.",
+    "version":  "2.6.119",
+    "notes":  "Salvamento de Kills FF mais rapido quando o Jarvis confirma snapshot: evita chamadas extras e fallback lento. Sorteio Chat agora adia a renderizacao da lista de participantes quando a aba nao esta aberta.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.118/AizenStreamControl.exe",
-                    "sha256":  "99b7cd0e0279c67464c7d6f9462ae0c9230ca508b065a66176bf3b7af74d6561"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.119/AizenStreamControl.exe",
+                    "sha256":  "787865d582dc27479e8caef72591eb3ee1669ede1649c4554609dcd529a4c4be"
                 }
 }

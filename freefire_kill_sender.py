@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.118"
+APP_VERSION = "2.6.119"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4556,7 +4556,7 @@ def send_kills_snapshot_update(
                 state = parse_realtime_state(response.text)
                 if kills_snapshot_matches_state(state, daily_players, general_players):
                     return state
-                if not (state.daily_ranking or state.global_ranking or state.players) and response_acknowledges_kills_snapshot(response.text):
+                if response_acknowledges_kills_snapshot(response.text):
                     return local_kills_snapshot_state(daily_players, general_players, updated_by=device_name)
                 try:
                     refreshed_state = fetch_kills_realtime(
@@ -6206,6 +6206,8 @@ def run_gui(config_path: Path) -> int:
     raffle_end_at = 0.0
     raffle_animating = False
     raffle_started_at: datetime | None = None
+    raffle_participant_render_pending = False
+    raffle_participant_pending_items: list[Any] = []
     participant_widgets: list[Any] = []
     chat_widgets: list[Any] = []
     chat_monitor_widgets: list[Any] = []
@@ -16829,6 +16831,12 @@ def run_gui(config_path: Path) -> int:
         seconds = max(0, seconds)
         return f"{seconds // 60:02d}:{seconds % 60:02d}"
 
+    def is_raffle_tab_active() -> bool:
+        try:
+            return tabview.get() == "Sorteio Chat"
+        except (AttributeError, tk.TclError):
+            return False
+
     def normalize_participant_items(items: list[Any]) -> list[RaffleParticipant]:
         normalized: list[RaffleParticipant] = []
         for index, item in enumerate(items, start=1):
@@ -16857,7 +16865,12 @@ def run_gui(config_path: Path) -> int:
     def supporter_tier_label(tier: str) -> str:
         return {"fan": "Fã", "super_fan": "Super fã", "gift": "Gift", "sub": "Sub"}.get(str(tier or "normal"), "Seguidor")
 
-    def refresh_participant_list(items: list[Any]) -> None:
+    def refresh_participant_list(items: list[Any], force: bool = False) -> None:
+        nonlocal raffle_participant_render_pending, raffle_participant_pending_items
+        if not force and not is_raffle_tab_active():
+            raffle_participant_pending_items = list(items)
+            raffle_participant_render_pending = True
+            return
         participants = normalize_participant_items(items)
         desired = [
             (
@@ -16871,8 +16884,12 @@ def run_gui(config_path: Path) -> int:
             for participant in participants
         ]
         if getattr(refresh_participant_list, "_items", None) == desired:
+            raffle_participant_render_pending = False
+            raffle_participant_pending_items = []
             return
         refresh_participant_list._items = desired  # type: ignore[attr-defined]
+        raffle_participant_render_pending = False
+        raffle_participant_pending_items = []
 
         for widget in participant_widgets:
             widget.destroy()
@@ -18021,8 +18038,10 @@ def run_gui(config_path: Path) -> int:
             return
         kills_active = is_kills_ff_tab_active()
         livepix_active = is_livepix_tab_active()
+        raffle_active = is_raffle_tab_active()
         has_kills_pending = manual_table_render_pending or kills_rank_render_pending or kills_ignored_render_pending
         has_livepix_pending = livepix_history_render_pending
+        has_raffle_pending = raffle_participant_render_pending and bool(raffle_participant_pending_items)
         if kills_active:
             if manual_table_render_pending:
                 render_scope = manual_table_render_scope if manual_table_render_scope in {"daily", "general"} else current_manual_scope()
@@ -18037,9 +18056,11 @@ def run_gui(config_path: Path) -> int:
                 refresh_kills_ignored_list(force=True)
         if livepix_active and (livepix_history_render_pending or not livepix_widgets):
             render_livepix_events(force=True)
-        if kills_active or livepix_active:
+        if raffle_active and raffle_participant_render_pending:
+            refresh_participant_list(raffle_participant_pending_items, force=True)
+        if kills_active or livepix_active or raffle_active:
             delay_ms = 350
-        elif has_kills_pending or has_livepix_pending:
+        elif has_kills_pending or has_livepix_pending or has_raffle_pending:
             delay_ms = 900
         else:
             delay_ms = BACKGROUND_IDLE_PUMP_MS
