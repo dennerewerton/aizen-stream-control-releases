@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.129"
+APP_VERSION = "2.6.130"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -16219,8 +16219,8 @@ def run_gui(config_path: Path) -> int:
         repair_manual_scope_buffer_names(active_scope)
         daily_players = merge_manual_player_kills(manual_scope_buffers.get("daily", []))
         general_players = merge_manual_player_kills(manual_scope_buffers.get("general", []))
-        manual_scope_buffers["daily"] = clone_player_list(daily_players)
-        manual_scope_buffers["general"] = clone_player_list(general_players)
+        apply_local_rank_players("daily", daily_players, schedule_refresh=False)
+        apply_local_rank_players("general", general_players, schedule_refresh=False)
         config["kills_realtime_url"] = endpoint_url
         config["jarvis_endpoint_url"] = endpoint_url
         config["jarvis_base_url"] = str(local_config.get("jarvis_base_url") or "")
@@ -16233,13 +16233,6 @@ def run_gui(config_path: Path) -> int:
         config["device_name"] = str(local_config.get("device_name") or default_device_name())
         config["jarvis_api_token"] = str(local_config.get("jarvis_api_token") or "")
         config["kills_sync_room"] = str(local_config.get("kills_sync_room") or "principal")
-        previous_bulk_updating = manual_bulk_updating
-        manual_bulk_updating = True
-        try:
-            refresh_local_rank_from_manual_scope("daily")
-            refresh_local_rank_from_manual_scope("general")
-        finally:
-            manual_bulk_updating = previous_bulk_updating
         schedule_kills_visual_refresh(delay_ms=80)
         signature = manual_snapshot_signature(daily_players, general_players)
         if not endpoint_url:

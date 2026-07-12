@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.129",
-    "notes":  "Kills FF mais leve ao editar: o app reaproveita a lista de jogadores ja calculada no ciclo visual, evitando nova coleta/processamento para atualizar rank e metricas.",
+    "version":  "2.6.130",
+    "notes":  "Salvar Kills FF mais rapido: o app nao recalcula os rankings diario e geral depois de ja preparar a lista para envio, evitando trabalho duplicado antes de mandar ao Jarvis.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.129/AizenStreamControl.exe",
-                    "sha256":  "829849e680885e16891debb0757250d8f73cc6ae804ab0bdc170636094ce8644"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.130/AizenStreamControl.exe",
+                    "sha256":  "7e8deb71b7836c6fd4f3eeb8d616c9b5865eb785b39f66508d1e04e46f8b51b4"
                 }
 }
