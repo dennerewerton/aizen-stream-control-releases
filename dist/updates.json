@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.97",
-    "notes":  "Melhora estabilidade do chat: avatares agora usam fila com 3 workers e limite de pendencias, evitando pico de threads/downloads quando entram muitos usuarios.",
+    "version":  "2.6.98",
+    "notes":  "Melhora Kills FF: evita nick vazio no rank geral apos salvar, aceita nomes alternativos do Jarvis e limita esperas de rede do Livepix.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.97/AizenStreamControl.exe",
-                    "sha256":  "6e7aa1199e5407e1af99debee6dc008662cc860489c78504036edca76edcd05c"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.98/AizenStreamControl.exe",
+                    "sha256":  "748b031c6bf4e4af4947b888ae81423b318440df5e982910e22e8fdcf8862066"
                 }
 }

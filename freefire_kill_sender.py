@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.97"
+APP_VERSION = "2.6.98"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -1331,6 +1331,7 @@ def livepix_request_with_dns_fallback(
     log: callable | None = None,
     **kwargs: Any,
 ) -> requests.Response:
+    kwargs.setdefault("timeout", 18)
     try:
         return requests.request(method, url, **kwargs)
     except requests.ConnectionError as exc:
@@ -3431,6 +3432,59 @@ def first_present(mapping: dict[str, Any], keys: tuple[str, ...], default: Any =
     return default
 
 
+PLAYER_NAME_FIELDS = (
+    "name",
+    "nick",
+    "nickname",
+    "username",
+    "user",
+    "participant",
+    "participant_name",
+    "participantName",
+    "player",
+    "player_name",
+    "playerName",
+    "jogador",
+    "apelido",
+    "display_name",
+    "displayName",
+    "user_name",
+    "userName",
+    "social_user",
+    "socialUser",
+    "screen_name",
+    "screenName",
+    "unique_id",
+    "uniqueId",
+    "title",
+    "label",
+    "author",
+    "sender",
+    "account",
+    "account_name",
+    "accountName",
+)
+PLAYER_NAME_CONTAINER_FIELDS = ("user", "author", "sender", "account", "profile", "member", "participant", "player")
+
+
+def player_name_from_mapping(mapping: dict[str, Any], default: Any = "") -> Any:
+    raw_name = first_present(mapping, PLAYER_NAME_FIELDS)
+    if isinstance(raw_name, dict):
+        nested_name = player_name_from_mapping(raw_name, "")
+        if str(nested_name or "").strip():
+            return nested_name
+        raw_name = ""
+    if raw_name not in (None, ""):
+        return raw_name
+    for container_key in PLAYER_NAME_CONTAINER_FIELDS:
+        nested = mapping.get(container_key)
+        if isinstance(nested, dict):
+            nested_name = player_name_from_mapping(nested, "")
+            if str(nested_name or "").strip():
+                return nested_name
+    return default
+
+
 def ff_queue_payload(entries: list[FFQueueEntry]) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
     for index, entry in enumerate(merge_ff_queue_entries(entries), start=1):
@@ -3707,35 +3761,7 @@ def parse_players_payload(payload: Any) -> list[PlayerKill]:
             entries = 0
             if isinstance(kills, dict):
                 item = kills
-                row_name = first_present(
-                    item,
-                    (
-                        "name",
-                        "nick",
-                        "nickname",
-                        "username",
-                        "user",
-                        "participant",
-                        "participant_name",
-                        "participantName",
-                        "player",
-                        "player_name",
-                        "playerName",
-                        "jogador",
-                        "apelido",
-                        "display_name",
-                        "displayName",
-                        "user_name",
-                        "userName",
-                        "social_user",
-                        "socialUser",
-                        "screen_name",
-                        "screenName",
-                        "unique_id",
-                        "uniqueId",
-                    ),
-                    name,
-                )
+                row_name = player_name_from_mapping(item, name)
                 kills = first_present(item, ("kills", "kill", "k", "abates", "score", "points", "value", "total"), 0)
                 key = str(first_present(item, ("key", "player_key", "playerKey", "id", "uid"), "") or "").strip()
                 ff_player_id = re.sub(
@@ -3756,34 +3782,7 @@ def parse_players_payload(payload: Any) -> list[PlayerKill]:
 
     for item in candidates:
         if isinstance(item, dict):
-            name = first_present(
-                item,
-                (
-                    "name",
-                    "nick",
-                    "nickname",
-                    "username",
-                    "user",
-                    "participant",
-                    "participant_name",
-                    "participantName",
-                    "player",
-                    "player_name",
-                    "playerName",
-                    "jogador",
-                    "apelido",
-                    "display_name",
-                    "displayName",
-                    "user_name",
-                    "userName",
-                    "social_user",
-                    "socialUser",
-                    "screen_name",
-                    "screenName",
-                    "unique_id",
-                    "uniqueId",
-                ),
-            )
+            name = player_name_from_mapping(item)
             kills = first_present(item, ("kills", "kill", "k", "abates", "score", "points", "value", "total"), 0)
             key = first_present(item, ("key", "player_key", "playerKey", "id", "uid"), "")
             ff_player_id = first_present(item, ("ff_player_id", "ffPlayerId", "freefire_id", "freeFireId", "player_id", "playerId"), "")
@@ -9874,7 +9873,9 @@ def run_gui(config_path: Path) -> int:
             if manual_signature(display_players, current_scope) != manual_signature(current_players, current_scope):
                 set_manual_players(display_players, scope=current_scope)
                 sync_kills_rank_tab_with_manual_scope(current_scope)
+                fill_visible_manual_missing_names_from_rank(current_scope)
             else:
+                fill_visible_manual_missing_names_from_rank(current_scope)
                 update_manual_metrics()
         else:
             update_manual_metrics()
@@ -10031,6 +10032,68 @@ def run_gui(config_path: Path) -> int:
             refresh_ff_overlay(force=True)
         except NameError:
             pass
+
+    def fill_visible_manual_missing_names_from_rank(scope: str | None = None) -> bool:
+        nonlocal manual_applying_remote
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"} or clean_scope != current_manual_scope():
+            return False
+        references = sorted_rank_players(manual_scope_rank_players(clean_scope))
+        if not references:
+            return False
+
+        used_keys = {
+            normalize_player_key(row["name_var"].get())
+            for row in manual_rows
+            if row["name_var"].get().strip()
+        }
+        references_by_kills: dict[int, list[PlayerKill]] = {}
+        for player in references:
+            name = player.name.strip()
+            key = normalize_player_key(name)
+            if not name or key in used_keys:
+                continue
+            references_by_kills.setdefault(normalize_kill_value(player.kills), []).append(player)
+
+        changed = False
+        previous_applying_remote = manual_applying_remote
+        manual_applying_remote = True
+        try:
+            for index, row in enumerate(manual_rows):
+                if row["name_var"].get().strip():
+                    continue
+                kills = normalize_kill_value(row["kills_var"].get())
+                if kills <= 0:
+                    continue
+                candidate: PlayerKill | None = None
+                if index < len(references):
+                    indexed_candidate = references[index]
+                    indexed_key = normalize_player_key(indexed_candidate.name)
+                    if (
+                        indexed_candidate.name.strip()
+                        and normalize_kill_value(indexed_candidate.kills) == kills
+                        and indexed_key not in used_keys
+                    ):
+                        candidate = indexed_candidate
+                if candidate is None:
+                    for kill_candidate in references_by_kills.get(kills, []):
+                        candidate_key = normalize_player_key(kill_candidate.name)
+                        if candidate_key not in used_keys:
+                            candidate = kill_candidate
+                            break
+                if candidate is None:
+                    continue
+                candidate_key = normalize_player_key(candidate.name)
+                row["name_var"].set(candidate.name)
+                used_keys.add(candidate_key)
+                changed = True
+        finally:
+            manual_applying_remote = previous_applying_remote
+
+        if changed:
+            manual_scope_buffers[clean_scope] = clone_player_list(collect_manual_players(fill_missing_names=False))
+            refresh_local_rank_from_manual_scope(clean_scope)
+        return changed
 
     def run_manual_visual_refresh() -> None:
         nonlocal manual_visual_after_id
@@ -15431,6 +15494,7 @@ def run_gui(config_path: Path) -> int:
         active_scope = normalize_kills_scope_value(local_config.get("kills_manual_scope", "daily"))
         if active_scope not in {"daily", "general"}:
             active_scope = "daily"
+        fill_visible_manual_missing_names_from_rank(active_scope)
         sort_manual_rows_by_kills()
         manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players())
         daily_players = merge_manual_player_kills(manual_scope_buffers.get("daily", []))

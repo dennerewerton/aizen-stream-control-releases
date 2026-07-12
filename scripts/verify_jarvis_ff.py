@@ -651,6 +651,16 @@ def verify_contracts() -> None:
     )
     if [(item.name, item.kills) for item in snake_name_state.players] != [("Nome Snake", 8), ("Nome Player", 6)]:
         raise RuntimeError(f"Parser Kills FF nao leu nomes snake_case: {snake_name_state.players!r}")
+    nested_name_state = parse_realtime_state(
+        {
+            "ranking": [
+                {"user": {"nickname": "Nick Aninhado"}, "kills": 10},
+                {"title": "Nome Titulo", "value": 3},
+            ],
+        }
+    )
+    if [(item.name, item.kills) for item in nested_name_state.players] != [("Nick Aninhado", 10), ("Nome Titulo", 3)]:
+        raise RuntimeError(f"Parser Kills FF nao leu nomes alternativos: {nested_name_state.players!r}")
     split_rank_state = parse_realtime_state(
         {
             "ranking": [{"name": "Fallback", "kills": 1}],
