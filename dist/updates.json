@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.140",
-    "notes":  "Deixa o Salvar Kills FF mais leve: quando os jogadores ja tem nick, o app pula a busca/ordenacao de referencias do ranking e faz somente a normalizacao necessaria.",
+    "version":  "2.6.141",
+    "notes":  "Reduz ciclos em repouso: a aba Logs agora acorda menos quando nao esta aberta e nao ha mensagens novas, ajudando o app a ficar mais leve por longos periodos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.140/AizenStreamControl.exe",
-                    "sha256":  "dd6d9f2765b7c962ca69982cdd4cd556208b3550a4b8f7cadaaa162ae03f0b19"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.141/AizenStreamControl.exe",
+                    "sha256":  "f181410892479728423d5cd845ff73e136547d6121bd0e276eae2c6c3440a3b1"
                 }
 }
