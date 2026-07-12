@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.143",
-    "notes":  "Reduz mais trabalho em segundo plano: Livepix, bot, temporizadores e avatares nao iniciam pumps quando estao desligados ou sem fila pendente.",
+    "version":  "2.6.144",
+    "notes":  "Reduz polling interno: filas de resultados do Jarvis/Kills e Fila FF agora acordam sob demanda quando chega evento, em vez de ficarem varrendo vazias.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.143/AizenStreamControl.exe",
-                    "sha256":  "0dfb3d05d85d585e76134161f25fabe812c17063df239c7ad34ccb6a804633a2"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.144/AizenStreamControl.exe",
+                    "sha256":  "b7d5f09e79ca77b688d89d7a91d05a16769013c191d4d56ea35ef69a8be29bac"
                 }
 }

@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.143"
+APP_VERSION = "2.6.144"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6587,6 +6587,8 @@ def run_gui(config_path: Path) -> int:
     queue_drop_last_log_at: dict[str, float] = {}
     bot_sending = False
     bot_next_allowed_at = 0.0
+    sync_pump_after_id: str | None = None
+    ff_queue_pump_after_id: str | None = None
     bot_pump_after_id: str | None = None
     chat_timer_after_id: str | None = None
     livepix_pump_after_id: str | None = None
@@ -6660,10 +6662,22 @@ def run_gui(config_path: Path) -> int:
             return False
 
     def enqueue_sync_event(kind: str, payload: Any) -> bool:
-        return enqueue_limited_queue(sync_queue, (kind, payload), "sync", "Fila Jarvis cheia")
+        queued = enqueue_limited_queue(sync_queue, (kind, payload), "sync", "Fila Jarvis cheia")
+        if queued and sync_pump_after_id is None:
+            try:
+                schedule_sync_queue_pump(0)
+            except NameError:
+                pass
+        return queued
 
     def enqueue_ff_queue_event(kind: str, payload: Any) -> bool:
-        return enqueue_limited_queue(ff_queue_sync_queue, (kind, payload), "ff_queue", "Fila FF cheia")
+        queued = enqueue_limited_queue(ff_queue_sync_queue, (kind, payload), "ff_queue", "Fila FF cheia")
+        if queued and ff_queue_pump_after_id is None:
+            try:
+                schedule_ff_queue_sync_pump(0)
+            except NameError:
+                pass
+        return queued
 
     def enqueue_livepix_event(kind: str, payload: Any) -> bool:
         queued = enqueue_limited_queue(livepix_queue, (kind, payload), "livepix", "Fila Livepix cheia")
@@ -17277,7 +17291,20 @@ def run_gui(config_path: Path) -> int:
                 log(f"Nao consegui ler a Fila FF via GET: {error}")
                 ff_queue_last_fetch_error = error
 
+    def schedule_sync_queue_pump(delay_ms: int = 0) -> None:
+        nonlocal sync_pump_after_id
+        if app_closing:
+            return
+        if sync_pump_after_id is not None:
+            try:
+                root.after_cancel(sync_pump_after_id)
+            except tk.TclError:
+                pass
+        sync_pump_after_id = root.after(max(0, delay_ms), pump_sync_queue)
+
     def pump_sync_queue() -> None:
+        nonlocal sync_pump_after_id
+        sync_pump_after_id = None
         if app_closing:
             return
         processed = False
@@ -17291,13 +17318,23 @@ def run_gui(config_path: Path) -> int:
             processed_count += 1
             processed = True
             handle_sync_event(kind, payload)
-        if not app_closing:
-            root.after(
-                25 if not sync_queue.empty() else SYNC_QUEUE_PROCESSED_PUMP_MS if processed else SYNC_QUEUE_IDLE_PUMP_MS,
-                pump_sync_queue,
-            )
+        if not app_closing and not sync_queue.empty():
+            schedule_sync_queue_pump(25 if processed else 0)
+
+    def schedule_ff_queue_sync_pump(delay_ms: int = 0) -> None:
+        nonlocal ff_queue_pump_after_id
+        if app_closing:
+            return
+        if ff_queue_pump_after_id is not None:
+            try:
+                root.after_cancel(ff_queue_pump_after_id)
+            except tk.TclError:
+                pass
+        ff_queue_pump_after_id = root.after(max(0, delay_ms), pump_ff_queue_sync_queue)
 
     def pump_ff_queue_sync_queue() -> None:
+        nonlocal ff_queue_pump_after_id
+        ff_queue_pump_after_id = None
         if app_closing:
             return
         processed = False
@@ -17311,15 +17348,8 @@ def run_gui(config_path: Path) -> int:
             processed_count += 1
             processed = True
             handle_ff_queue_sync_event(kind, payload)
-        if not app_closing:
-            root.after(
-                25
-                if not ff_queue_sync_queue.empty()
-                else SYNC_QUEUE_PROCESSED_PUMP_MS
-                if processed
-                else SYNC_QUEUE_IDLE_PUMP_MS,
-                pump_ff_queue_sync_queue,
-            )
+        if not app_closing and not ff_queue_sync_queue.empty():
+            schedule_ff_queue_sync_pump(25 if processed else 0)
 
     def open_layout_window() -> None:
         window = ctk.CTkToplevel(root)
@@ -17836,6 +17866,7 @@ def run_gui(config_path: Path) -> int:
         nonlocal ff_queue_sync_after_id, ff_queue_poll_after_id
         nonlocal ff_overlay_sync_after_id, ff_overlay_poll_after_id
         nonlocal config_auto_save_after_id
+        nonlocal sync_pump_after_id, ff_queue_pump_after_id
         nonlocal bot_pump_after_id, chat_timer_after_id, livepix_pump_after_id, avatar_result_after_id
         if app_closing:
             return
@@ -17852,6 +17883,8 @@ def run_gui(config_path: Path) -> int:
             ff_overlay_sync_after_id,
             ff_overlay_poll_after_id,
             config_auto_save_after_id,
+            sync_pump_after_id,
+            ff_queue_pump_after_id,
             bot_pump_after_id,
             chat_timer_after_id,
             livepix_pump_after_id,
@@ -17872,6 +17905,8 @@ def run_gui(config_path: Path) -> int:
         ff_overlay_sync_after_id = None
         ff_overlay_poll_after_id = None
         config_auto_save_after_id = None
+        sync_pump_after_id = None
+        ff_queue_pump_after_id = None
         bot_pump_after_id = None
         chat_timer_after_id = None
         livepix_pump_after_id = None
@@ -18702,10 +18737,10 @@ def run_gui(config_path: Path) -> int:
     livepix_enabled_var.trace_add("write", lambda *_args: start_livepix_history_load(force=livepix_enabled_var.get()))
     bot_delivery_method_var.trace_add("write", refresh_tikfinity_direct_bridge)
     pump_log()
-    if not (kills_ff_site_sync_hidden and ff_overlay_site_sync_hidden):
-        pump_sync_queue()
-    if not ff_queue_site_sync_hidden:
-        pump_ff_queue_sync_queue()
+    if not sync_queue.empty():
+        schedule_sync_queue_pump(0)
+    if not ff_queue_sync_queue.empty():
+        schedule_ff_queue_sync_pump(0)
     if not chat_listener_hidden:
         pump_chat_event_queue()
     pump_deferred_kills_render()
