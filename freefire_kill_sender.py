@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.91"
+APP_VERSION = "2.6.92"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4287,6 +4287,7 @@ def send_kills_action_update(
     device_name: str = "",
     room: str = "principal",
     token: str = "",
+    session: requests.Session | None = None,
 ) -> RealtimeState:
     payload: dict[str, Any] = {
         "source": "aizen-stream-control",
@@ -4323,7 +4324,8 @@ def send_kills_action_update(
     }
     if token:
         headers["X-Aizen-Token"] = token
-    response = requests.post(
+    http_client = session or requests
+    response = http_client.post(
         derive_kills_action_endpoint(endpoint_url),
         json=payload,
         headers=headers,
@@ -4411,86 +4413,90 @@ def send_kills_snapshot_update(
     for candidate_url in (derive_kills_action_endpoint(endpoint_url), normalize_endpoint_url(endpoint_url)):
         if candidate_url not in snapshot_urls:
             snapshot_urls.append(candidate_url)
-    for snapshot_url in snapshot_urls:
-        try:
-            response = requests.post(
-                snapshot_url,
-                json=payload,
-                headers=headers,
-                timeout=20,
-                allow_redirects=False,
-            )
-            if 300 <= response.status_code < 400:
-                location = response.headers.get("Location", "")
-                raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
-            response.raise_for_status()
-            state = parse_realtime_state(response.text)
-            if kills_snapshot_matches_state(state, daily_players, general_players):
-                return state
+    with requests.Session() as session:
+        for snapshot_url in snapshot_urls:
             try:
-                refreshed_state = fetch_kills_realtime(
-                    endpoint_url,
-                    device_id=device_id,
-                    device_name=device_name,
-                    room=room,
-                    token=token,
+                response = session.post(
+                    snapshot_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=20,
+                    allow_redirects=False,
                 )
-                if kills_snapshot_matches_state(refreshed_state, daily_players, general_players):
-                    return refreshed_state
+                if 300 <= response.status_code < 400:
+                    location = response.headers.get("Location", "")
+                    raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+                response.raise_for_status()
+                state = parse_realtime_state(response.text)
+                if kills_snapshot_matches_state(state, daily_players, general_players):
+                    return state
+                try:
+                    refreshed_state = fetch_kills_realtime(
+                        endpoint_url,
+                        device_id=device_id,
+                        device_name=device_name,
+                        room=room,
+                        token=token,
+                    )
+                    if kills_snapshot_matches_state(refreshed_state, daily_players, general_players):
+                        return refreshed_state
+                except Exception:
+                    pass
+            except requests.HTTPError as exc:
+                status_code = exc.response.status_code if exc.response is not None else 0
+                if status_code not in {400, 404, 405, 409, 422}:
+                    raise
+            except requests.RequestException:
+                raise
             except Exception:
                 pass
-        except requests.HTTPError as exc:
-            status_code = exc.response.status_code if exc.response is not None else 0
-            if status_code not in {400, 404, 405, 409, 422}:
-                raise
-        except requests.RequestException:
-            raise
-        except Exception:
-            pass
 
-    final_state: RealtimeState | None = None
-    final_state = send_kills_action_update(
-        endpoint_url,
-        "reset_daily",
-        scope="daily",
-        device_id=device_id,
-        device_name=device_name,
-        room=room,
-        token=token,
-    )
-    final_state = send_kills_action_update(
-        endpoint_url,
-        "reset_general",
-        scope="general",
-        device_id=device_id,
-        device_name=device_name,
-        room=room,
-        token=token,
-    )
-    for player in daily_players:
         final_state = send_kills_action_update(
             endpoint_url,
-            "set",
-            player=player,
-            kills=player.kills,
+            "reset_daily",
             scope="daily",
             device_id=device_id,
             device_name=device_name,
             room=room,
             token=token,
+            session=session,
         )
-    for player in general_players:
         final_state = send_kills_action_update(
             endpoint_url,
-            "set",
-            player=player,
-            kills=player.kills,
+            "reset_general",
             scope="general",
             device_id=device_id,
             device_name=device_name,
             room=room,
             token=token,
+            session=session,
         )
+        for player in daily_players:
+            final_state = send_kills_action_update(
+                endpoint_url,
+                "set",
+                player=player,
+                kills=player.kills,
+                scope="daily",
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+                session=session,
+            )
+        for player in general_players:
+            final_state = send_kills_action_update(
+                endpoint_url,
+                "set",
+                player=player,
+                kills=player.kills,
+                scope="general",
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+                session=session,
+            )
     try:
         fetched_state = fetch_kills_realtime(
             endpoint_url,

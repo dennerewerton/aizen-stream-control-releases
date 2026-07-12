@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.91",
-    "notes":  "Otimiza abertura: abas ocultas Fila FF e Overlay FF nao montam mais tabelas, listas, sliders e preview; Kills FF, comandos e leitor TikFinity seguem ativos.",
+    "version":  "2.6.92",
+    "notes":  "Otimiza o Salvar do Kills FF: fallback por jogador reaproveita a mesma conexao HTTP, reduzindo espera quando o Jarvis nao aceita snapshot direto.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.91/AizenStreamControl.exe",
-                    "sha256":  "f288ee4ffba11db322abac443781120a213c1269eee26f5c6553b22df12d24b4"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.92/AizenStreamControl.exe",
+                    "sha256":  "9b7e47fbb110cfd0400b7bf7f81342d458080d1c1ca6935d42e50e5e4a0565ea"
                 }
 }
