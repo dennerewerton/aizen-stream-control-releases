@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.147",
-    "notes":  "Remove runtime-tmpdir fixo do PyInstaller: o app deixa de extrair _MEI na pasta de instalacao, reduzindo lixo, risco de erro ao criar diretorio temporario e peso na abertura.",
+    "version":  "2.6.148",
+    "notes":  "Corrige Kills FF preservando nicks no rank geral apos adicionar/salvar kills e envia aliases de nome para o Jarvis.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.147/AizenStreamControl.exe",
-                    "sha256":  "a5725ad08ab03de2ada4e8d17e7ad8e7f0bd4681daca330da6f6ff2f089048cd"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.148/AizenStreamControl.exe",
+                    "sha256":  "70344f9934edce84e2ee7577e7a542b9bc6f3820e2744e723fe435593e4d009f"
                 }
 }

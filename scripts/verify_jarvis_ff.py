@@ -38,6 +38,7 @@ from freefire_kill_sender import (  # noqa: E402
     overlay_rank_players,
     parse_ff_queue_state,
     parse_realtime_state,
+    player_wire_payload,
     send_ff_overlay_realtime_update,
     send_ff_overlay_config_action,
     send_ff_queue_action_update,
@@ -697,6 +698,16 @@ def verify_contracts() -> None:
     )
     if [(item.name, item.kills) for item in recovered_manual_names] != [("Xiom TTK", 48), ("Emy", 30), ("!Souza", 29)]:
         raise RuntimeError(f"Recuperacao de nicks Kills FF divergente: {recovered_manual_names!r}")
+    mixed_reference_names = complete_player_names_from_references(
+        [PlayerKill("", 48), PlayerKill("", 30), PlayerKill("Novo", 7)],
+        [PlayerKill("Xiom TTK", 48), PlayerKill("Emy", 30), PlayerKill("!Souza", 29)],
+    )
+    if [(item.name, item.kills) for item in mixed_reference_names] != [("Xiom TTK", 48), ("Emy", 30), ("Novo", 7)]:
+        raise RuntimeError(f"Recuperacao parcial de nicks Kills FF divergente: {mixed_reference_names!r}")
+    wire_player = player_wire_payload([PlayerKill("Xiom TTK", 48, key="xiom ttk", ff_player_id="123456789")])[0]
+    for expected_key in ("name", "nick", "nickname", "player_name", "playerName", "display_name", "displayName", "username"):
+        if wire_player.get(expected_key) != "Xiom TTK":
+            raise RuntimeError(f"Payload Kills FF sem alias de nick {expected_key!r}: {wire_player!r}")
 
     queue_state = parse_ff_queue_state(
         {

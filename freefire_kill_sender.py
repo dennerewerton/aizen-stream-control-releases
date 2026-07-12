@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.147"
+APP_VERSION = "2.6.148"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3392,6 +3392,38 @@ def player_payload(players: list[PlayerKill]) -> list[dict[str, Any]]:
     return [{"name": player.name, "kills": int(player.kills)} for player in players]
 
 
+def player_wire_payload(players: list[PlayerKill]) -> list[dict[str, Any]]:
+    payload: list[dict[str, Any]] = []
+    for player in players:
+        name = str(player.name or "").strip()
+        if not name:
+            continue
+        key = str(player.key or "").strip() or normalize_player_key(name)
+        item: dict[str, Any] = {
+            "name": name,
+            "nick": name,
+            "nickname": name,
+            "username": name,
+            "player_name": name,
+            "playerName": name,
+            "display_name": name,
+            "displayName": name,
+            "jogador": name,
+            "kills": int(normalize_kill_value(player.kills)),
+            "key": key,
+            "player_key": key,
+            "playerKey": key,
+        }
+        ff_player_id = re.sub(r"\D+", "", str(player.ff_player_id or ""))
+        if ff_player_id:
+            item["ff_player_id"] = ff_player_id
+            item["ffPlayerId"] = ff_player_id
+            item["freefire_id"] = ff_player_id
+            item["freeFireId"] = ff_player_id
+        payload.append(item)
+    return payload
+
+
 def merged_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
     merged: dict[str, PlayerKill] = {}
     order: list[str] = []
@@ -4284,7 +4316,7 @@ def send_kills_realtime_update(
             "version": APP_VERSION,
         },
         "content": format_message(players, title),
-        "players": player_payload(players),
+        "players": player_wire_payload(players),
     }
     headers = {
         "X-Aizen-Client-Id": device_id,
@@ -4532,6 +4564,14 @@ def send_kills_action_update(
             {
                 "key": player.key or normalize_player_key(player.name),
                 "name": player.name,
+                "nick": player.name,
+                "nickname": player.name,
+                "username": player.name,
+                "player_name": player.name,
+                "playerName": player.name,
+                "display_name": player.name,
+                "displayName": player.name,
+                "jogador": player.name,
                 "ff_player_id": player.ff_player_id,
             }
         )
@@ -4720,10 +4760,10 @@ def send_kills_snapshot_update(
         "action": "replace",
         "scope": "both",
         "replace": True,
-        "players": player_payload(general_players),
-        "ranking": player_payload(general_players),
-        "global_ranking": player_payload(general_players),
-        "daily_ranking": player_payload(daily_players),
+        "players": player_wire_payload(general_players),
+        "ranking": player_wire_payload(general_players),
+        "global_ranking": player_wire_payload(general_players),
+        "daily_ranking": player_wire_payload(daily_players),
         "totals": {
             "total_players": len(general_players),
             "total_kills": sum(player.kills for player in general_players),
@@ -5153,7 +5193,7 @@ def overlay_payload(
     entries: list[FFQueueEntry],
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload_players = player_payload(players)
+    payload_players = player_wire_payload(players)
     payload_queue = ff_queue_payload(entries)
     active_queue = [item for item in payload_queue if item.get("status") != "Concluido"]
     return {
@@ -5795,7 +5835,7 @@ def send_to_jarvis_endpoint(endpoint_url: str, content: str, players: list[Playe
         "app_version": APP_VERSION,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
         "content": content,
-        "players": player_payload(players),
+        "players": player_wire_payload(players),
     }
     response = requests.post(normalize_endpoint_url(endpoint_url), json=payload, timeout=20, allow_redirects=False)
     if 300 <= response.status_code < 400:
@@ -9814,6 +9854,14 @@ def run_gui(config_path: Path) -> int:
             clean_scope = "daily"
         other_scope = "daily" if clean_scope == "general" else "general"
         references: list[PlayerKill] = []
+        for row in manual_rows:
+            try:
+                visible_name = row["name_var"].get().strip()
+                visible_kills = normalize_kill_value(row["kills_var"].get())
+            except (KeyError, tk.TclError):
+                continue
+            if visible_name:
+                references.append(PlayerKill(visible_name, visible_kills, key=normalize_player_key(visible_name)))
         references.extend(manual_scope_rank_players(clean_scope))
         references.extend(manual_scope_buffers.get(clean_scope, []))
         references.extend(manual_scope_rank_players(other_scope))
@@ -9848,7 +9896,13 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
-        rank_players = manual_scope_rank_players(clean_scope)
+        rank_players = merge_manual_player_kills(
+            complete_manual_player_names(
+                manual_scope_rank_players(clean_scope),
+                clean_scope,
+                references=manual_name_reference_players(clean_scope),
+            )
+        )
         if rank_players:
             repair_manual_scope_buffer_names(clean_scope, references=rank_players)
         if prefer_remote and rank_players and clean_scope not in manual_scope_dirty:
@@ -10425,11 +10479,14 @@ def run_gui(config_path: Path) -> int:
 
     def apply_kills_rankings(state: RealtimeState) -> None:
         nonlocal kills_daily_ranking, kills_global_ranking, kills_ignored_players
-        kills_daily_ranking = sorted_rank_players(state.daily_ranking or [])
+        incoming_daily = complete_manual_player_names(state.daily_ranking or [], "daily")
+        incoming_global_source = state.global_ranking if state.global_ranking else ([] if state.daily_ranking else state.players or [])
+        incoming_global = complete_manual_player_names(incoming_global_source, "general")
+        kills_daily_ranking = sorted_rank_players(incoming_daily)
         if state.global_ranking:
-            kills_global_ranking = sorted_rank_players(state.global_ranking)
+            kills_global_ranking = sorted_rank_players(incoming_global)
         elif not state.daily_ranking:
-            kills_global_ranking = sorted_rank_players(state.players or [])
+            kills_global_ranking = sorted_rank_players(incoming_global)
         else:
             kills_global_ranking = []
         kills_ignored_players = list(state.ignored_players or [])
@@ -10609,7 +10666,7 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"} or clean_scope != current_manual_scope():
             return False
-        references = sorted_rank_players(manual_scope_rank_players(clean_scope))
+        references = manual_name_reference_players(clean_scope)
         if not references:
             return False
 
@@ -10678,6 +10735,7 @@ def run_gui(config_path: Path) -> int:
             scope = "daily"
         should_sort = manual_visual_sort_pending
         manual_visual_sort_pending = False
+        should_sort = fill_visible_manual_missing_names_from_rank(scope) or should_sort
         if should_sort:
             sort_manual_rows_by_kills()
         players = collect_manual_players(scope=scope)
@@ -10747,6 +10805,9 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
+        fill_visible_manual_missing_names_from_rank(clean_scope)
+        for scope_key in ("daily", "general"):
+            repair_manual_scope_buffer_names(scope_key)
         repair_manual_scope_buffer_names(clean_scope)
         if clean_scope == current_manual_scope() and not manual_table_render_pending:
             manual_scope_buffers[clean_scope] = clone_player_list(collect_manual_players(fill_missing_names=False, scope=clean_scope))
@@ -16531,6 +16592,8 @@ def run_gui(config_path: Path) -> int:
         repair_manual_scope_buffer_names("daily", references=kills_daily_ranking)
         repair_manual_scope_buffer_names("general", references=kills_global_ranking)
         fill_visible_manual_missing_names_from_rank(active_scope)
+        repair_manual_scope_buffer_names("daily")
+        repair_manual_scope_buffer_names("general")
         sort_manual_rows_by_kills()
         if active_scope == current_manual_scope():
             unresolved_rows = [
@@ -16548,8 +16611,8 @@ def run_gui(config_path: Path) -> int:
                 return
         manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players(scope=active_scope))
         repair_manual_scope_buffer_names(active_scope)
-        daily_players = merge_manual_player_kills(manual_scope_buffers.get("daily", []))
-        general_players = merge_manual_player_kills(manual_scope_buffers.get("general", []))
+        daily_players = merge_manual_player_kills(complete_manual_player_names(manual_scope_buffers.get("daily", []), "daily"))
+        general_players = merge_manual_player_kills(complete_manual_player_names(manual_scope_buffers.get("general", []), "general"))
         apply_local_rank_players("daily", daily_players, schedule_refresh=False)
         apply_local_rank_players("general", general_players, schedule_refresh=False)
         config["kills_realtime_url"] = endpoint_url
