@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.144"
+APP_VERSION = "2.6.145"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6450,6 +6450,7 @@ def run_gui(config_path: Path) -> int:
 
     import customtkinter as ctk
 
+    ui_thread_id = threading.get_ident()
     config = load_config(config_path)
     theme_config = resolve_ui_theme(config)
     log_queue: queue.Queue[str] = queue.Queue()
@@ -6587,6 +6588,9 @@ def run_gui(config_path: Path) -> int:
     queue_drop_last_log_at: dict[str, float] = {}
     bot_sending = False
     bot_next_allowed_at = 0.0
+    sync_workers_active = 0
+    ff_queue_workers_active = 0
+    livepix_workers_active = 0
     sync_pump_after_id: str | None = None
     ff_queue_pump_after_id: str | None = None
     bot_pump_after_id: str | None = None
@@ -6661,9 +6665,12 @@ def run_gui(config_path: Path) -> int:
             note_queue_drop(key, label)
             return False
 
+    def in_ui_thread() -> bool:
+        return threading.get_ident() == ui_thread_id
+
     def enqueue_sync_event(kind: str, payload: Any) -> bool:
         queued = enqueue_limited_queue(sync_queue, (kind, payload), "sync", "Fila Jarvis cheia")
-        if queued and sync_pump_after_id is None:
+        if queued and sync_pump_after_id is None and in_ui_thread():
             try:
                 schedule_sync_queue_pump(0)
             except NameError:
@@ -6672,7 +6679,7 @@ def run_gui(config_path: Path) -> int:
 
     def enqueue_ff_queue_event(kind: str, payload: Any) -> bool:
         queued = enqueue_limited_queue(ff_queue_sync_queue, (kind, payload), "ff_queue", "Fila FF cheia")
-        if queued and ff_queue_pump_after_id is None:
+        if queued and ff_queue_pump_after_id is None and in_ui_thread():
             try:
                 schedule_ff_queue_sync_pump(0)
             except NameError:
@@ -6681,12 +6688,51 @@ def run_gui(config_path: Path) -> int:
 
     def enqueue_livepix_event(kind: str, payload: Any) -> bool:
         queued = enqueue_limited_queue(livepix_queue, (kind, payload), "livepix", "Fila Livepix cheia")
-        if queued and livepix_pump_after_id is None:
+        if queued and livepix_pump_after_id is None and in_ui_thread():
             try:
                 schedule_livepix_queue_pump(0)
             except NameError:
                 pass
         return queued
+
+    def start_sync_worker(target: callable, name: str = "AizenSyncWorker") -> None:
+        nonlocal sync_workers_active
+        sync_workers_active += 1
+        schedule_sync_queue_pump(0)
+
+        def wrapped() -> None:
+            try:
+                target()
+            finally:
+                enqueue_limited_queue(sync_queue, ("__worker_done", None), "sync", "Fila Jarvis cheia")
+
+        threading.Thread(target=wrapped, name=name, daemon=True).start()
+
+    def start_ff_queue_worker(target: callable, name: str = "AizenFFQueueWorker") -> None:
+        nonlocal ff_queue_workers_active
+        ff_queue_workers_active += 1
+        schedule_ff_queue_sync_pump(0)
+
+        def wrapped() -> None:
+            try:
+                target()
+            finally:
+                enqueue_limited_queue(ff_queue_sync_queue, ("__worker_done", None), "ff_queue", "Fila FF cheia")
+
+        threading.Thread(target=wrapped, name=name, daemon=True).start()
+
+    def start_livepix_worker(target: callable, name: str = "AizenLivepixWorker") -> None:
+        nonlocal livepix_workers_active
+        livepix_workers_active += 1
+        schedule_livepix_queue_pump(0)
+
+        def wrapped() -> None:
+            try:
+                target()
+            finally:
+                enqueue_limited_queue(livepix_queue, ("__worker_done", None), "livepix", "Fila Livepix cheia")
+
+        threading.Thread(target=wrapped, name=name, daemon=True).start()
 
     def enqueue_avatar_result(url: str, size: int, image: Image.Image | None) -> bool:
         return enqueue_limited_queue(
@@ -6729,7 +6775,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_livepix_event("history_load_error", str(exc))
 
-        threading.Thread(target=run, name="AizenLivepixHistoryLoad", daemon=True).start()
+        start_livepix_worker(run, name="AizenLivepixHistoryLoad")
 
     def set_text_var(var: tk.StringVar, value: Any) -> None:
         text = str(value)
@@ -9628,7 +9674,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_sync_event("kills_style_error", {"error": str(exc), "label": "carregar estilo"})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_sync_worker(run, name="AizenKillsStyleLoad")
 
     def save_kills_style() -> None:
         if kills_ff_site_sync_hidden:
@@ -9655,7 +9701,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_sync_event("kills_style_error", {"error": str(exc), "label": "salvar estilo"})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_sync_worker(run, name="AizenKillsStyleSave")
 
     def reset_kills_style_form() -> None:
         apply_kills_style(default_kills_style())
@@ -9907,7 +9953,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_sync_event("kills_action_error", {"error": str(exc), "action": action, "label": label or action})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_sync_worker(run, name="AizenKillsAction")
         return True
 
     def kills_admin_scope_value() -> str:
@@ -11547,7 +11593,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_ff_queue_event("action_error", {"error": str(exc), "action": action, "label": label or action})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_ff_queue_worker(run, name="AizenFFQueueAction")
         return True
 
     def clear_ff_queue_manual_form() -> None:
@@ -12113,7 +12159,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_sync_event("ff_overlay_config_error", {"error": str(exc), "label": "carregar config"})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_sync_worker(run, name="AizenFFOverlayConfigFetch")
 
     def ff_overlay_site_action(action: str, payload: dict[str, Any] | None = None, label: str = "") -> None:
         if ff_overlay_site_sync_hidden:
@@ -12150,7 +12196,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_sync_event("ff_overlay_config_error", {"error": str(exc), "label": label or action})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_sync_worker(run, name="AizenFFOverlayConfigSave")
 
     def save_ff_overlay_site_config() -> None:
         ff_overlay_site_action(
@@ -12362,7 +12408,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_ff_queue_event("tikfinity_ff_error", {"error": str(exc), "label": "buscar TikFinity FF"})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_ff_queue_worker(run, name="AizenTikFinityFFFetch")
 
     def tikfinity_ff_action(action: str, payload: dict[str, Any] | None = None, label: str = "") -> None:
         if ff_queue_site_sync_hidden:
@@ -12397,7 +12443,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_ff_queue_event("tikfinity_ff_error", {"error": str(exc), "label": label or action})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_ff_queue_worker(run, name="AizenTikFinityFFAction")
 
     def save_tikfinity_ff_config() -> None:
         tikfinity_ff_action(
@@ -12552,7 +12598,7 @@ def run_gui(config_path: Path) -> int:
                 results["tikfinity"] = "Endpoint opcional nao configurado"
             enqueue_sync_event("jarvis_test", results)
 
-        threading.Thread(target=run, daemon=True).start()
+        start_sync_worker(run, name="AizenJarvisTest")
 
     def ff_overlay_snapshot() -> tuple[list[PlayerKill], list[dict[str, Any]], int, int]:
         players = overlay_rank_players(kills_daily_ranking, kills_global_ranking, collect_manual_players(scope=current_manual_scope()))
@@ -12822,7 +12868,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_sync_event("overlay_send_error", str(exc))
 
-        threading.Thread(target=run, daemon=True).start()
+        start_sync_worker(run, name="AizenFFOverlaySend")
 
     def fetch_ff_overlay(force: bool = True) -> None:
         nonlocal ff_overlay_fetching
@@ -12871,7 +12917,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_sync_event("overlay_fetch_error", {"error": str(exc), "force": force})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_sync_worker(run, name="AizenFFOverlayFetch")
 
     def apply_ff_overlay_settings(refresh: bool = False) -> None:
         opacity = layout_value(ff_overlay_opacity_var, 35, 100)
@@ -15495,6 +15541,7 @@ def run_gui(config_path: Path) -> int:
             livepix_webhook_server = server
             livepix_status_var.set("Webhook ativo")
             update_livepix_endpoint_text()
+            schedule_livepix_queue_pump(0)
         except Exception as exc:
             livepix_status_var.set("Erro")
             messagebox.showerror("Livepix", str(exc))
@@ -15695,7 +15742,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_livepix_event("api_sync_error", livepix_error_detail(exc))
 
-        threading.Thread(target=run, name="AizenLivepixSync", daemon=True).start()
+        start_livepix_worker(run, name="AizenLivepixSync")
 
     def test_livepix_account() -> None:
         sync_livepix_from_api(show_error_dialog=True)
@@ -15757,7 +15804,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_livepix_event("error", livepix_error_detail(exc))
 
-        threading.Thread(target=run, name="AizenLivepixCheckout", daemon=True).start()
+        start_livepix_worker(run, name="AizenLivepixCheckout")
 
     def create_livepix_plan() -> None:
         try:
@@ -15779,7 +15826,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_livepix_event("error", livepix_error_detail(exc))
 
-        threading.Thread(target=run, name="AizenLivepixPlan", daemon=True).start()
+        start_livepix_worker(run, name="AizenLivepixPlan")
 
     def create_livepix_subscription_checkout() -> None:
         try:
@@ -15804,7 +15851,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_livepix_event("error", livepix_error_detail(exc))
 
-        threading.Thread(target=run, name="AizenLivepixSubscription", daemon=True).start()
+        start_livepix_worker(run, name="AizenLivepixSubscription")
 
     def copy_livepix_endpoint() -> None:
         update_livepix_endpoint_text()
@@ -15829,7 +15876,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_livepix_event("error", livepix_error_detail(exc))
 
-        threading.Thread(target=run, name="AizenLivepixWebhookCreate", daemon=True).start()
+        start_livepix_worker(run, name="AizenLivepixWebhookCreate")
 
     def copy_livepix_checkout(url: str) -> None:
         root.clipboard_clear()
@@ -15858,7 +15905,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_livepix_event("error", str(exc))
 
-        threading.Thread(target=run, daemon=True).start()
+        start_livepix_worker(run, name="AizenLivepixControl")
 
     def clear_livepix_events() -> None:
         nonlocal livepix_events_loaded, livepix_events_loading, livepix_history_load_generation
@@ -15963,6 +16010,8 @@ def run_gui(config_path: Path) -> int:
         nonlocal livepix_pump_after_id
         if app_closing:
             return
+        if not in_ui_thread():
+            return
         if livepix_pump_after_id is not None:
             try:
                 root.after_cancel(livepix_pump_after_id)
@@ -15972,7 +16021,7 @@ def run_gui(config_path: Path) -> int:
 
     def pump_livepix_queue() -> None:
         nonlocal livepix_dashboard_state, livepix_sync_running, livepix_events_loaded, livepix_events_loading
-        nonlocal livepix_history_render_pending, livepix_pump_after_id
+        nonlocal livepix_history_render_pending, livepix_pump_after_id, livepix_workers_active
         livepix_pump_after_id = None
         if app_closing:
             return
@@ -15986,6 +16035,9 @@ def run_gui(config_path: Path) -> int:
                 break
             processed_count += 1
             processed = True
+            if kind == "__worker_done":
+                livepix_workers_active = max(0, livepix_workers_active - 1)
+                continue
             if kind == "history_loaded":
                 livepix_events_loading = False
                 if not isinstance(payload, dict) or int(payload.get("generation") or 0) != livepix_history_load_generation:
@@ -16011,12 +16063,10 @@ def run_gui(config_path: Path) -> int:
                 if event is not None:
                     livepix_status_var.set("Webhook recebido")
                     log(f"Livepix webhook: {event.kind} {event.reference}; buscando detalhes.")
-                    threading.Thread(
-                        target=fetch_livepix_webhook_details,
-                        args=(payload,),
+                    start_livepix_worker(
+                        lambda current_payload=payload: fetch_livepix_webhook_details(current_payload),
                         name="AizenLivepixWebhookDetail",
-                        daemon=True,
-                    ).start()
+                    )
                 else:
                     livepix_status_var.set("Webhook sem detalhes")
                     log(f"Livepix webhook recebido. Use sincronizar para buscar detalhes: {compact_json_preview(payload)}")
@@ -16153,10 +16203,18 @@ def run_gui(config_path: Path) -> int:
                 delay_ms = 25
             elif processed:
                 delay_ms = 160
-            elif livepix_sync_running or livepix_webhook_server is not None or livepix_overlay_frame is not None or is_livepix_tab_active():
+            elif (
+                livepix_workers_active
+                or livepix_sync_running
+                or livepix_webhook_server is not None
+                or livepix_overlay_frame is not None
+                or is_livepix_tab_active()
+            ):
                 delay_ms = 800
+            elif livepix_enabled_var.get():
+                delay_ms = BACKGROUND_IDLE_PUMP_MS
             else:
-                delay_ms = BACKGROUND_IDLE_PUMP_MS if livepix_enabled_var.get() else BACKGROUND_DISABLED_PUMP_MS
+                return
             schedule_livepix_queue_pump(delay_ms)
 
     def appearance_config_from_vars() -> dict[str, str]:
@@ -16552,7 +16610,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_sync_event("send_error", str(exc))
 
-        threading.Thread(target=run, daemon=True).start()
+        start_sync_worker(run, name="AizenManualKillsSend")
 
     def fetch_panel_kills(force: bool = True) -> None:
         nonlocal manual_fetching
@@ -16606,7 +16664,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_sync_event("fetch_error", {"error": str(exc), "force": force})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_sync_worker(run, name="AizenManualKillsFetch")
 
     def send_ff_queue(force: bool = True) -> None:
         nonlocal ff_queue_sending, ff_queue_sync_after_id, ff_queue_last_signature
@@ -16653,7 +16711,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_ff_queue_event("send_error", str(exc))
 
-        threading.Thread(target=run, daemon=True).start()
+        start_ff_queue_worker(run, name="AizenFFQueueSend")
 
     def fetch_ff_queue(force: bool = True) -> None:
         nonlocal ff_queue_fetching
@@ -16696,7 +16754,7 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_ff_queue_event("fetch_error", {"error": str(exc), "force": force})
 
-        threading.Thread(target=run, daemon=True).start()
+        start_ff_queue_worker(run, name="AizenFFQueueFetch")
 
     def schedule_ff_queue_poll(delay_ms: int | None = None) -> None:
         nonlocal ff_queue_poll_after_id
@@ -17295,6 +17353,8 @@ def run_gui(config_path: Path) -> int:
         nonlocal sync_pump_after_id
         if app_closing:
             return
+        if not in_ui_thread():
+            return
         if sync_pump_after_id is not None:
             try:
                 root.after_cancel(sync_pump_after_id)
@@ -17303,7 +17363,7 @@ def run_gui(config_path: Path) -> int:
         sync_pump_after_id = root.after(max(0, delay_ms), pump_sync_queue)
 
     def pump_sync_queue() -> None:
-        nonlocal sync_pump_after_id
+        nonlocal sync_pump_after_id, sync_workers_active
         sync_pump_after_id = None
         if app_closing:
             return
@@ -17317,13 +17377,22 @@ def run_gui(config_path: Path) -> int:
                 break
             processed_count += 1
             processed = True
+            if kind == "__worker_done":
+                sync_workers_active = max(0, sync_workers_active - 1)
+                continue
             handle_sync_event(kind, payload)
         if not app_closing and not sync_queue.empty():
             schedule_sync_queue_pump(25 if processed else 0)
+        elif not app_closing and (
+            sync_workers_active or manual_sending or manual_fetching or ff_overlay_sending or ff_overlay_fetching
+        ):
+            schedule_sync_queue_pump(250)
 
     def schedule_ff_queue_sync_pump(delay_ms: int = 0) -> None:
         nonlocal ff_queue_pump_after_id
         if app_closing:
+            return
+        if not in_ui_thread():
             return
         if ff_queue_pump_after_id is not None:
             try:
@@ -17333,7 +17402,7 @@ def run_gui(config_path: Path) -> int:
         ff_queue_pump_after_id = root.after(max(0, delay_ms), pump_ff_queue_sync_queue)
 
     def pump_ff_queue_sync_queue() -> None:
-        nonlocal ff_queue_pump_after_id
+        nonlocal ff_queue_pump_after_id, ff_queue_workers_active
         ff_queue_pump_after_id = None
         if app_closing:
             return
@@ -17347,9 +17416,14 @@ def run_gui(config_path: Path) -> int:
                 break
             processed_count += 1
             processed = True
+            if kind == "__worker_done":
+                ff_queue_workers_active = max(0, ff_queue_workers_active - 1)
+                continue
             handle_ff_queue_sync_event(kind, payload)
         if not app_closing and not ff_queue_sync_queue.empty():
             schedule_ff_queue_sync_pump(25 if processed else 0)
+        elif not app_closing and (ff_queue_workers_active or ff_queue_sending or ff_queue_fetching):
+            schedule_ff_queue_sync_pump(250)
 
     def open_layout_window() -> None:
         window = ctk.CTkToplevel(root)

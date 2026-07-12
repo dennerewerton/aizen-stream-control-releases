@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.144",
-    "notes":  "Reduz polling interno: filas de resultados do Jarvis/Kills e Fila FF agora acordam sob demanda quando chega evento, em vez de ficarem varrendo vazias.",
+    "version":  "2.6.145",
+    "notes":  "Torna os pumps sob demanda mais seguros: workers de Jarvis, Kills, Fila FF e Livepix nao agendam Tkinter fora do thread principal, reduzindo risco de travamento intermitente.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.144/AizenStreamControl.exe",
-                    "sha256":  "b7d5f09e79ca77b688d89d7a91d05a16769013c191d4d56ea35ef69a8be29bac"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.145/AizenStreamControl.exe",
+                    "sha256":  "2cf841cdb5a2afe02b996929fead10bc88e1bc685ef77c2555294875c67dd7a6"
                 }
 }
