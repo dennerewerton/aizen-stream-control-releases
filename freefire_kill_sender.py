@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.99"
+APP_VERSION = "2.6.100"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6156,6 +6156,8 @@ def run_gui(config_path: Path) -> int:
     kills_daily_ranking: list[PlayerKill] = []
     kills_global_ranking: list[PlayerKill] = []
     kills_ignored_players: list[IgnoredKillPlayer] = []
+    kills_rank_render_pending = False
+    kills_ignored_render_pending = False
     ff_queue_actions: Any | None = None
     ff_queue_summary_frame: Any | None = None
     ff_queue_table_frame: Any | None = None
@@ -9629,14 +9631,41 @@ def run_gui(config_path: Path) -> int:
             label="Reexibindo jogador",
         )
 
-    def refresh_kills_ignored_list() -> None:
+    def is_kills_ff_tab_active() -> bool:
+        if kills_ff_site_sync_hidden:
+            return False
+        try:
+            return tabview.get() == "Kills FF"
+        except (AttributeError, tk.TclError):
+            return False
+
+    def refresh_kills_ignored_list(force: bool = False) -> None:
+        nonlocal kills_ignored_render_pending
+        kills_ignored_count_var.set(str(len(kills_ignored_players)))
+        ignored_signature = json.dumps(
+            [{"name": player.name, "key": player.key} for player in kills_ignored_players],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if not force and not is_kills_ff_tab_active():
+            if getattr(refresh_kills_ignored_list, "_deferred_signature", None) != ignored_signature:
+                refresh_kills_ignored_list._deferred_signature = ignored_signature  # type: ignore[attr-defined]
+                kills_ignored_render_pending = True
+            return
+        if (
+            getattr(refresh_kills_ignored_list, "_signature", None) == ignored_signature
+            and not kills_ignored_render_pending
+        ):
+            return
+        refresh_kills_ignored_list._signature = ignored_signature  # type: ignore[attr-defined]
+        refresh_kills_ignored_list._deferred_signature = ""  # type: ignore[attr-defined]
+        kills_ignored_render_pending = False
         for widget in kills_ignored_rows:
             try:
                 widget.destroy()
             except tk.TclError:
                 pass
         kills_ignored_rows.clear()
-        kills_ignored_count_var.set(str(len(kills_ignored_players)))
 
         if not kills_ignored_players:
             empty = ctk.CTkLabel(
@@ -9679,7 +9708,14 @@ def run_gui(config_path: Path) -> int:
             ).grid(row=0, column=1, sticky="e", padx=(6, 12), pady=8)
             kills_ignored_rows.append(row_frame)
 
-    def refresh_kills_rank_table() -> None:
+    def refresh_kills_rank_table(force: bool = False) -> None:
+        nonlocal kills_rank_render_pending
+        daily_total = sum(player.kills for player in kills_daily_ranking)
+        global_total = sum(player.kills for player in kills_global_ranking)
+        set_text_var(kills_daily_rank_count_var, len(kills_daily_ranking))
+        set_text_var(kills_daily_rank_total_var, daily_total)
+        set_text_var(kills_global_rank_count_var, len(kills_global_ranking))
+        set_text_var(kills_global_rank_total_var, global_total)
         table_signature = json.dumps(
             {
                 "daily": player_payload(kills_daily_ranking),
@@ -9692,9 +9728,16 @@ def run_gui(config_path: Path) -> int:
             ensure_ascii=False,
             sort_keys=True,
         )
-        if getattr(refresh_kills_rank_table, "_signature", None) == table_signature:
+        if not force and not is_kills_ff_tab_active():
+            if getattr(refresh_kills_rank_table, "_deferred_signature", None) != table_signature:
+                refresh_kills_rank_table._deferred_signature = table_signature  # type: ignore[attr-defined]
+                kills_rank_render_pending = True
+            return
+        if getattr(refresh_kills_rank_table, "_signature", None) == table_signature and not kills_rank_render_pending:
             return
         refresh_kills_rank_table._signature = table_signature  # type: ignore[attr-defined]
+        refresh_kills_rank_table._deferred_signature = ""  # type: ignore[attr-defined]
+        kills_rank_render_pending = False
 
         def render_rank(
             table_frame: Any,
@@ -17574,6 +17617,16 @@ def run_gui(config_path: Path) -> int:
         ensure_chat_listener_for_bot()
         refresh_tikfinity_direct_bridge()
 
+    def pump_deferred_kills_render() -> None:
+        if app_closing:
+            return
+        if is_kills_ff_tab_active():
+            if kills_rank_render_pending or not kills_daily_rank_rows or not kills_global_rank_rows:
+                refresh_kills_rank_table(force=True)
+            if kills_ignored_render_pending or not kills_ignored_rows:
+                refresh_kills_ignored_list(force=True)
+        root.after(350, pump_deferred_kills_render)
+
     device_name_var.trace_add("write", update_local_source_labels)
     chat_commands_enabled_var.trace_add("write", ensure_bot_runtime)
     chat_timers_enabled_var.trace_add("write", ensure_bot_runtime)
@@ -17585,6 +17638,7 @@ def run_gui(config_path: Path) -> int:
         pump_ff_queue_sync_queue()
     if not chat_listener_hidden:
         pump_chat_event_queue()
+    pump_deferred_kills_render()
     pump_livepix_queue()
     root.after(650, refresh_livepix_dashboard)
     root.after(1200, auto_sync_livepix_on_start)

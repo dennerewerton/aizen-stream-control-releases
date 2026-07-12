@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.99",
-    "notes":  "Otimiza o Kills FF: reduz recalculos imediatos ao editar nick/kills, mantendo o rank atualizado por refresh agrupado e mais leve.",
+    "version":  "2.6.100",
+    "notes":  "Otimiza abertura do app: adia a montagem visual dos rankings Kills FF ate a aba ser aberta, mantendo dados e contadores atualizados.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.99/AizenStreamControl.exe",
-                    "sha256":  "87e04d75d7088214085275951a122f6059af32af4f65287c2291e538d0897a9d"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.100/AizenStreamControl.exe",
+                    "sha256":  "f5efef5915b287d927baba2b0aa02d464d2bdf5d02183bb052ee97bfbec124fc"
                 }
 }
