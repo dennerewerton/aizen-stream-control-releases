@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.114",
-    "notes":  "Otimiza estabilidade em live: o chat processa eventos em lotes menores para nao travar a interface, e configs/historico Livepix agora salvam de forma atomica e pulam escrita quando nao mudou.",
+    "version":  "2.6.115",
+    "notes":  "Otimiza Livepix: atualizacoes do dashboard agora sao agrupadas em um unico refresh curto, reduzindo picos de UI quando chegam eventos/sincronizacoes proximas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.114/AizenStreamControl.exe",
-                    "sha256":  "ff4ae986f14435859f176f263b486fa60f038410762c363d9cd35a7d1b800b45"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.115/AizenStreamControl.exe",
+                    "sha256":  "d8cb0fa4232885857733fadf03d7192fbfa03b3e4edf42246dad1e473212130a"
                 }
 }

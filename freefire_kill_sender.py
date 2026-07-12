@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.114"
+APP_VERSION = "2.6.115"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -95,6 +95,7 @@ RAFFLE_SEEN_MESSAGES_LIMIT = 2500
 LIVEPIX_EVENT_STORAGE_LIMIT = 1000
 LIVEPIX_HISTORY_RENDER_LIMIT = 30
 LIVEPIX_STARTUP_SYNC_DELAY_MS = 3500
+LIVEPIX_DASHBOARD_REFRESH_DELAY_MS = 180
 KILLS_VISUAL_REFRESH_DELAY_MS = 220
 KILLS_RANK_RENDER_LIMIT = 100
 KILLS_OVERLAY_RENDER_LIMIT = 50
@@ -6320,6 +6321,7 @@ def run_gui(config_path: Path) -> int:
     livepix_overlay_frame: Any | None = None
     livepix_widgets: list[Any] = []
     livepix_history_render_pending = False
+    livepix_dashboard_after_id: str | None = None
 
     def log(message: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
@@ -14235,7 +14237,7 @@ def run_gui(config_path: Path) -> int:
         if added or updated:
             save_livepix_events(livepix_events_path(config_path), livepix_events)
         if refresh:
-            refresh_livepix_dashboard()
+            schedule_livepix_dashboard_refresh()
         return added
 
     def livepix_event_title(event: LivepixEvent) -> str:
@@ -14675,6 +14677,24 @@ def run_gui(config_path: Path) -> int:
         if livepix_overlay_frame is not None:
             render_livepix_overlay()
 
+    def run_scheduled_livepix_dashboard_refresh() -> None:
+        nonlocal livepix_dashboard_after_id
+        livepix_dashboard_after_id = None
+        if app_closing:
+            return
+        refresh_livepix_dashboard()
+
+    def schedule_livepix_dashboard_refresh(delay_ms: int = LIVEPIX_DASHBOARD_REFRESH_DELAY_MS) -> None:
+        nonlocal livepix_dashboard_after_id
+        if app_closing:
+            return
+        if livepix_dashboard_after_id is not None:
+            try:
+                root.after_cancel(livepix_dashboard_after_id)
+            except tk.TclError:
+                pass
+        livepix_dashboard_after_id = root.after(max(0, delay_ms), run_scheduled_livepix_dashboard_refresh)
+
     def replay_livepix_history_event(event: LivepixEvent) -> None:
         announce_livepix_event(event)
         livepix_status_var.set("Evento reexibido")
@@ -14688,7 +14708,7 @@ def run_gui(config_path: Path) -> int:
                 item.flagged = not item.flagged
                 save_livepix_events(livepix_events_path(config_path), livepix_events)
                 livepix_status_var.set("Marcado" if item.flagged else "Desmarcado")
-                refresh_livepix_dashboard()
+                schedule_livepix_dashboard_refresh()
                 return
 
     def hide_livepix_history_event(event: LivepixEvent) -> None:
@@ -15424,7 +15444,7 @@ def run_gui(config_path: Path) -> int:
                     livepix_status_var.set(f"Sincronizado (+{added})")
                     if isinstance(errors, list) and errors:
                         log(f"Livepix sincronizado com avisos opcionais: {'; '.join(str(item) for item in errors[:6])}")
-                refresh_livepix_dashboard()
+                schedule_livepix_dashboard_refresh()
             elif kind == "checkout":
                 url = _first_text(payload.get("redirectUrl"), payload.get("url")) if isinstance(payload, dict) else ""
                 if url:
@@ -17749,8 +17769,8 @@ def run_gui(config_path: Path) -> int:
     livepix_webhook_host_var.trace_add("write", lambda *_args: update_livepix_endpoint_text())
     livepix_webhook_port_var.trace_add("write", lambda *_args: update_livepix_endpoint_text())
     livepix_webhook_token_var.trace_add("write", lambda *_args: update_livepix_endpoint_text())
-    livepix_goal_amount_var.trace_add("write", lambda *_args: refresh_livepix_dashboard())
-    livepix_currency_var.trace_add("write", lambda *_args: refresh_livepix_dashboard())
+    livepix_goal_amount_var.trace_add("write", lambda *_args: schedule_livepix_dashboard_refresh())
+    livepix_currency_var.trace_add("write", lambda *_args: schedule_livepix_dashboard_refresh())
 
     bind_config_autosave(
         sync_url_var,
@@ -17921,7 +17941,7 @@ def run_gui(config_path: Path) -> int:
         pump_chat_event_queue()
     pump_deferred_kills_render()
     pump_livepix_queue()
-    root.after(650, refresh_livepix_dashboard)
+    root.after(650, lambda: schedule_livepix_dashboard_refresh(0))
     root.after(LIVEPIX_STARTUP_SYNC_DELAY_MS, auto_sync_livepix_on_start)
     pump_bot_send_results()
     pump_chat_timers()
