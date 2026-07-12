@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.142",
-    "notes":  "Reduz trabalho em segundo plano: o pump do Livepix nao inicia mais quando Livepix esta desligado; ele acorda sob demanda quando chega evento, sync ou webhook.",
+    "version":  "2.6.143",
+    "notes":  "Reduz mais trabalho em segundo plano: Livepix, bot, temporizadores e avatares nao iniciam pumps quando estao desligados ou sem fila pendente.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.142/AizenStreamControl.exe",
-                    "sha256":  "2e984b9927d52d9a8759e60e04b946ec94739fba43a55d43e683519f026b0223"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.143/AizenStreamControl.exe",
+                    "sha256":  "0dfb3d05d85d585e76134161f25fabe812c17063df239c7ad34ccb6a804633a2"
                 }
 }

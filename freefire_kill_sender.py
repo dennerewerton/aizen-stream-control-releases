@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.142"
+APP_VERSION = "2.6.143"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -15695,6 +15695,26 @@ def run_gui(config_path: Path) -> int:
         log("Sincronizando Livepix automaticamente ao abrir o app.")
         sync_livepix_from_api(show_error_dialog=False)
 
+    def livepix_startup_work_needed() -> bool:
+        if livepix_enabled_var.get():
+            return True
+        if livepix_webhook_server is not None or livepix_overlay_frame is not None:
+            return True
+        return is_livepix_tab_active()
+
+    def schedule_livepix_startup_tasks() -> None:
+        if app_closing:
+            return
+        if livepix_startup_work_needed():
+            root.after(650, lambda: schedule_livepix_dashboard_refresh(0))
+            root.after(900, start_livepix_history_load)
+        if (
+            livepix_enabled_var.get()
+            and livepix_client_id_var.get().strip()
+            and livepix_client_secret_var.get().strip()
+        ):
+            root.after(LIVEPIX_STARTUP_SYNC_DELAY_MS, auto_sync_livepix_on_start)
+
     def create_livepix_checkout(kind: str) -> None:
         try:
             save_config(config_path, update_config_from_form())
@@ -18689,14 +18709,15 @@ def run_gui(config_path: Path) -> int:
     if not chat_listener_hidden:
         pump_chat_event_queue()
     pump_deferred_kills_render()
-    if livepix_enabled_var.get() or livepix_webhook_server is not None or livepix_overlay_frame is not None:
+    if livepix_startup_work_needed():
         schedule_livepix_queue_pump(0)
-    root.after(900, start_livepix_history_load)
-    root.after(650, lambda: schedule_livepix_dashboard_refresh(0))
-    root.after(LIVEPIX_STARTUP_SYNC_DELAY_MS, auto_sync_livepix_on_start)
-    schedule_bot_send_pump(0)
-    schedule_chat_timer_pump(0)
-    schedule_avatar_result_pump(0)
+    schedule_livepix_startup_tasks()
+    if chat_commands_enabled_var.get() or chat_timers_enabled_var.get() or not bot_reply_queue.empty():
+        schedule_bot_send_pump(0)
+    if chat_timers_enabled_var.get():
+        schedule_chat_timer_pump(0)
+    if avatar_pending or not avatar_result_queue.empty():
+        schedule_avatar_result_pump(0)
     if not ff_queue_site_sync_hidden:
         root.after(1400, lambda: fetch_ff_queue(force=False))
     if not ff_queue_site_sync_hidden:
