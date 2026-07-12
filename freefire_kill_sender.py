@@ -49,10 +49,12 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.92"
+APP_VERSION = "2.6.93"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
+LOG_QUEUE_SOFT_LIMIT = 1500
+LOG_TEXT_MAX_LINES = 1200
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
@@ -6117,6 +6119,7 @@ def run_gui(config_path: Path) -> int:
     tikfinity_ff_history_frame: Any | None = None
     manual_sync_after_id: str | None = None
     manual_poll_after_id: str | None = None
+    manual_visual_after_id: str | None = None
     manual_fetching = False
     manual_sending = False
     manual_applying_remote = False
@@ -6183,6 +6186,17 @@ def run_gui(config_path: Path) -> int:
 
     def log(message: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
+        try:
+            if log_queue.qsize() > LOG_QUEUE_SOFT_LIMIT:
+                dropped = 0
+                target_size = LOG_QUEUE_SOFT_LIMIT // 2
+                while log_queue.qsize() > target_size:
+                    log_queue.get_nowait()
+                    dropped += 1
+                if dropped:
+                    log_queue.put(f"[{stamp}] {dropped} log(s) antigos omitidos para manter o app leve.")
+        except (queue.Empty, NotImplementedError):
+            pass
         log_queue.put(f"[{stamp}] {message}")
 
     def set_text_var(var: tk.StringVar, value: Any) -> None:
@@ -9770,8 +9784,15 @@ def run_gui(config_path: Path) -> int:
         kills_ignored_players = list(state.ignored_players or [])
         refresh_kills_rank_table()
         refresh_kills_ignored_list()
-        if current_manual_scope() not in manual_scope_dirty:
-            refresh_manual_table_for_scope(current_manual_scope(), prefer_remote=True)
+        current_scope = current_manual_scope()
+        if current_scope not in manual_scope_dirty:
+            display_players = manual_scope_display_players(current_scope, prefer_remote=True)
+            current_players = collect_manual_players(fill_missing_names=False)
+            if manual_signature(display_players, current_scope) != manual_signature(current_players, current_scope):
+                set_manual_players(display_players, scope=current_scope)
+                sync_kills_rank_tab_with_manual_scope(current_scope)
+            else:
+                update_manual_metrics()
         else:
             update_manual_metrics()
         set_text_var(
@@ -9928,23 +9949,54 @@ def run_gui(config_path: Path) -> int:
         except NameError:
             pass
 
+    def run_manual_visual_refresh() -> None:
+        nonlocal manual_visual_after_id
+        manual_visual_after_id = None
+        if app_closing or manual_applying_remote:
+            return
+        scope = current_manual_scope()
+        if scope not in {"daily", "general"}:
+            scope = "daily"
+        sort_manual_rows_by_kills()
+        manual_scope_buffers[scope] = clone_player_list(collect_manual_players())
+        refresh_local_rank_from_manual_scope(scope)
+        update_manual_metrics()
+
+    def schedule_manual_visual_refresh(delay_ms: int = 140) -> None:
+        nonlocal manual_visual_after_id
+        if app_closing or manual_applying_remote:
+            return
+        if manual_visual_after_id is not None:
+            try:
+                root.after_cancel(manual_visual_after_id)
+            except tk.TclError:
+                pass
+        manual_visual_after_id = root.after(delay_ms, run_manual_visual_refresh)
+
+    def cancel_manual_visual_refresh() -> None:
+        nonlocal manual_visual_after_id
+        if manual_visual_after_id is not None:
+            try:
+                root.after_cancel(manual_visual_after_id)
+            except tk.TclError:
+                pass
+            manual_visual_after_id = None
+
     def on_manual_change(*_args: Any) -> None:
         nonlocal manual_last_local_edit_at
         if manual_applying_remote:
             return
         scope = current_manual_scope()
-        sort_manual_rows_by_kills()
-        manual_scope_buffers[scope] = clone_player_list(collect_manual_players())
+        manual_scope_buffers[scope] = clone_player_list(collect_manual_players(fill_missing_names=False))
         manual_scope_dirty.add(scope)
-        refresh_local_rank_from_manual_scope(scope)
         clear_manual_metric_overrides()
         manual_last_local_edit_at = time.monotonic()
-        update_manual_metrics()
         manual_status_var.set("Editando")
         try:
             schedule_config_autosave()
         except NameError:
             pass
+        schedule_manual_visual_refresh()
 
     def manual_autocomplete_key(value: str) -> str:
         normalized = unicodedata.normalize("NFKD", str(value or "").casefold())
@@ -15263,6 +15315,7 @@ def run_gui(config_path: Path) -> int:
             return
         if not force:
             return
+        cancel_manual_visual_refresh()
         try:
             local_config = update_config_from_form()
             save_config(config_path, local_config)
@@ -16616,7 +16669,7 @@ def run_gui(config_path: Path) -> int:
 
     def close_app() -> None:
         nonlocal app_closing
-        nonlocal manual_sync_after_id, manual_poll_after_id
+        nonlocal manual_sync_after_id, manual_poll_after_id, manual_visual_after_id
         nonlocal ff_queue_sync_after_id, ff_queue_poll_after_id
         nonlocal ff_overlay_sync_after_id, ff_overlay_poll_after_id
         nonlocal config_auto_save_after_id
@@ -16627,6 +16680,7 @@ def run_gui(config_path: Path) -> int:
         for after_id in (
             manual_sync_after_id,
             manual_poll_after_id,
+            manual_visual_after_id,
             ff_queue_sync_after_id,
             ff_queue_poll_after_id,
             ff_overlay_sync_after_id,
@@ -16640,6 +16694,7 @@ def run_gui(config_path: Path) -> int:
                     pass
         manual_sync_after_id = None
         manual_poll_after_id = None
+        manual_visual_after_id = None
         ff_queue_sync_after_id = None
         ff_queue_poll_after_id = None
         ff_overlay_sync_after_id = None
@@ -17187,6 +17242,13 @@ def run_gui(config_path: Path) -> int:
         if messages:
             log_text.configure(state="normal")
             log_text.insert(tk.END, "\n".join(messages) + "\n")
+            try:
+                line_count = int(str(log_text.index("end-1c")).split(".", 1)[0])
+                extra_lines = line_count - LOG_TEXT_MAX_LINES
+                if extra_lines > 0:
+                    log_text.delete("1.0", f"{extra_lines + 1}.0")
+            except (tk.TclError, ValueError):
+                pass
             log_text.see(tk.END)
             log_text.configure(state="disabled")
         if not app_closing:
