@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.89"
+APP_VERSION = "2.6.90"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6070,6 +6070,8 @@ def run_gui(config_path: Path) -> int:
     chat_monitor_window: Any | None = None
     chat_monitor_messages_frame: Any | None = None
     chat_monitor_always_on_top_var: tk.BooleanVar | None = None
+    chat_actions: Any | None = None
+    chat_messages_frame: Any | None = None
     chat_overlay_widgets: list[Any] = []
     chat_overlay_window: Any | None = None
     chat_overlay_messages_frame: Any | None = None
@@ -8185,180 +8187,181 @@ def run_gui(config_path: Path) -> int:
     ff_overlay_preview_frame.grid(row=2, column=0, sticky="nsew", padx=18, pady=(8, 18))
     ff_overlay_preview_frame.columnconfigure(0, weight=1)
 
-    chat_connection_card = card(
-        live_chat_tab,
-        "Chat ao vivo por eventos",
-        "Receba mensagens do TikFinity sem depender de navegador aberto ou raspagem de tela.",
-    )
-    chat_connection_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
-    chat_connection_card.columnconfigure(1, weight=1)
-    chat_connection_card.columnconfigure(3, weight=1)
-    section_label(chat_connection_card, "Fonte", 2)
-    chat_source_combo = combo(chat_connection_card, chat_source_var, ["Webhook local", "TikFinity WebSocket"], width=190)
-    chat_source_combo.grid(row=2, column=1, sticky="w", padx=18, pady=5)
-    chat_source_combo.configure(command=lambda _value: update_chat_endpoint_text())
-    section_label(chat_connection_card, "Host", 2, column=2)
-    entry(chat_connection_card, chat_webhook_host_var, width=140).grid(row=2, column=3, sticky="w", padx=18, pady=5)
-    section_label(chat_connection_card, "Porta", 3)
-    entry(chat_connection_card, chat_webhook_port_var, width=100).grid(row=3, column=1, sticky="w", padx=18, pady=5)
-    section_label(chat_connection_card, "Token secreto", 3, column=2)
-    entry(chat_connection_card, chat_webhook_token_var).grid(row=3, column=3, sticky="ew", padx=18, pady=5)
-    section_label(chat_connection_card, "URL WebSocket", 4)
-    entry(chat_connection_card, chat_websocket_url_var).grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
-
-    endpoint_box = ctk.CTkFrame(chat_connection_card, fg_color=field, corner_radius=10, border_width=1, border_color=border)
-    endpoint_box.grid(row=5, column=0, columnspan=4, sticky="ew", padx=18, pady=(10, 8))
-    endpoint_box.columnconfigure(0, weight=1)
-    ctk.CTkLabel(
-        endpoint_box,
-        textvariable=chat_endpoint_var,
-        text_color=muted,
-        font=("Consolas", 10),
-        anchor="w",
-    ).grid(row=0, column=0, sticky="ew", padx=12, pady=10)
-    chat_actions = ctk.CTkFrame(chat_connection_card, fg_color=panel, corner_radius=0)
-    chat_actions.grid(row=6, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 18))
-
-    chat_metrics = ctk.CTkFrame(live_chat_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    chat_metrics.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
-    for column in range(4):
-        chat_metrics.columnconfigure(column, weight=1)
-    for col, label in enumerate(("Mensagens", "Usuários", "Plataforma", "Status")):
-        ctk.CTkLabel(chat_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
-            row=0, column=col, sticky="w", padx=18, pady=(14, 0)
+    if not chat_tab_hidden:
+        chat_connection_card = card(
+            live_chat_tab,
+            "Chat ao vivo por eventos",
+            "Receba mensagens do TikFinity sem depender de navegador aberto ou raspagem de tela.",
         )
-    ctk.CTkLabel(chat_metrics, textvariable=chat_message_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
-        row=1, column=0, sticky="w", padx=18, pady=(0, 14)
-    )
-    ctk.CTkLabel(chat_metrics, textvariable=chat_user_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
-        row=1, column=1, sticky="w", padx=18, pady=(0, 14)
-    )
-    ctk.CTkLabel(chat_metrics, textvariable=chat_platform_var, text_color=accent, font=("Segoe UI Semibold", 14)).grid(
-        row=1, column=2, sticky="w", padx=18, pady=(4, 14)
-    )
-    ctk.CTkLabel(chat_metrics, textvariable=chat_status_var, text_color=accent, font=("Segoe UI Semibold", 14)).grid(
-        row=1, column=3, sticky="w", padx=18, pady=(4, 14)
-    )
+        chat_connection_card.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+        chat_connection_card.columnconfigure(1, weight=1)
+        chat_connection_card.columnconfigure(3, weight=1)
+        section_label(chat_connection_card, "Fonte", 2)
+        chat_source_combo = combo(chat_connection_card, chat_source_var, ["Webhook local", "TikFinity WebSocket"], width=190)
+        chat_source_combo.grid(row=2, column=1, sticky="w", padx=18, pady=5)
+        chat_source_combo.configure(command=lambda _value: update_chat_endpoint_text())
+        section_label(chat_connection_card, "Host", 2, column=2)
+        entry(chat_connection_card, chat_webhook_host_var, width=140).grid(row=2, column=3, sticky="w", padx=18, pady=5)
+        section_label(chat_connection_card, "Porta", 3)
+        entry(chat_connection_card, chat_webhook_port_var, width=100).grid(row=3, column=1, sticky="w", padx=18, pady=5)
+        section_label(chat_connection_card, "Token secreto", 3, column=2)
+        entry(chat_connection_card, chat_webhook_token_var).grid(row=3, column=3, sticky="ew", padx=18, pady=5)
+        section_label(chat_connection_card, "URL WebSocket", 4)
+        entry(chat_connection_card, chat_websocket_url_var).grid(row=4, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
 
-    chat_overlay_card = card(
-        live_chat_tab,
-        "Overlay para jogo",
-        "Janela transparente, sempre no topo, para acompanhar o chat usando apenas um monitor.",
-    )
-    chat_overlay_card.grid(row=2, column=0, sticky="ew", padx=12, pady=(8, 8))
-    chat_overlay_card.columnconfigure(1, weight=1)
-    chat_overlay_card.columnconfigure(4, weight=1)
+        endpoint_box = ctk.CTkFrame(chat_connection_card, fg_color=field, corner_radius=10, border_width=1, border_color=border)
+        endpoint_box.grid(row=5, column=0, columnspan=4, sticky="ew", padx=18, pady=(10, 8))
+        endpoint_box.columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            endpoint_box,
+            textvariable=chat_endpoint_var,
+            text_color=muted,
+            font=("Consolas", 10),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=12, pady=10)
+        chat_actions = ctk.CTkFrame(chat_connection_card, fg_color=panel, corner_radius=0)
+        chat_actions.grid(row=6, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 18))
 
-    ctk.CTkLabel(chat_overlay_card, text="Opacidade", text_color=muted, font=("Segoe UI", 11)).grid(
-        row=2, column=0, sticky="w", padx=18, pady=(8, 4)
-    )
-    chat_overlay_opacity_slider = ctk.CTkSlider(
-        chat_overlay_card,
-        from_=35,
-        to=100,
-        number_of_steps=65,
-        variable=chat_overlay_opacity_var,
-        command=lambda _value: apply_chat_overlay_settings(),
-    )
-    chat_overlay_opacity_slider.grid(row=2, column=1, sticky="ew", padx=8, pady=(8, 4))
-    ctk.CTkLabel(
-        chat_overlay_card,
-        textvariable=chat_overlay_opacity_text,
-        text_color=fg,
-        font=("Segoe UI Semibold", 11),
-        width=52,
-    ).grid(row=2, column=2, sticky="e", padx=(0, 18), pady=(8, 4))
+        chat_metrics = ctk.CTkFrame(live_chat_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
+        chat_metrics.grid(row=1, column=0, sticky="ew", padx=12, pady=8)
+        for column in range(4):
+            chat_metrics.columnconfigure(column, weight=1)
+        for col, label in enumerate(("Mensagens", "Usuários", "Plataforma", "Status")):
+            ctk.CTkLabel(chat_metrics, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
+                row=0, column=col, sticky="w", padx=18, pady=(14, 0)
+            )
+        ctk.CTkLabel(chat_metrics, textvariable=chat_message_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+            row=1, column=0, sticky="w", padx=18, pady=(0, 14)
+        )
+        ctk.CTkLabel(chat_metrics, textvariable=chat_user_count_var, text_color=teal, font=("Segoe UI Semibold", 26)).grid(
+            row=1, column=1, sticky="w", padx=18, pady=(0, 14)
+        )
+        ctk.CTkLabel(chat_metrics, textvariable=chat_platform_var, text_color=accent, font=("Segoe UI Semibold", 14)).grid(
+            row=1, column=2, sticky="w", padx=18, pady=(4, 14)
+        )
+        ctk.CTkLabel(chat_metrics, textvariable=chat_status_var, text_color=accent, font=("Segoe UI Semibold", 14)).grid(
+            row=1, column=3, sticky="w", padx=18, pady=(4, 14)
+        )
 
-    ctk.CTkLabel(chat_overlay_card, text="Fonte", text_color=muted, font=("Segoe UI", 11)).grid(
-        row=2, column=3, sticky="w", padx=18, pady=(8, 4)
-    )
-    chat_overlay_font_slider = ctk.CTkSlider(
-        chat_overlay_card,
-        from_=10,
-        to=24,
-        number_of_steps=14,
-        variable=chat_overlay_font_size_var,
-        command=lambda _value: apply_chat_overlay_settings(refresh=True),
-    )
-    chat_overlay_font_slider.grid(row=2, column=4, sticky="ew", padx=8, pady=(8, 4))
-    ctk.CTkLabel(
-        chat_overlay_card,
-        textvariable=chat_overlay_font_size_text,
-        text_color=fg,
-        font=("Segoe UI Semibold", 11),
-        width=52,
-    ).grid(row=2, column=5, sticky="e", padx=(0, 18), pady=(8, 4))
+        chat_overlay_card = card(
+            live_chat_tab,
+            "Overlay para jogo",
+            "Janela transparente, sempre no topo, para acompanhar o chat usando apenas um monitor.",
+        )
+        chat_overlay_card.grid(row=2, column=0, sticky="ew", padx=12, pady=(8, 8))
+        chat_overlay_card.columnconfigure(1, weight=1)
+        chat_overlay_card.columnconfigure(4, weight=1)
 
-    overlay_option_row = ctk.CTkFrame(chat_overlay_card, fg_color=panel, corner_radius=0)
-    overlay_option_row.grid(row=3, column=0, columnspan=6, sticky="ew", padx=18, pady=(8, 4))
-    for col in range(3):
-        overlay_option_row.columnconfigure(col, weight=1)
-    ctk.CTkCheckBox(
-        overlay_option_row,
-        text="Modo compacto",
-        variable=chat_overlay_compact_var,
-        command=lambda: apply_chat_overlay_settings(refresh=True),
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
-    ctk.CTkCheckBox(
-        overlay_option_row,
-        text="Mostrar controles",
-        variable=chat_overlay_controls_var,
-        command=lambda: apply_chat_overlay_settings(),
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).grid(row=0, column=1, sticky="w", padx=(0, 12), pady=4)
-    ctk.CTkCheckBox(
-        overlay_option_row,
-        text="Click-through",
-        variable=chat_overlay_clickthrough_var,
-        command=lambda: apply_chat_overlay_settings(),
-        fg_color=accent,
-        hover_color=accent_hover,
-        border_color=border,
-        text_color=fg,
-    ).grid(row=0, column=2, sticky="w", pady=4)
+        ctk.CTkLabel(chat_overlay_card, text="Opacidade", text_color=muted, font=("Segoe UI", 11)).grid(
+            row=2, column=0, sticky="w", padx=18, pady=(8, 4)
+        )
+        chat_overlay_opacity_slider = ctk.CTkSlider(
+            chat_overlay_card,
+            from_=35,
+            to=100,
+            number_of_steps=65,
+            variable=chat_overlay_opacity_var,
+            command=lambda _value: apply_chat_overlay_settings(),
+        )
+        chat_overlay_opacity_slider.grid(row=2, column=1, sticky="ew", padx=8, pady=(8, 4))
+        ctk.CTkLabel(
+            chat_overlay_card,
+            textvariable=chat_overlay_opacity_text,
+            text_color=fg,
+            font=("Segoe UI Semibold", 11),
+            width=52,
+        ).grid(row=2, column=2, sticky="e", padx=(0, 18), pady=(8, 4))
 
-    overlay_actions = ctk.CTkFrame(chat_overlay_card, fg_color=panel, corner_radius=0)
-    overlay_actions.grid(row=4, column=0, columnspan=6, sticky="ew", padx=18, pady=(6, 18))
-    button(overlay_actions, "Abrir overlay", lambda: open_chat_overlay_window(), "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
-    button(overlay_actions, "Aplicar ajustes", lambda: apply_chat_overlay_settings(refresh=True), "default", width=120).pack(side=tk.LEFT, padx=(0, 8))
-    button(overlay_actions, "Mensagem teste", lambda: add_chat_test_message(), "default", width=128).pack(side=tk.LEFT, padx=(0, 8))
-    button(overlay_actions, "Fechar overlay", lambda: close_chat_overlay(), "danger", width=112).pack(side=tk.LEFT, padx=(0, 8))
-    ctk.CTkLabel(
-        overlay_actions,
-        text="Use click-through só depois de posicionar o overlay.",
-        text_color=muted,
-        font=("Segoe UI", 10),
-    ).pack(side=tk.LEFT, padx=(8, 0))
+        ctk.CTkLabel(chat_overlay_card, text="Fonte", text_color=muted, font=("Segoe UI", 11)).grid(
+            row=2, column=3, sticky="w", padx=18, pady=(8, 4)
+        )
+        chat_overlay_font_slider = ctk.CTkSlider(
+            chat_overlay_card,
+            from_=10,
+            to=24,
+            number_of_steps=14,
+            variable=chat_overlay_font_size_var,
+            command=lambda _value: apply_chat_overlay_settings(refresh=True),
+        )
+        chat_overlay_font_slider.grid(row=2, column=4, sticky="ew", padx=8, pady=(8, 4))
+        ctk.CTkLabel(
+            chat_overlay_card,
+            textvariable=chat_overlay_font_size_text,
+            text_color=fg,
+            font=("Segoe UI Semibold", 11),
+            width=52,
+        ).grid(row=2, column=5, sticky="e", padx=(0, 18), pady=(8, 4))
 
-    chat_list_card = card(live_chat_tab, "Tela de chat", "Acompanhe as mensagens da live em tempo real com avatar, plataforma e filtro.")
-    chat_list_card.grid(row=3, column=0, sticky="nsew", padx=12, pady=(8, 12))
-    chat_list_card.columnconfigure(0, weight=1)
-    chat_list_card.rowconfigure(3, weight=1)
-    chat_filter_row = ctk.CTkFrame(chat_list_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
-    chat_filter_row.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 8))
-    chat_filter_row.columnconfigure(1, weight=1)
-    ctk.CTkLabel(chat_filter_row, text="Filtro", text_color=muted, font=("Segoe UI", 12)).grid(
-        row=0, column=0, sticky="w", padx=(0, 10), pady=4
-    )
-    entry(chat_filter_row, chat_filter_var).grid(row=0, column=1, sticky="ew", pady=4)
-    chat_messages_frame = ctk.CTkScrollableFrame(
-        chat_list_card,
-        fg_color=field,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-        scrollbar_button_color=border,
-        scrollbar_button_hover_color=accent,
-    )
-    chat_messages_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=18, pady=(0, 18))
-    chat_messages_frame.columnconfigure(0, weight=1)
+        overlay_option_row = ctk.CTkFrame(chat_overlay_card, fg_color=panel, corner_radius=0)
+        overlay_option_row.grid(row=3, column=0, columnspan=6, sticky="ew", padx=18, pady=(8, 4))
+        for col in range(3):
+            overlay_option_row.columnconfigure(col, weight=1)
+        ctk.CTkCheckBox(
+            overlay_option_row,
+            text="Modo compacto",
+            variable=chat_overlay_compact_var,
+            command=lambda: apply_chat_overlay_settings(refresh=True),
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12), pady=4)
+        ctk.CTkCheckBox(
+            overlay_option_row,
+            text="Mostrar controles",
+            variable=chat_overlay_controls_var,
+            command=lambda: apply_chat_overlay_settings(),
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 12), pady=4)
+        ctk.CTkCheckBox(
+            overlay_option_row,
+            text="Click-through",
+            variable=chat_overlay_clickthrough_var,
+            command=lambda: apply_chat_overlay_settings(),
+            fg_color=accent,
+            hover_color=accent_hover,
+            border_color=border,
+            text_color=fg,
+        ).grid(row=0, column=2, sticky="w", pady=4)
+
+        overlay_actions = ctk.CTkFrame(chat_overlay_card, fg_color=panel, corner_radius=0)
+        overlay_actions.grid(row=4, column=0, columnspan=6, sticky="ew", padx=18, pady=(6, 18))
+        button(overlay_actions, "Abrir overlay", lambda: open_chat_overlay_window(), "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
+        button(overlay_actions, "Aplicar ajustes", lambda: apply_chat_overlay_settings(refresh=True), "default", width=120).pack(side=tk.LEFT, padx=(0, 8))
+        button(overlay_actions, "Mensagem teste", lambda: add_chat_test_message(), "default", width=128).pack(side=tk.LEFT, padx=(0, 8))
+        button(overlay_actions, "Fechar overlay", lambda: close_chat_overlay(), "danger", width=112).pack(side=tk.LEFT, padx=(0, 8))
+        ctk.CTkLabel(
+            overlay_actions,
+            text="Use click-through só depois de posicionar o overlay.",
+            text_color=muted,
+            font=("Segoe UI", 10),
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        chat_list_card = card(live_chat_tab, "Tela de chat", "Acompanhe as mensagens da live em tempo real com avatar, plataforma e filtro.")
+        chat_list_card.grid(row=3, column=0, sticky="nsew", padx=12, pady=(8, 12))
+        chat_list_card.columnconfigure(0, weight=1)
+        chat_list_card.rowconfigure(3, weight=1)
+        chat_filter_row = ctk.CTkFrame(chat_list_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
+        chat_filter_row.grid(row=2, column=0, columnspan=4, sticky="ew", padx=18, pady=(4, 8))
+        chat_filter_row.columnconfigure(1, weight=1)
+        ctk.CTkLabel(chat_filter_row, text="Filtro", text_color=muted, font=("Segoe UI", 12)).grid(
+            row=0, column=0, sticky="w", padx=(0, 10), pady=4
+        )
+        entry(chat_filter_row, chat_filter_var).grid(row=0, column=1, sticky="ew", pady=4)
+        chat_messages_frame = ctk.CTkScrollableFrame(
+            chat_list_card,
+            fg_color=field,
+            corner_radius=12,
+            border_width=1,
+            border_color=border,
+            scrollbar_button_color=border,
+            scrollbar_button_hover_color=accent,
+        )
+        chat_messages_frame.grid(row=3, column=0, columnspan=4, sticky="nsew", padx=18, pady=(0, 18))
+        chat_messages_frame.columnconfigure(0, weight=1)
 
     commands_settings_col = ctk.CTkFrame(commands_tab, fg_color=bg, corner_radius=0)
     commands_settings_col.grid(row=0, column=0, sticky="nsew", padx=(12, 8), pady=12)
@@ -17127,13 +17130,14 @@ def run_gui(config_path: Path) -> int:
         ],
         columns=4,
     )
-    button(chat_actions, "Iniciar chat", start_chat_listener, "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
-    button(chat_actions, "Abrir janela", open_chat_monitor_window, "default", width=112).pack(side=tk.LEFT, padx=(0, 8))
-    button(chat_actions, "Overlay jogo", open_chat_overlay_window, "accent", width=112).pack(side=tk.LEFT, padx=(0, 8))
-    button(chat_actions, "Parar", stop_chat_listener, "danger", width=84).pack(side=tk.LEFT, padx=(0, 8))
-    button(chat_actions, "Copiar endpoint", copy_chat_endpoint, "default", width=130).pack(side=tk.LEFT, padx=(0, 8))
-    button(chat_actions, "Limpar chat", clear_chat_messages, "ghost", width=104).pack(side=tk.LEFT, padx=(0, 8))
-    button(chat_actions, "Salvar", save_form, "ghost", width=86).pack(side=tk.LEFT, padx=(0, 8))
+    if chat_actions is not None:
+        button(chat_actions, "Iniciar chat", start_chat_listener, "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
+        button(chat_actions, "Abrir janela", open_chat_monitor_window, "default", width=112).pack(side=tk.LEFT, padx=(0, 8))
+        button(chat_actions, "Overlay jogo", open_chat_overlay_window, "accent", width=112).pack(side=tk.LEFT, padx=(0, 8))
+        button(chat_actions, "Parar", stop_chat_listener, "danger", width=84).pack(side=tk.LEFT, padx=(0, 8))
+        button(chat_actions, "Copiar endpoint", copy_chat_endpoint, "default", width=130).pack(side=tk.LEFT, padx=(0, 8))
+        button(chat_actions, "Limpar chat", clear_chat_messages, "ghost", width=104).pack(side=tk.LEFT, padx=(0, 8))
+        button(chat_actions, "Salvar", save_form, "ghost", width=86).pack(side=tk.LEFT, padx=(0, 8))
 
     root.protocol("WM_DELETE_WINDOW", close_app)
 
