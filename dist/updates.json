@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.106",
-    "notes":  "Melhora estabilidade: impede sincronizações Livepix sobrepostas e reduz ciclos ociosos de timers/avatar quando não estão em uso.",
+    "version":  "2.6.107",
+    "notes":  "Reduz trabalho em segundo plano: pumps de bot, Livepix e renders pendentes dormem mais quando estão ociosos, mantendo resposta rápida quando há fila, aba aberta ou sincronização ativa.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.106/AizenStreamControl.exe",
-                    "sha256":  "c194a13cf230b53c0aa16d9bb5e42bd4403f559a4120ee3d68cbb680667ccfe6"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.107/AizenStreamControl.exe",
+                    "sha256":  "7adaf6f502a11ba91dae4681175781fe7e1451193b7420904569e50848a9b280"
                 }
 }

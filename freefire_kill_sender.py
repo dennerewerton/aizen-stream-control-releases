@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.106"
+APP_VERSION = "2.6.107"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -93,6 +93,8 @@ LIVEPIX_EVENT_STORAGE_LIMIT = 1000
 LIVEPIX_HISTORY_RENDER_LIMIT = 30
 LIVEPIX_STARTUP_SYNC_DELAY_MS = 3500
 KILLS_VISUAL_REFRESH_DELAY_MS = 220
+BACKGROUND_IDLE_PUMP_MS = 2000
+BOT_DISABLED_IDLE_PUMP_MS = 3000
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
@@ -13956,7 +13958,12 @@ def run_gui(config_path: Path) -> int:
                 else:
                     bot_status_var.set("Aguardando comando")
             if not app_closing:
-                root.after(1000, pump_bot_send_results)
+                idle_delay = 1000 if (
+                    chat_commands_enabled_var.get()
+                    or chat_timers_enabled_var.get()
+                    or bot_pending_confirmations
+                ) else BOT_DISABLED_IDLE_PUMP_MS
+                root.after(idle_delay, pump_bot_send_results)
             return
 
         remaining = bot_next_allowed_at - time.time()
@@ -15325,7 +15332,15 @@ def run_gui(config_path: Path) -> int:
                     livepix_status_var.set("Erro")
                 log(f"Livepix erro: {payload}")
         if not app_closing:
-            root.after(25 if not livepix_queue.empty() else 160 if processed else 800, pump_livepix_queue)
+            if not livepix_queue.empty():
+                delay_ms = 25
+            elif processed:
+                delay_ms = 160
+            elif livepix_sync_running or livepix_webhook_server is not None or livepix_overlay_frame is not None or is_livepix_tab_active():
+                delay_ms = 800
+            else:
+                delay_ms = BACKGROUND_IDLE_PUMP_MS
+            root.after(delay_ms, pump_livepix_queue)
 
     def appearance_config_from_vars() -> dict[str, str]:
         preset = appearance_preset_var.get().strip() or DEFAULT_THEME_NAME
@@ -17692,7 +17707,11 @@ def run_gui(config_path: Path) -> int:
     def pump_deferred_kills_render() -> None:
         if app_closing:
             return
-        if is_kills_ff_tab_active():
+        kills_active = is_kills_ff_tab_active()
+        livepix_active = is_livepix_tab_active()
+        has_kills_pending = manual_table_render_pending or kills_rank_render_pending or kills_ignored_render_pending
+        has_livepix_pending = livepix_history_render_pending
+        if kills_active:
             if manual_table_render_pending:
                 render_scope = manual_table_render_scope if manual_table_render_scope in {"daily", "general"} else current_manual_scope()
                 set_manual_players(
@@ -17704,9 +17723,15 @@ def run_gui(config_path: Path) -> int:
                 refresh_kills_rank_table(force=True)
             if kills_ignored_render_pending or not kills_ignored_rows:
                 refresh_kills_ignored_list(force=True)
-        if is_livepix_tab_active() and (livepix_history_render_pending or not livepix_widgets):
+        if livepix_active and (livepix_history_render_pending or not livepix_widgets):
             render_livepix_events(force=True)
-        root.after(350, pump_deferred_kills_render)
+        if kills_active or livepix_active:
+            delay_ms = 350
+        elif has_kills_pending or has_livepix_pending:
+            delay_ms = 900
+        else:
+            delay_ms = BACKGROUND_IDLE_PUMP_MS
+        root.after(delay_ms, pump_deferred_kills_render)
 
     device_name_var.trace_add("write", update_local_source_labels)
     chat_commands_enabled_var.trace_add("write", ensure_bot_runtime)
