@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.126",
-    "notes":  "Otimizacao de abertura: comandos e temporizadores desligados ficam em cache para o bot, mas as linhas visuais so sao criadas quando a aba e aberta, reduzindo widgets no inicio.",
+    "version":  "2.6.127",
+    "notes":  "Otimizacao de logs: mensagens continuam guardadas, mas a tela de Logs so renderiza quando a aba esta aberta, reduzindo trabalho da interface durante lives movimentadas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.126/AizenStreamControl.exe",
-                    "sha256":  "57d1a0ddf5b499bfc0bf981705cda4ed0d3b9c3fae4f1d0ba409463ef7650209"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.127/AizenStreamControl.exe",
+                    "sha256":  "b825c29b8ef4677c22e99390017ee6f61d23cb37909e87e8fbc5146651397c1a"
                 }
 }

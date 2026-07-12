@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.126"
+APP_VERSION = "2.6.127"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6362,6 +6362,9 @@ def run_gui(config_path: Path) -> int:
     ff_queue_sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=FF_QUEUE_SYNC_QUEUE_LIMIT)
     chat_event_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=CHAT_EVENT_QUEUE_LIMIT)
     livepix_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=LIVEPIX_QUEUE_LIMIT)
+    log_render_buffer: list[str] = []
+    log_rendered_count = 0
+    log_needs_full_render = True
     chat_webhook_server: LocalChatWebhookServer | None = None
     livepix_webhook_server: LocalLivepixWebhookServer | None = None
     chat_websocket_worker: ChatWebSocketWorker | None = None
@@ -15088,6 +15091,12 @@ def run_gui(config_path: Path) -> int:
         except (AttributeError, tk.TclError):
             return False
 
+    def is_logs_tab_active() -> bool:
+        try:
+            return tabview.get() == "Logs"
+        except (AttributeError, tk.TclError):
+            return False
+
     def is_livepix_tab_active() -> bool:
         try:
             return tabview.get() == "Livepix"
@@ -18125,6 +18134,7 @@ def run_gui(config_path: Path) -> int:
     root.protocol("WM_DELETE_WINDOW", close_app)
 
     def pump_log() -> None:
+        nonlocal log_rendered_count, log_needs_full_render
         if app_closing:
             return
         messages: list[str] = []
@@ -18138,19 +18148,41 @@ def run_gui(config_path: Path) -> int:
             processed_count += 1
             messages.append(message)
         if messages:
-            log_text.configure(state="normal")
-            log_text.insert(tk.END, "\n".join(messages) + "\n")
+            log_render_buffer.extend(messages)
+            overflow = len(log_render_buffer) - LOG_TEXT_MAX_LINES
+            if overflow > 0:
+                del log_render_buffer[:overflow]
+                log_rendered_count = max(0, log_rendered_count - overflow)
+                log_needs_full_render = True
+        logs_active = is_logs_tab_active()
+        if logs_active and (log_needs_full_render or log_rendered_count < len(log_render_buffer)):
             try:
-                line_count = int(str(log_text.index("end-1c")).split(".", 1)[0])
-                extra_lines = line_count - LOG_TEXT_MAX_LINES
-                if extra_lines > 0:
-                    log_text.delete("1.0", f"{extra_lines + 1}.0")
-            except (tk.TclError, ValueError):
+                log_text.configure(state="normal")
+                if log_needs_full_render or log_rendered_count > len(log_render_buffer):
+                    log_text.delete("1.0", tk.END)
+                    if log_render_buffer:
+                        log_text.insert(tk.END, "\n".join(log_render_buffer) + "\n")
+                    log_rendered_count = len(log_render_buffer)
+                    log_needs_full_render = False
+                else:
+                    pending_messages = log_render_buffer[log_rendered_count:]
+                    if pending_messages:
+                        log_text.insert(tk.END, "\n".join(pending_messages) + "\n")
+                        log_rendered_count = len(log_render_buffer)
+                log_text.see(tk.END)
+                log_text.configure(state="disabled")
+            except tk.TclError:
                 pass
-            log_text.see(tk.END)
-            log_text.configure(state="disabled")
         if not app_closing:
-            root.after(30 if not log_queue.empty() else 150 if messages else 900, pump_log)
+            if not log_queue.empty():
+                delay_ms = 30
+            elif logs_active and messages:
+                delay_ms = 150
+            elif messages:
+                delay_ms = 450
+            else:
+                delay_ms = 900
+            root.after(delay_ms, pump_log)
 
     saved_manual_players = parse_players_payload(config.get("manual_kills", []))
     saved_manual_by_scope = config.get("manual_kills_by_scope")
