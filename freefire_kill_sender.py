@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.115"
+APP_VERSION = "2.6.116"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -85,6 +85,7 @@ LOG_QUEUE_SOFT_LIMIT = 1500
 LOG_TEXT_MAX_LINES = 1200
 LOG_PUMP_BATCH_LIMIT = 60
 CHAT_USER_CACHE_LIMIT = 600
+CHAT_EVENT_QUEUE_LIMIT = 800
 CHAT_EVENT_BATCH_LIMIT = 32
 CHAT_EVENT_BUSY_PUMP_MS = 20
 CHAT_EVENT_IDLE_PUMP_MS = 180
@@ -6189,7 +6190,7 @@ def run_gui(config_path: Path) -> int:
     log_queue: queue.Queue[str] = queue.Queue()
     sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
     ff_queue_sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
-    chat_event_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+    chat_event_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=CHAT_EVENT_QUEUE_LIMIT)
     livepix_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
     chat_webhook_server: LocalChatWebhookServer | None = None
     livepix_webhook_server: LocalLivepixWebhookServer | None = None
@@ -12620,7 +12621,30 @@ def run_gui(config_path: Path) -> int:
             chat_endpoint_var.set(f"POST JSON: {chat_endpoint_url(include_token=True)}")
 
     def receive_chat_payload(payload: dict[str, Any], source: str) -> None:
-        chat_event_queue.put(("message", {"payload": payload, "source": source}))
+        event = ("message", {"payload": payload, "source": source})
+        try:
+            chat_event_queue.put_nowait(event)
+            return
+        except queue.Full:
+            pass
+
+        try:
+            chat_event_queue.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            chat_event_queue.put_nowait(event)
+        except queue.Full:
+            return
+
+        dropped = int(getattr(receive_chat_payload, "_dropped", 0)) + 1
+        receive_chat_payload._dropped = dropped  # type: ignore[attr-defined]
+        now = time.monotonic()
+        last_log_at = float(getattr(receive_chat_payload, "_last_log_at", 0.0))
+        if now - last_log_at >= 8.0:
+            log(f"Chat muito movimentado: {dropped} evento(s) antigo(s) omitidos para manter o app leve.")
+            receive_chat_payload._dropped = 0  # type: ignore[attr-defined]
+            receive_chat_payload._last_log_at = now  # type: ignore[attr-defined]
 
     def stop_chat_listener(silent: bool = False) -> None:
         nonlocal chat_webhook_server, chat_websocket_worker
