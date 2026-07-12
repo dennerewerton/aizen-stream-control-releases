@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.112"
+APP_VERSION = "2.6.113"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -93,7 +93,11 @@ LIVEPIX_EVENT_STORAGE_LIMIT = 1000
 LIVEPIX_HISTORY_RENDER_LIMIT = 30
 LIVEPIX_STARTUP_SYNC_DELAY_MS = 3500
 KILLS_VISUAL_REFRESH_DELAY_MS = 220
+KILLS_RANK_RENDER_LIMIT = 100
+KILLS_OVERLAY_RENDER_LIMIT = 50
 BACKGROUND_IDLE_PUMP_MS = 2000
+SYNC_QUEUE_IDLE_PUMP_MS = 1200
+SYNC_QUEUE_PROCESSED_PUMP_MS = 140
 BOT_DISABLED_IDLE_PUMP_MS = 3000
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
@@ -4418,6 +4422,52 @@ def kills_snapshot_matches_state(
     return actual_daily == expected_daily and actual_general == expected_general
 
 
+def clone_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
+    return [
+        PlayerKill(
+            name=player.name,
+            kills=normalize_kill_value(player.kills),
+            key=player.key,
+            ff_player_id=player.ff_player_id,
+            entries=normalize_kill_value(player.entries),
+        )
+        for player in players
+    ]
+
+
+def local_kills_snapshot_state(
+    daily_players: list[PlayerKill],
+    general_players: list[PlayerKill],
+    updated_by: str = "",
+) -> RealtimeState:
+    return RealtimeState(
+        players=clone_player_kills(general_players),
+        daily_ranking=clone_player_kills(daily_players),
+        global_ranking=clone_player_kills(general_players),
+        updated_by=updated_by,
+        total_players=len(general_players),
+        total_kills=sum(player.kills for player in general_players),
+        daily_players=len(daily_players),
+        daily_kills=sum(player.kills for player in daily_players),
+    )
+
+
+def response_acknowledges_kills_snapshot(response_text: str) -> bool:
+    clean_text = str(response_text or "").strip()
+    if not clean_text:
+        return True
+    try:
+        payload = json.loads(clean_text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("ok") is True or payload.get("success") is True or payload.get("saved") is True:
+        return True
+    status = str(payload.get("status") or payload.get("state") or "").strip().casefold()
+    return status in {"ok", "success", "saved", "updated", "sincronizado"}
+
+
 def send_kills_snapshot_update(
     endpoint_url: str,
     daily_players: list[PlayerKill],
@@ -4486,6 +4536,8 @@ def send_kills_snapshot_update(
                 state = parse_realtime_state(response.text)
                 if kills_snapshot_matches_state(state, daily_players, general_players):
                     return state
+                if not (state.daily_ranking or state.global_ranking or state.players) and response_acknowledges_kills_snapshot(response.text):
+                    return local_kills_snapshot_state(daily_players, general_players, updated_by=device_name)
                 try:
                     refreshed_state = fetch_kills_realtime(
                         endpoint_url,
@@ -4567,7 +4619,7 @@ def send_kills_snapshot_update(
         pass
     if final_state is not None and kills_snapshot_matches_state(final_state, daily_players, general_players):
         return final_state
-    return RealtimeState(players=general_players, daily_ranking=daily_players, global_ranking=general_players)
+    return local_kills_snapshot_state(daily_players, general_players, updated_by=device_name)
 
 
 def send_ff_queue_realtime_update(
@@ -9791,7 +9843,7 @@ def run_gui(config_path: Path) -> int:
                 row_widgets.append(empty)
                 return
 
-            for index, player in enumerate(players[:150], start=1):
+            for index, player in enumerate(players[:KILLS_RANK_RENDER_LIMIT], start=1):
                 row_frame = ctk.CTkFrame(
                     table_frame,
                     fg_color="#171014" if index % 2 else "#0f0b0e",
@@ -9851,7 +9903,7 @@ def run_gui(config_path: Path) -> int:
                 row_widgets.append(empty)
                 return
 
-            for index, player in enumerate(players[:80], start=1):
+            for index, player in enumerate(players[:KILLS_OVERLAY_RENDER_LIMIT], start=1):
                 row_frame = ctk.CTkFrame(
                     table_frame,
                     fg_color="#171014" if index % 2 else "#0f0b0e",
@@ -16538,7 +16590,10 @@ def run_gui(config_path: Path) -> int:
             processed = True
             handle_sync_event(kind, payload)
         if not app_closing:
-            root.after(25 if not sync_queue.empty() else 120 if processed else 500, pump_sync_queue)
+            root.after(
+                25 if not sync_queue.empty() else SYNC_QUEUE_PROCESSED_PUMP_MS if processed else SYNC_QUEUE_IDLE_PUMP_MS,
+                pump_sync_queue,
+            )
 
     def pump_ff_queue_sync_queue() -> None:
         if app_closing:
@@ -16555,7 +16610,14 @@ def run_gui(config_path: Path) -> int:
             processed = True
             handle_ff_queue_sync_event(kind, payload)
         if not app_closing:
-            root.after(25 if not ff_queue_sync_queue.empty() else 120 if processed else 500, pump_ff_queue_sync_queue)
+            root.after(
+                25
+                if not ff_queue_sync_queue.empty()
+                else SYNC_QUEUE_PROCESSED_PUMP_MS
+                if processed
+                else SYNC_QUEUE_IDLE_PUMP_MS,
+                pump_ff_queue_sync_queue,
+            )
 
     def open_layout_window() -> None:
         window = ctk.CTkToplevel(root)

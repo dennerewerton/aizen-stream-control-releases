@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.112",
-    "notes":  "Corrige nicks vazios no Kills FF geral ao salvar/recarregar: linhas sem nome agora recuperam o nick pelo ranking do Jarvis; tambem deixa a edicao mais leve, sem reordenar a tabela inteira ao digitar nicks.",
+    "version":  "2.6.113",
+    "notes":  "Otimiza o Kills FF: o Salvar responde mais rapido quando o Jarvis confirma o snapshot, reduz render de rankings grandes e diminui trabalho de fundo quando nao ha eventos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.112/AizenStreamControl.exe",
-                    "sha256":  "05a6e142f9709c967bb301e35f5745311303f09e4dba1d2ac88f3bf571d88746"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.113/AizenStreamControl.exe",
+                    "sha256":  "9958d5af09378185026624ca510664bd13099e214129ae27624ece56b15aadfa"
                 }
 }
