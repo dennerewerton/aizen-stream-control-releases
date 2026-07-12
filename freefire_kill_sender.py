@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.113"
+APP_VERSION = "2.6.114"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -85,6 +85,9 @@ LOG_QUEUE_SOFT_LIMIT = 1500
 LOG_TEXT_MAX_LINES = 1200
 LOG_PUMP_BATCH_LIMIT = 60
 CHAT_USER_CACHE_LIMIT = 600
+CHAT_EVENT_BATCH_LIMIT = 32
+CHAT_EVENT_BUSY_PUMP_MS = 20
+CHAT_EVENT_IDLE_PUMP_MS = 180
 AVATAR_IMAGE_CACHE_LIMIT = 240
 AVATAR_PENDING_LIMIT = 120
 AVATAR_DOWNLOAD_WORKERS = 3
@@ -613,15 +616,24 @@ def merge_defaults(data: dict[str, Any], defaults: dict[str, Any]) -> dict[str, 
     return merged
 
 
+def write_text_if_changed(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if path.exists() and path.read_text(encoding="utf-8") == content:
+            return
+    except Exception:
+        pass
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(path)
+
+
 def save_config(path: Path, config: dict[str, Any]) -> None:
-    path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_text_if_changed(path, json.dumps(config, ensure_ascii=False, indent=2))
 
 
 def save_config_compact(path: Path, config: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    tmp_path.write_text(json.dumps(config, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    tmp_path.replace(path)
+    write_text_if_changed(path, json.dumps(config, ensure_ascii=False, separators=(",", ":")))
 
 
 def append_raffle_history(path: Path, record: dict[str, Any]) -> None:
@@ -1317,7 +1329,7 @@ def load_livepix_events(path: Path) -> list[LivepixEvent]:
 
 def save_livepix_events(path: Path, events: list[LivepixEvent]) -> None:
     payload = livepix_events_to_payload(events[:LIVEPIX_EVENT_STORAGE_LIMIT])
-    path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    write_text_if_changed(path, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
 def format_livepix_amount(amount: int, currency: str = "BRL") -> str:
@@ -13396,7 +13408,7 @@ def run_gui(config_path: Path) -> int:
             return
         updated = False
         processed_count = 0
-        batch_limit = 80
+        batch_limit = CHAT_EVENT_BATCH_LIMIT
         while processed_count < batch_limit:
             try:
                 kind, payload = chat_event_queue.get_nowait()
@@ -13428,7 +13440,10 @@ def run_gui(config_path: Path) -> int:
         if updated:
             refresh_chat_messages()
         if not app_closing:
-            root.after(15 if not chat_event_queue.empty() else 120, pump_chat_event_queue)
+            root.after(
+                CHAT_EVENT_BUSY_PUMP_MS if not chat_event_queue.empty() else CHAT_EVENT_IDLE_PUMP_MS,
+                pump_chat_event_queue,
+            )
 
     def bot_safe_delay_seconds() -> int:
         try:
