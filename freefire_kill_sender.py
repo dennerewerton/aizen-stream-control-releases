@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.96"
+APP_VERSION = "2.6.97"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -85,6 +85,8 @@ LOG_QUEUE_SOFT_LIMIT = 1500
 LOG_TEXT_MAX_LINES = 1200
 CHAT_USER_CACHE_LIMIT = 600
 AVATAR_IMAGE_CACHE_LIMIT = 240
+AVATAR_PENDING_LIMIT = 120
+AVATAR_DOWNLOAD_WORKERS = 3
 RAFFLE_SEEN_MESSAGES_LIMIT = 2500
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
@@ -6137,9 +6139,11 @@ def run_gui(config_path: Path) -> int:
     chat_messages: list[LiveChatMessage] = []
     chat_users: dict[str, LiveChatMessage] = {}
     chat_seen_messages: set[str] = set()
+    avatar_request_queue: queue.Queue[tuple[str, int]] = queue.Queue(maxsize=AVATAR_PENDING_LIMIT)
     avatar_result_queue: queue.Queue[tuple[str, int, Image.Image | None]] = queue.Queue()
     avatar_image_cache: dict[tuple[str, int], Any] = {}
     avatar_pending: set[tuple[str, int]] = set()
+    avatar_workers_started = False
     winner_avatar_current: tuple[str, str] = ("", "-")
     manual_rows: list[dict[str, Any]] = []
     manual_scope_buffers: dict[str, list[PlayerKill]] = {"daily": [], "general": []}
@@ -6719,6 +6723,38 @@ def run_gui(config_path: Path) -> int:
         image.putalpha(mask)
         return image
 
+    def ensure_avatar_workers() -> None:
+        nonlocal avatar_workers_started
+        if avatar_workers_started:
+            return
+        avatar_workers_started = True
+        for index in range(AVATAR_DOWNLOAD_WORKERS):
+            threading.Thread(target=avatar_download_worker, name=f"AizenAvatarLoad-{index + 1}", daemon=True).start()
+
+    def avatar_download_worker() -> None:
+        session = requests.Session()
+        while True:
+            if app_closing and avatar_request_queue.empty():
+                return
+            try:
+                clean_url, size = avatar_request_queue.get(timeout=0.5)
+            except queue.Empty:
+                if app_closing:
+                    return
+                continue
+            try:
+                response = session.get(clean_url, timeout=6, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "")
+                if content_type and "image" not in content_type:
+                    raise ValueError("URL nao retornou imagem.")
+                image = Image.open(BytesIO(response.content))
+                avatar_result_queue.put((clean_url, size, crop_avatar(image, size)))
+            except Exception:
+                avatar_result_queue.put((clean_url, size, None))
+            finally:
+                avatar_request_queue.task_done()
+
     def request_avatar_image(url: str, size: int) -> Any | None:
         clean_url = (url or "").strip()
         if not clean_url:
@@ -6727,21 +6763,14 @@ def run_gui(config_path: Path) -> int:
         if key in avatar_image_cache:
             return avatar_image_cache[key]
         if key not in avatar_pending and clean_url.lower().startswith(("http://", "https://")):
+            if len(avatar_pending) >= AVATAR_PENDING_LIMIT or avatar_request_queue.full():
+                return None
             avatar_pending.add(key)
-
-            def load() -> None:
-                try:
-                    response = requests.get(clean_url, timeout=8, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
-                    response.raise_for_status()
-                    content_type = response.headers.get("content-type", "")
-                    if content_type and "image" not in content_type:
-                        raise ValueError("URL nao retornou imagem.")
-                    image = Image.open(BytesIO(response.content))
-                    avatar_result_queue.put((clean_url, size, crop_avatar(image, size)))
-                except Exception:
-                    avatar_result_queue.put((clean_url, size, None))
-
-            threading.Thread(target=load, daemon=True).start()
+            ensure_avatar_workers()
+            try:
+                avatar_request_queue.put_nowait(key)
+            except queue.Full:
+                avatar_pending.discard(key)
         return None
 
     def prune_avatar_image_cache() -> None:
