@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.125"
+APP_VERSION = "2.6.126"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6472,7 +6472,10 @@ def run_gui(config_path: Path) -> int:
     custom_command_cache: list[ChatCommand] = []
     custom_command_lookup_cache: dict[str, ChatCommand] = {}
     custom_command_cache_dirty = True
+    custom_command_rows_loaded = False
     chat_timer_rows: list[dict[str, Any]] = []
+    chat_timer_cache: list[ChatTimer] = []
+    chat_timer_rows_loaded = False
     custom_command_bulk_loading = False
     chat_timer_bulk_loading = False
     chat_timer_runtime: dict[str, dict[str, Any]] = {}
@@ -13778,6 +13781,18 @@ def run_gui(config_path: Path) -> int:
     def update_bot_queue_count() -> None:
         bot_queue_count_var.set(str(bot_reply_queue.qsize()))
 
+    def default_custom_commands() -> list[ChatCommand]:
+        return [
+            ChatCommand("!pix", "Pix do Aizen: coloque sua chave aqui, {user}.", False, 45),
+            ChatCommand("!dc", "Entre no Discord: coloque seu convite aqui.", False, 45),
+        ]
+
+    def default_chat_timers() -> list[ChatTimer]:
+        return [
+            ChatTimer("Discord", "Entre no Discord do Aizen: coloque seu convite aqui.", False, 600, 6),
+            ChatTimer("LivePix", "Apoie a live pelo LivePix: coloque seu link ou chave aqui.", False, 600, 8),
+        ]
+
     def enqueue_bot_reply_payload(payload: dict[str, Any]) -> bool:
         try:
             bot_reply_queue.put_nowait(payload)
@@ -13846,6 +13861,9 @@ def run_gui(config_path: Path) -> int:
         cooldown: int | None = None,
         enabled: bool = True,
     ) -> None:
+        nonlocal custom_command_rows_loaded
+        if not custom_command_rows_loaded and not custom_command_bulk_loading:
+            ensure_custom_command_rows_rendered()
         if cooldown is None:
             cooldown = bot_default_cooldown_seconds()
         frame = ctk.CTkFrame(commands_table_frame, fg_color="#101016", corner_radius=10)
@@ -13882,6 +13900,7 @@ def run_gui(config_path: Path) -> int:
             row=0, column=5, sticky="e", padx=(0, 10), pady=10
         )
         custom_command_rows.append(row)
+        custom_command_rows_loaded = True
         for variable in (enabled_var, command_var, response_var, cooldown_var):
             variable.trace_add("write", lambda *_args: (mark_custom_command_cache_dirty(), schedule_config_autosave()))
         mark_custom_command_cache_dirty()
@@ -13890,6 +13909,10 @@ def run_gui(config_path: Path) -> int:
 
     def collect_custom_commands(normalize_inputs: bool = True) -> list[ChatCommand]:
         nonlocal custom_command_cache, custom_command_lookup_cache, custom_command_cache_dirty
+        if not custom_command_rows_loaded:
+            custom_command_cache_dirty = False
+            custom_command_lookup_cache = {command.command: command for command in custom_command_cache}
+            return list(custom_command_cache)
         commands: list[ChatCommand] = []
         seen: set[str] = set()
         for row in custom_command_rows:
@@ -13926,23 +13949,33 @@ def run_gui(config_path: Path) -> int:
             collect_custom_commands(normalize_inputs=False)
         return custom_command_lookup_cache.get(token)
 
-    def set_custom_commands(commands: list[ChatCommand]) -> None:
-        nonlocal custom_command_bulk_loading
+    def set_custom_commands(commands: list[ChatCommand], render: bool = False) -> None:
+        nonlocal custom_command_bulk_loading, custom_command_cache, custom_command_lookup_cache
+        nonlocal custom_command_cache_dirty, custom_command_rows_loaded
+        commands = list(commands or default_custom_commands())
+        custom_command_cache = commands
+        custom_command_lookup_cache = {command.command: command for command in commands}
+        custom_command_cache_dirty = False
+        if not render:
+            custom_command_rows_loaded = False
+            return
         previous_bulk_loading = custom_command_bulk_loading
         custom_command_bulk_loading = True
         try:
             for row in list(custom_command_rows):
                 remove_custom_command_row(row)
-            if not commands:
-                add_custom_command_row("!pix", "Pix do Aizen: coloque sua chave aqui, {user}.", 45, False)
-                add_custom_command_row("!dc", "Entre no Discord: coloque seu convite aqui.", 45, False)
-            else:
-                for command in commands:
-                    add_custom_command_row(command.command, command.response, command.cooldown_seconds, command.enabled)
+            custom_command_rows_loaded = True
+            for command in commands:
+                add_custom_command_row(command.command, command.response, command.cooldown_seconds, command.enabled)
         finally:
             custom_command_bulk_loading = previous_bulk_loading
-        mark_custom_command_cache_dirty()
+        collect_custom_commands(normalize_inputs=False)
         reindex_custom_command_rows()
+
+    def ensure_custom_command_rows_rendered() -> None:
+        if custom_command_rows_loaded:
+            return
+        set_custom_commands(custom_command_cache or default_custom_commands(), render=True)
 
     def reindex_chat_timer_rows() -> None:
         for index, row in enumerate(chat_timer_rows):
@@ -13974,6 +14007,9 @@ def run_gui(config_path: Path) -> int:
         min_messages: int | None = None,
         enabled: bool = True,
     ) -> None:
+        nonlocal chat_timer_rows_loaded
+        if not chat_timer_rows_loaded and not chat_timer_bulk_loading:
+            ensure_chat_timer_rows_rendered()
         if interval is None:
             interval = bot_default_timer_interval_seconds()
         if min_messages is None:
@@ -14016,6 +14052,7 @@ def run_gui(config_path: Path) -> int:
             row=0, column=6, sticky="e", padx=(0, 10), pady=10
         )
         chat_timer_rows.append(row)
+        chat_timer_rows_loaded = True
         for variable in (enabled_var, name_var, message_var, interval_var, min_messages_var):
             variable.trace_add("write", lambda *_args: schedule_config_autosave())
         if not chat_timer_bulk_loading:
@@ -14036,6 +14073,9 @@ def run_gui(config_path: Path) -> int:
         return max(0, value)
 
     def collect_chat_timers() -> list[ChatTimer]:
+        nonlocal chat_timer_cache
+        if not chat_timer_rows_loaded:
+            return list(chat_timer_cache)
         timers: list[ChatTimer] = []
         seen: set[str] = set()
         for row in chat_timer_rows:
@@ -14060,30 +14100,41 @@ def run_gui(config_path: Path) -> int:
                 )
             )
             seen.add(key)
+        chat_timer_cache = timers
         return timers
 
-    def set_chat_timers(timers: list[ChatTimer]) -> None:
-        nonlocal chat_timer_bulk_loading
+    def set_chat_timers(timers: list[ChatTimer], render: bool | None = None) -> None:
+        nonlocal chat_timer_bulk_loading, chat_timer_cache, chat_timer_rows_loaded
+        timers = list(timers or default_chat_timers())
+        chat_timer_cache = timers
+        if render is None:
+            render = bool(chat_timers_enabled_var.get())
+        if not render:
+            chat_timer_rows_loaded = False
+            return
         previous_bulk_loading = chat_timer_bulk_loading
         chat_timer_bulk_loading = True
         try:
             for row in list(chat_timer_rows):
                 remove_chat_timer_row(row)
-            if not timers:
-                add_chat_timer_row("Discord", "Entre no Discord do Aizen: coloque seu convite aqui.", 600, 6, False)
-                add_chat_timer_row("LivePix", "Apoie a live pelo LivePix: coloque seu link ou chave aqui.", 600, 8, False)
-            else:
-                for timer in timers:
-                    add_chat_timer_row(
-                        timer.name,
-                        timer.message,
-                        timer.interval_seconds,
-                        timer.min_chat_messages,
-                        timer.enabled,
-                    )
+            chat_timer_rows_loaded = True
+            for timer in timers:
+                add_chat_timer_row(
+                    timer.name,
+                    timer.message,
+                    timer.interval_seconds,
+                    timer.min_chat_messages,
+                    timer.enabled,
+                )
         finally:
             chat_timer_bulk_loading = previous_bulk_loading
+        chat_timer_cache = collect_chat_timers()
         reindex_chat_timer_rows()
+
+    def ensure_chat_timer_rows_rendered() -> None:
+        if chat_timer_rows_loaded:
+            return
+        set_chat_timers(chat_timer_cache or default_chat_timers(), render=True)
 
     def queue_chat_timer_row(row: dict[str, Any], test: bool = False) -> bool:
         name = re.sub(r"\s+", " ", row["name"].get().strip())[:80] or "Timer"
@@ -15024,6 +15075,18 @@ def run_gui(config_path: Path) -> int:
         save_livepix_events(livepix_events_path(config_path), livepix_events)
         livepix_status_var.set("Evento ocultado")
         refresh_livepix_dashboard()
+
+    def is_commands_tab_active() -> bool:
+        try:
+            return tabview.get() == "Comandos"
+        except (AttributeError, tk.TclError):
+            return False
+
+    def is_timers_tab_active() -> bool:
+        try:
+            return tabview.get() == "Temporizador"
+        except (AttributeError, tk.TclError):
+            return False
 
     def is_livepix_tab_active() -> bool:
         try:
@@ -18256,6 +18319,8 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         kills_active = is_kills_ff_tab_active()
+        commands_active = is_commands_tab_active()
+        timers_active = is_timers_tab_active()
         livepix_active = is_livepix_tab_active()
         raffle_active = is_raffle_tab_active()
         appearance_active = is_appearance_tab_active()
@@ -18263,6 +18328,10 @@ def run_gui(config_path: Path) -> int:
         has_livepix_pending = livepix_history_render_pending
         has_raffle_pending = raffle_participant_render_pending and bool(raffle_participant_pending_items)
         has_appearance_pending = appearance_preview_pending and appearance_active
+        if commands_active:
+            ensure_custom_command_rows_rendered()
+        if timers_active:
+            ensure_chat_timer_rows_rendered()
         if kills_active:
             if manual_table_render_pending:
                 render_scope = manual_table_render_scope if manual_table_render_scope in {"daily", "general"} else current_manual_scope()
@@ -18281,7 +18350,7 @@ def run_gui(config_path: Path) -> int:
             refresh_participant_list(raffle_participant_pending_items, force=True)
         if appearance_active and appearance_preview_pending:
             refresh_appearance_preview_if_needed(force=True)
-        if kills_active or livepix_active or raffle_active or appearance_active:
+        if kills_active or commands_active or timers_active or livepix_active or raffle_active or appearance_active:
             delay_ms = 350
         elif has_kills_pending or has_livepix_pending or has_raffle_pending or has_appearance_pending:
             delay_ms = 900
