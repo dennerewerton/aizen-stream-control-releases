@@ -641,6 +641,16 @@ def verify_contracts() -> None:
         raise RuntimeError("Metadados Kills FF nao foram lidos.")
     if not kills_state.ignored_players or kills_state.ignored_players[0].name != "Oculto":
         raise RuntimeError(f"Ignorados Kills FF nao foram lidos: {kills_state.ignored_players!r}")
+    snake_name_state = parse_realtime_state(
+        {
+            "ranking": [
+                {"display_name": "Nome Snake", "kills": 8},
+                {"player_name": "Nome Player", "total": 6},
+            ],
+        }
+    )
+    if [(item.name, item.kills) for item in snake_name_state.players] != [("Nome Snake", 8), ("Nome Player", 6)]:
+        raise RuntimeError(f"Parser Kills FF nao leu nomes snake_case: {snake_name_state.players!r}")
     split_rank_state = parse_realtime_state(
         {
             "ranking": [{"name": "Fallback", "kills": 1}],

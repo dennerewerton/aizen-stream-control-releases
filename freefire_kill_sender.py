@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.88"
+APP_VERSION = "2.6.89"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3538,12 +3538,23 @@ def parse_ff_queue_payload(payload: Any) -> list[FFQueueEntry]:
                     "username",
                     "user",
                     "participant",
+                    "participant_name",
                     "participantName",
                     "player",
+                    "player_name",
                     "playerName",
                     "jogador",
                     "apelido",
+                    "display_name",
                     "displayName",
+                    "user_name",
+                    "userName",
+                    "social_user",
+                    "socialUser",
+                    "screen_name",
+                    "screenName",
+                    "unique_id",
+                    "uniqueId",
                 ),
             )
             note = first_present(item, ("note", "notes", "obs", "observacao", "observação", "room", "sala"), "")
@@ -3663,12 +3674,23 @@ def parse_players_payload(payload: Any) -> list[PlayerKill]:
                         "username",
                         "user",
                         "participant",
+                        "participant_name",
                         "participantName",
                         "player",
+                        "player_name",
                         "playerName",
                         "jogador",
                         "apelido",
+                        "display_name",
                         "displayName",
+                        "user_name",
+                        "userName",
+                        "social_user",
+                        "socialUser",
+                        "screen_name",
+                        "screenName",
+                        "unique_id",
+                        "uniqueId",
                     ),
                     name,
                 )
@@ -3701,12 +3723,23 @@ def parse_players_payload(payload: Any) -> list[PlayerKill]:
                     "username",
                     "user",
                     "participant",
+                    "participant_name",
                     "participantName",
                     "player",
+                    "player_name",
                     "playerName",
                     "jogador",
                     "apelido",
+                    "display_name",
                     "displayName",
+                    "user_name",
+                    "userName",
+                    "social_user",
+                    "socialUser",
+                    "screen_name",
+                    "screenName",
+                    "unique_id",
+                    "uniqueId",
                 ),
             )
             kills = first_present(item, ("kills", "kill", "k", "abates", "score", "points", "value", "total"), 0)
@@ -4459,17 +4492,20 @@ def send_kills_snapshot_update(
             token=token,
         )
     try:
-        return fetch_kills_realtime(
+        fetched_state = fetch_kills_realtime(
             endpoint_url,
             device_id=device_id,
             device_name=device_name,
             room=room,
             token=token,
         )
+        if kills_snapshot_matches_state(fetched_state, daily_players, general_players):
+            return fetched_state
     except Exception:
-        if final_state is not None:
-            return final_state
-        return RealtimeState(players=general_players, daily_ranking=daily_players, global_ranking=general_players)
+        pass
+    if final_state is not None and kills_snapshot_matches_state(final_state, daily_players, general_players):
+        return final_state
+    return RealtimeState(players=general_players, daily_ranking=daily_players, global_ranking=general_players)
 
 
 def send_ff_queue_realtime_update(
@@ -9789,12 +9825,27 @@ def run_gui(config_path: Path) -> int:
             value = 15
         return max(10, min(120, value))
 
-    def collect_manual_players() -> list[PlayerKill]:
+    def collect_manual_players(fill_missing_names: bool = True) -> list[PlayerKill]:
+        nonlocal manual_applying_remote
         players: list[PlayerKill] = []
         for row in manual_rows:
             name = row["name_var"].get().strip()
             players.append(PlayerKill(name=name, kills=normalize_kill_value(row["kills_var"].get())))
         players = complete_manual_player_names(players, current_manual_scope())
+        if fill_missing_names and not manual_applying_remote:
+            missing_name_updates = [
+                (row, player.name.strip())
+                for row, player in zip(manual_rows, players)
+                if not row["name_var"].get().strip() and player.name.strip()
+            ]
+            if missing_name_updates:
+                previous_applying_remote = manual_applying_remote
+                manual_applying_remote = True
+                try:
+                    for row, completed_name in missing_name_updates:
+                        row["name_var"].set(completed_name)
+                finally:
+                    manual_applying_remote = previous_applying_remote
         return merge_manual_player_kills(players)
 
     def update_manual_metrics() -> None:
