@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.85",
-    "notes":  "Kills FF: rank geral agora preenche os nicks na tela de edicao usando o ranking correto apos salvar/atualizar.",
+    "version":  "2.6.86",
+    "notes":  "Otimização: Kills FF atualiza tabelas em lote, evita renderização de chat oculto, reduz redraw do Livepix e confirma snapshot antes do modo lento.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.85/AizenStreamControl.exe",
-                    "sha256":  "b448956f17499624c67d37e8e900a346554dc645e14aedfd84fb7a629ff19c12"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.86/AizenStreamControl.exe",
+                    "sha256":  "e092882f0233b18bbcee37e3e0959691a025c61d1300d49824ac5c6c74c44f05"
                 }
 }

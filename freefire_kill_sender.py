@@ -49,7 +49,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.85"
+APP_VERSION = "2.6.86"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4394,6 +4394,18 @@ def send_kills_snapshot_update(
             state = parse_realtime_state(response.text)
             if kills_snapshot_matches_state(state, daily_players, general_players):
                 return state
+            try:
+                refreshed_state = fetch_kills_realtime(
+                    endpoint_url,
+                    device_id=device_id,
+                    device_name=device_name,
+                    room=room,
+                    token=token,
+                )
+                if kills_snapshot_matches_state(refreshed_state, daily_players, general_players):
+                    return refreshed_state
+            except Exception:
+                pass
         except requests.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else 0
             if status_code not in {400, 404, 405, 409, 422}:
@@ -6055,6 +6067,7 @@ def run_gui(config_path: Path) -> int:
     manual_fetching = False
     manual_sending = False
     manual_applying_remote = False
+    manual_bulk_updating = False
     manual_last_local_edit_at = 0.0
     manual_last_signature = ""
     manual_last_remote_signature = ""
@@ -9785,6 +9798,8 @@ def run_gui(config_path: Path) -> int:
         return merge_manual_player_kills(players)
 
     def update_manual_metrics() -> None:
+        if manual_bulk_updating:
+            return
         players = collect_manual_players()
         count_value = manual_remote_count_override if manual_remote_count_override is not None else len(players)
         total_value = manual_remote_total_override if manual_remote_total_override is not None else sum(player.kills for player in players)
@@ -9831,6 +9846,8 @@ def run_gui(config_path: Path) -> int:
             kills_global_ranking = clone_player_list(players)
         else:
             kills_daily_ranking = clone_player_list(players)
+        if manual_bulk_updating:
+            return
         try:
             refresh_kills_rank_table()
         except NameError:
@@ -10083,13 +10100,14 @@ def run_gui(config_path: Path) -> int:
         name_entry.bind("<FocusIn>", lambda _event, target_row=row: refresh_manual_name_suggestions(target_row))
         name_entry.bind("<FocusOut>", lambda _event, target_row=row: root.after(140, lambda: hide_manual_name_suggestions(target_row)))
         name_entry.bind("<Return>", lambda _event, target_row=row: select_first_manual_name_suggestion(target_row))
-        update_manual_row_numbers()
-        update_manual_metrics()
+        if not manual_bulk_updating:
+            update_manual_row_numbers()
+            update_manual_metrics()
         if notify:
             on_manual_change()
 
     def add_or_increment_manual_player_all_scopes(name: str, kills: int) -> None:
-        nonlocal manual_last_local_edit_at
+        nonlocal manual_bulk_updating, manual_last_local_edit_at
         clean_name = re.sub(r"\s+", " ", str(name or "").strip())
         if not clean_name:
             return
@@ -10099,20 +10117,30 @@ def run_gui(config_path: Path) -> int:
             active_scope = "daily"
         manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players())
 
-        for scope_key in ("daily", "general"):
-            if scope_key == active_scope:
-                players = clone_player_list(manual_scope_buffers.get(scope_key, []))
-            else:
-                players = manual_scope_display_players(scope_key, prefer_remote=True)
-            players.append(PlayerKill(clean_name, add_kills, key=normalize_player_key(clean_name)))
-            manual_scope_buffers[scope_key] = merge_manual_player_kills(players)
-            manual_scope_dirty.add(scope_key)
-            refresh_local_rank_from_manual_scope(scope_key)
+        previous_bulk_updating = manual_bulk_updating
+        manual_bulk_updating = True
+        try:
+            for scope_key in ("daily", "general"):
+                if scope_key == active_scope:
+                    players = clone_player_list(manual_scope_buffers.get(scope_key, []))
+                else:
+                    players = manual_scope_display_players(scope_key, prefer_remote=True)
+                players.append(PlayerKill(clean_name, add_kills, key=normalize_player_key(clean_name)))
+                manual_scope_buffers[scope_key] = merge_manual_player_kills(players)
+                manual_scope_dirty.add(scope_key)
+                refresh_local_rank_from_manual_scope(scope_key)
+        finally:
+            manual_bulk_updating = previous_bulk_updating
 
         set_manual_players(manual_scope_buffers[active_scope], scope=active_scope)
         sync_kills_rank_tab_with_manual_scope(active_scope)
         clear_manual_metric_overrides()
         manual_last_local_edit_at = time.monotonic()
+        refresh_kills_rank_table()
+        try:
+            refresh_ff_overlay(force=True)
+        except NameError:
+            pass
         update_manual_metrics()
         manual_status_var.set("Adicionado no diario e geral")
         try:
@@ -10288,8 +10316,10 @@ def run_gui(config_path: Path) -> int:
         total_kills: int | None = None,
         scope: str | None = None,
     ) -> None:
-        nonlocal manual_applying_remote, manual_remote_count_override, manual_remote_total_override
+        nonlocal manual_applying_remote, manual_bulk_updating, manual_remote_count_override, manual_remote_total_override
+        previous_bulk_updating = manual_bulk_updating
         manual_applying_remote = True
+        manual_bulk_updating = True
         manual_remote_count_override = total_players
         manual_remote_total_override = total_kills
         try:
@@ -10305,9 +10335,11 @@ def run_gui(config_path: Path) -> int:
             while len(manual_rows) < minimum_rows:
                 add_manual_row(notify=False)
             update_manual_row_numbers()
-            update_manual_metrics()
         finally:
+            manual_bulk_updating = previous_bulk_updating
             manual_applying_remote = False
+        if not manual_bulk_updating:
+            update_manual_metrics()
 
     def clear_manual_table() -> None:
         set_manual_players([])
@@ -12827,6 +12859,11 @@ def run_gui(config_path: Path) -> int:
         scroll_chat_to_bottom(target_frame)
 
     def refresh_chat_messages(force: bool = False) -> None:
+        render_main_chat = not chat_tab_hidden
+        render_monitor_chat = chat_monitor_messages_frame is not None
+        render_overlay_chat = chat_overlay_messages_frame is not None
+        if not (render_main_chat or render_monitor_chat or render_overlay_chat):
+            return
         visible = visible_chat_messages()
         signature = [
             (
@@ -12842,13 +12879,16 @@ def run_gui(config_path: Path) -> int:
             return
         refresh_chat_messages._signature = signature  # type: ignore[attr-defined]
 
-        render_chat_messages(chat_messages_frame, chat_widgets, visible, large=False, force=force)
-        if chat_monitor_messages_frame is not None:
+        if render_main_chat:
+            render_chat_messages(chat_messages_frame, chat_widgets, visible, large=False, force=force)
+        elif chat_widgets:
+            destroy_chat_widgets(chat_widgets)
+        if render_monitor_chat:
             try:
                 render_chat_messages(chat_monitor_messages_frame, chat_monitor_widgets, visible, large=True, force=force)
             except tk.TclError:
                 pass
-        if chat_overlay_messages_frame is not None:
+        if render_overlay_chat:
             try:
                 render_chat_messages(chat_overlay_messages_frame, chat_overlay_widgets, visible, large=False, force=force, overlay=True)
             except tk.TclError:
@@ -13630,7 +13670,7 @@ def run_gui(config_path: Path) -> int:
     def livepix_event_identity(event: LivepixEvent) -> tuple[str, str]:
         return (event.kind, event.event_id or event.reference)
 
-    def merge_livepix_events(new_events: list[LivepixEvent]) -> int:
+    def merge_livepix_events(new_events: list[LivepixEvent], refresh: bool = True) -> int:
         existing = {livepix_event_identity(event): event for event in livepix_events}
         added = 0
         updated = False
@@ -13661,7 +13701,8 @@ def run_gui(config_path: Path) -> int:
         del livepix_events[1000:]
         if added or updated:
             save_livepix_events(livepix_events_path(config_path), livepix_events)
-        refresh_livepix_dashboard()
+        if refresh:
+            refresh_livepix_dashboard()
         return added
 
     def livepix_event_title(event: LivepixEvent) -> str:
@@ -14132,13 +14173,29 @@ def run_gui(config_path: Path) -> int:
         frame = getattr(render_livepix_events, "frame", None)
         if frame is None:
             return
+        events = livepix_events[:80]
+        render_signature = [
+            (
+                livepix_event_identity(event),
+                event.username,
+                event.message,
+                event.amount,
+                event.currency,
+                event.created_at,
+                event.flagged,
+            )
+            for event in events
+        ]
+        render_signature.append(("currency", livepix_currency_var.get().strip().upper()))
+        if getattr(render_livepix_events, "_signature", None) == render_signature:
+            return
+        render_livepix_events._signature = render_signature  # type: ignore[attr-defined]
         for widget in livepix_widgets:
             try:
                 widget.destroy()
             except tk.TclError:
                 pass
         livepix_widgets.clear()
-        events = livepix_events[:80]
         if not events:
             empty = ctk.CTkLabel(
                 frame,
@@ -14790,7 +14847,7 @@ def run_gui(config_path: Path) -> int:
                     if isinstance(errors, list) and errors:
                         parts.append(f"avisos: {'; '.join(str(item) for item in errors[:3])}")
                     livepix_extra_var.set(" | ".join(parts) if parts else "-")
-                added = merge_livepix_events(events if isinstance(events, list) else [])
+                added = merge_livepix_events(events if isinstance(events, list) else [], refresh=False)
                 critical_prefixes = ("conta:", "pagamentos:", "mensagens:", "carteira:", "transacoes:", "recebiveis:")
                 critical_errors = [
                     str(item)
@@ -15031,7 +15088,7 @@ def run_gui(config_path: Path) -> int:
             return
         save_current_config_silent()
 
-    def schedule_config_autosave(delay_ms: int = 900) -> None:
+    def schedule_config_autosave(delay_ms: int = 1800) -> None:
         nonlocal config_auto_save_after_id
         if app_closing or config_auto_save_running:
             return
@@ -15089,7 +15146,7 @@ def run_gui(config_path: Path) -> int:
             pass
 
     def send_manual_kills(force: bool = True) -> None:
-        nonlocal manual_sending, manual_sync_after_id, manual_last_signature
+        nonlocal manual_bulk_updating, manual_sending, manual_sync_after_id, manual_last_signature
         manual_sync_after_id = None
         if kills_ff_site_sync_hidden:
             if force:
@@ -15125,8 +15182,18 @@ def run_gui(config_path: Path) -> int:
         general_players = merge_manual_player_kills(manual_scope_buffers.get("general", []))
         manual_scope_buffers["daily"] = clone_player_list(daily_players)
         manual_scope_buffers["general"] = clone_player_list(general_players)
-        refresh_local_rank_from_manual_scope("daily")
-        refresh_local_rank_from_manual_scope("general")
+        previous_bulk_updating = manual_bulk_updating
+        manual_bulk_updating = True
+        try:
+            refresh_local_rank_from_manual_scope("daily")
+            refresh_local_rank_from_manual_scope("general")
+        finally:
+            manual_bulk_updating = previous_bulk_updating
+        refresh_kills_rank_table()
+        try:
+            refresh_ff_overlay(force=True)
+        except NameError:
+            pass
         signature = manual_snapshot_signature(daily_players, general_players)
         if not endpoint_url:
             manual_status_var.set("Sem endpoint")
