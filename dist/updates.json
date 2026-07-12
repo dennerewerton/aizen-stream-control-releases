@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.109",
-    "notes":  "Deixa o Kills FF mais leve durante edição: alterações de kills usam autosave enxuto do ranking em vez de salvar a configuração inteira do app.",
+    "version":  "2.6.110",
+    "notes":  "O autosave leve do Kills FF agora grava config compacta/atômica, reduzindo I/O durante edição de muitos jogadores.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.109/AizenStreamControl.exe",
-                    "sha256":  "8e8466398f12e4fdb76e387a6f85b2ef0e73b70d8c634dfe62dfac2056b57ca5"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.110/AizenStreamControl.exe",
+                    "sha256":  "013298b5f362676afb3ba4b478f542217d55cc0c9dbb207462e3f971e5b6ab65"
                 }
 }

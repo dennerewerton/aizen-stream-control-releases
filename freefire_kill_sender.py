@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.109"
+APP_VERSION = "2.6.110"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -611,6 +611,13 @@ def merge_defaults(data: dict[str, Any], defaults: dict[str, Any]) -> dict[str, 
 
 def save_config(path: Path, config: dict[str, Any]) -> None:
     path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def save_config_compact(path: Path, config: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(json.dumps(config, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def append_raffle_history(path: Path, record: dict[str, Any]) -> None:
@@ -10237,7 +10244,7 @@ def run_gui(config_path: Path) -> int:
             return
         try:
             update_manual_config_snapshot()
-            save_config(config_path, config)
+            save_config_compact(config_path, config)
         except Exception as exc:
             log(f"Auto-save leve do Kills FF aguardando configuração válida: {exc}")
 
