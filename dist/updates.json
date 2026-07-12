@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.101",
-    "notes":  "Otimiza Livepix: historico visual agora renderiza sob demanda na aba Livepix e mostra lote inicial menor, reduzindo carga ao abrir e sincronizar.",
+    "version":  "2.6.102",
+    "notes":  "Otimiza logs: reduz o lote processado por ciclo para evitar travadas quando varios eventos chegam ao mesmo tempo.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.101/AizenStreamControl.exe",
-                    "sha256":  "aedf10b20304e6ec84ae6c6f7b754099fd70205db5da5362d683275b13a40a43"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.102/AizenStreamControl.exe",
+                    "sha256":  "e4986a02d24a0ead0d31dc0e837cf37f6b854ead1cc7e7906cce48601c44c357"
                 }
 }
