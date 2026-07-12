@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.128",
-    "notes":  "Otimizacao em repouso: a fila de eventos do chat reduz a frequencia quando nao ha comandos, timers, sorteio ou chat visivel usando o chat, mantendo resposta rapida quando algum recurso depende dele.",
+    "version":  "2.6.129",
+    "notes":  "Kills FF mais leve ao editar: o app reaproveita a lista de jogadores ja calculada no ciclo visual, evitando nova coleta/processamento para atualizar rank e metricas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.128/AizenStreamControl.exe",
-                    "sha256":  "a990adffeaa4031aa21b699e51c58924bbdc7343d419326b44093f89b740a4fd"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.129/AizenStreamControl.exe",
+                    "sha256":  "829849e680885e16891debb0757250d8f73cc6ae804ab0bdc170636094ce8644"
                 }
 }

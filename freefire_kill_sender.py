@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.128"
+APP_VERSION = "2.6.129"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -10320,12 +10320,12 @@ def run_gui(config_path: Path) -> int:
                     manual_applying_remote = previous_applying_remote
         return merge_manual_player_kills(players)
 
-    def update_manual_metrics() -> None:
+    def update_manual_metrics(players: list[PlayerKill] | None = None) -> None:
         if manual_bulk_updating:
             return
-        players = collect_manual_players()
-        count_value = manual_remote_count_override if manual_remote_count_override is not None else len(players)
-        total_value = manual_remote_total_override if manual_remote_total_override is not None else sum(player.kills for player in players)
+        metric_players = players if players is not None else collect_manual_players()
+        count_value = manual_remote_count_override if manual_remote_count_override is not None else len(metric_players)
+        total_value = manual_remote_total_override if manual_remote_total_override is not None else sum(player.kills for player in metric_players)
         set_text_var(manual_count_var, count_value)
         set_text_var(manual_total_var, total_value)
         return
@@ -10354,20 +10354,26 @@ def run_gui(config_path: Path) -> int:
         )
         update_manual_row_numbers()
 
-    def refresh_local_rank_from_manual_scope(scope: str | None = None) -> None:
+    def apply_local_rank_players(scope: str, players: list[PlayerKill], schedule_refresh: bool = True) -> None:
         nonlocal kills_daily_ranking, kills_global_ranking
-        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        clean_scope = normalize_kills_scope_value(scope)
         if clean_scope not in {"daily", "general"}:
             return
-        players = merge_manual_player_kills(complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope))
         manual_scope_buffers[clean_scope] = clone_player_list(players)
         if clean_scope == "general":
             kills_global_ranking = clone_player_list(players)
         else:
             kills_daily_ranking = clone_player_list(players)
-        if manual_bulk_updating:
+        if manual_bulk_updating or not schedule_refresh:
             return
         schedule_kills_visual_refresh()
+
+    def refresh_local_rank_from_manual_scope(scope: str | None = None) -> None:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            return
+        players = merge_manual_player_kills(complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope))
+        apply_local_rank_players(clean_scope, players)
 
     def fill_visible_manual_missing_names_from_rank(scope: str | None = None) -> bool:
         nonlocal manual_applying_remote
@@ -10443,9 +10449,11 @@ def run_gui(config_path: Path) -> int:
         manual_visual_sort_pending = False
         if should_sort:
             sort_manual_rows_by_kills()
-        manual_scope_buffers[scope] = clone_player_list(collect_manual_players())
-        refresh_local_rank_from_manual_scope(scope)
-        update_manual_metrics()
+        players = collect_manual_players()
+        apply_local_rank_players(scope, players, schedule_refresh=False)
+        if not manual_bulk_updating:
+            schedule_kills_visual_refresh()
+        update_manual_metrics(players)
 
     def schedule_manual_visual_refresh(delay_ms: int = 160, sort_rows: bool = True) -> None:
         nonlocal manual_visual_after_id, manual_visual_sort_pending
