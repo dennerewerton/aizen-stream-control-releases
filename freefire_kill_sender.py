@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.108"
+APP_VERSION = "2.6.109"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6181,6 +6181,7 @@ def run_gui(config_path: Path) -> int:
     manual_sync_after_id: str | None = None
     manual_poll_after_id: str | None = None
     manual_visual_after_id: str | None = None
+    manual_config_after_id: str | None = None
     kills_visual_after_id: str | None = None
     manual_fetching = False
     manual_sending = False
@@ -10207,6 +10208,50 @@ def run_gui(config_path: Path) -> int:
                 pass
             kills_visual_after_id = None
 
+    def update_manual_config_snapshot(scope: str | None = None) -> None:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        if clean_scope == current_manual_scope() and not manual_table_render_pending:
+            manual_scope_buffers[clean_scope] = clone_player_list(collect_manual_players(fill_missing_names=False))
+        endpoint_url = normalize_endpoint_url(sync_url_var.get())
+        jarvis_base_url = normalize_endpoint_url(jarvis_base_url_var.get()).rstrip("/")
+        config["kills_realtime_url"] = endpoint_url
+        config["jarvis_endpoint_url"] = endpoint_url
+        config["jarvis_base_url"] = jarvis_base_url
+        config["kills_manual_scope"] = clean_scope
+        config["kills_sync_room"] = sync_room_var.get().strip() or "principal"
+        config["device_name"] = device_name_var.get().strip() or default_device_name()
+        config["jarvis_api_token"] = jarvis_token_var.get().strip()
+        config["message_title"] = title_var.get().strip() or "Kills da partida"
+        config["manual_kills"] = player_payload(manual_scope_buffers.get(clean_scope, []))
+        config["manual_kills_by_scope"] = {
+            "daily": player_payload(manual_scope_buffers.get("daily", [])),
+            "general": player_payload(manual_scope_buffers.get("general", [])),
+        }
+
+    def run_manual_config_autosave() -> None:
+        nonlocal manual_config_after_id
+        manual_config_after_id = None
+        if app_closing:
+            return
+        try:
+            update_manual_config_snapshot()
+            save_config(config_path, config)
+        except Exception as exc:
+            log(f"Auto-save leve do Kills FF aguardando configuração válida: {exc}")
+
+    def schedule_manual_config_autosave(delay_ms: int = 1200) -> None:
+        nonlocal manual_config_after_id
+        if app_closing:
+            return
+        if manual_config_after_id is not None:
+            try:
+                root.after_cancel(manual_config_after_id)
+            except tk.TclError:
+                pass
+        manual_config_after_id = root.after(delay_ms, run_manual_config_autosave)
+
     def on_manual_change(*_args: Any) -> None:
         nonlocal manual_last_local_edit_at
         if manual_applying_remote:
@@ -10217,7 +10262,7 @@ def run_gui(config_path: Path) -> int:
         manual_last_local_edit_at = time.monotonic()
         manual_status_var.set("Editando")
         try:
-            schedule_config_autosave()
+            schedule_manual_config_autosave()
         except NameError:
             pass
         schedule_manual_visual_refresh()
@@ -10487,7 +10532,7 @@ def run_gui(config_path: Path) -> int:
         update_manual_metrics()
         manual_status_var.set("Adicionado no diario e geral")
         try:
-            schedule_config_autosave()
+            schedule_manual_config_autosave()
         except NameError:
             pass
 
@@ -15683,7 +15728,7 @@ def run_gui(config_path: Path) -> int:
                 log("Adicione pelo menos um jogador antes de enviar as kills.")
             return
         try:
-            schedule_config_autosave(700)
+            schedule_manual_config_autosave(700)
         except NameError:
             pass
         if not force and signature == manual_last_signature:
@@ -15736,7 +15781,7 @@ def run_gui(config_path: Path) -> int:
         try:
             local_config = manual_kills_send_config()
             if force:
-                schedule_config_autosave(900)
+                schedule_manual_config_autosave(900)
         except Exception as exc:
             local_config = dict(config)
             endpoint_url = str(local_config.get("kills_realtime_url") or local_config.get("jarvis_endpoint_url") or "").strip()
@@ -16989,7 +17034,7 @@ def run_gui(config_path: Path) -> int:
 
     def close_app() -> None:
         nonlocal app_closing
-        nonlocal manual_sync_after_id, manual_poll_after_id, manual_visual_after_id, kills_visual_after_id
+        nonlocal manual_sync_after_id, manual_poll_after_id, manual_visual_after_id, manual_config_after_id, kills_visual_after_id
         nonlocal ff_queue_sync_after_id, ff_queue_poll_after_id
         nonlocal ff_overlay_sync_after_id, ff_overlay_poll_after_id
         nonlocal config_auto_save_after_id
@@ -17001,6 +17046,7 @@ def run_gui(config_path: Path) -> int:
             manual_sync_after_id,
             manual_poll_after_id,
             manual_visual_after_id,
+            manual_config_after_id,
             kills_visual_after_id,
             ff_queue_sync_after_id,
             ff_queue_poll_after_id,
@@ -17016,6 +17062,7 @@ def run_gui(config_path: Path) -> int:
         manual_sync_after_id = None
         manual_poll_after_id = None
         manual_visual_after_id = None
+        manual_config_after_id = None
         kills_visual_after_id = None
         ff_queue_sync_after_id = None
         ff_queue_poll_after_id = None

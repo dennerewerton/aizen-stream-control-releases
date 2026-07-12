@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.108",
-    "notes":  "Acelera Salvar/Atualizar Kills FF: usa snapshot leve de Jarvis em vez de salvar/configurar o app inteiro antes de enviar as kills.",
+    "version":  "2.6.109",
+    "notes":  "Deixa o Kills FF mais leve durante edição: alterações de kills usam autosave enxuto do ranking em vez de salvar a configuração inteira do app.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.108/AizenStreamControl.exe",
-                    "sha256":  "6bbc20b0cd51a3e93713a4fc0470943cacdc757d696d3ac299e3dde6e354da4e"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.109/AizenStreamControl.exe",
+                    "sha256":  "8e8466398f12e4fdb76e387a6f85b2ef0e73b70d8c634dfe62dfac2056b57ca5"
                 }
 }
