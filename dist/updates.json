@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.116",
-    "notes":  "Evita travamentos em lives muito movimentadas: a fila interna de eventos de chat agora tem limite e descarta eventos antigos de forma controlada quando o TikFinity envia rajadas acima do processamento.",
+    "version":  "2.6.117",
+    "notes":  "Evita acumulo infinito de respostas do bot: filas de resposta e retorno agora tem limite e descartam itens antigos de forma controlada quando ha rajadas de comandos/timers.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.116/AizenStreamControl.exe",
-                    "sha256":  "c70b8bf580b87be481d6d3c98687c116f4f44ba766673b3c30ee9c91233796d6"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.117/AizenStreamControl.exe",
+                    "sha256":  "04ba16fba54ebf81af4d6efb6ac6c607efd6462c611da8613654f47c98df2769"
                 }
 }

@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.116"
+APP_VERSION = "2.6.117"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -89,6 +89,8 @@ CHAT_EVENT_QUEUE_LIMIT = 800
 CHAT_EVENT_BATCH_LIMIT = 32
 CHAT_EVENT_BUSY_PUMP_MS = 20
 CHAT_EVENT_IDLE_PUMP_MS = 180
+BOT_REPLY_QUEUE_LIMIT = 80
+BOT_RESULT_QUEUE_LIMIT = 120
 AVATAR_IMAGE_CACHE_LIMIT = 240
 AVATAR_PENDING_LIMIT = 120
 AVATAR_DOWNLOAD_WORKERS = 3
@@ -6299,11 +6301,13 @@ def run_gui(config_path: Path) -> int:
     custom_command_rows: list[dict[str, Any]] = []
     chat_timer_rows: list[dict[str, Any]] = []
     chat_timer_runtime: dict[str, dict[str, Any]] = {}
-    bot_reply_queue: queue.Queue[dict[str, Any]] = queue.Queue()
-    bot_send_result_queue: queue.Queue[tuple[bool, str, dict[str, Any]]] = queue.Queue()
+    bot_reply_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=BOT_REPLY_QUEUE_LIMIT)
+    bot_send_result_queue: queue.Queue[tuple[bool, str, dict[str, Any]]] = queue.Queue(maxsize=BOT_RESULT_QUEUE_LIMIT)
     bot_command_last_sent: dict[str, float] = {}
     bot_command_last_missed: dict[str, float] = {}
     bot_pending_confirmations: dict[str, dict[str, Any]] = {}
+    queue_drop_counts: dict[str, int] = {}
+    queue_drop_last_log_at: dict[str, float] = {}
     bot_sending = False
     bot_next_allowed_at = 0.0
     app_closing = False
@@ -13572,6 +13576,50 @@ def run_gui(config_path: Path) -> int:
     def update_bot_queue_count() -> None:
         bot_queue_count_var.set(str(bot_reply_queue.qsize()))
 
+    def note_queue_drop(key: str, label: str) -> None:
+        queue_drop_counts[key] = queue_drop_counts.get(key, 0) + 1
+        now = time.monotonic()
+        if now - queue_drop_last_log_at.get(key, 0.0) >= 8.0:
+            dropped = queue_drop_counts.get(key, 0)
+            log(f"{label}: {dropped} item(ns) antigo(s) omitido(s) para manter o app leve.")
+            queue_drop_counts[key] = 0
+            queue_drop_last_log_at[key] = now
+
+    def enqueue_bot_reply_payload(payload: dict[str, Any]) -> bool:
+        try:
+            bot_reply_queue.put_nowait(payload)
+            return True
+        except queue.Full:
+            pass
+        try:
+            bot_reply_queue.get_nowait()
+            note_queue_drop("bot_reply", "Fila do bot cheia")
+        except queue.Empty:
+            pass
+        try:
+            bot_reply_queue.put_nowait(payload)
+            return True
+        except queue.Full:
+            note_queue_drop("bot_reply", "Fila do bot cheia")
+            return False
+
+    def enqueue_bot_send_result(ok: bool, detail: str, payload: dict[str, Any]) -> None:
+        result = (ok, detail, payload)
+        try:
+            bot_send_result_queue.put_nowait(result)
+            return
+        except queue.Full:
+            pass
+        try:
+            bot_send_result_queue.get_nowait()
+            note_queue_drop("bot_result", "Fila de retorno do bot cheia")
+        except queue.Empty:
+            pass
+        try:
+            bot_send_result_queue.put_nowait(result)
+        except queue.Full:
+            note_queue_drop("bot_result", "Fila de retorno do bot cheia")
+
     def reindex_custom_command_rows() -> None:
         for index, row in enumerate(custom_command_rows):
             frame = row["frame"]
@@ -13929,10 +13977,13 @@ def run_gui(config_path: Path) -> int:
             "fromAizen": True,
             "test": bool(test),
         }
-        bot_reply_queue.put(payload)
-        update_bot_queue_count()
-        bot_status_var.set("Na fila")
-        log(f"Resposta do bot enfileirada: {response_text[:120]}")
+        if enqueue_bot_reply_payload(payload):
+            update_bot_queue_count()
+            bot_status_var.set("Na fila")
+            log(f"Resposta do bot enfileirada: {response_text[:120]}")
+        else:
+            update_bot_queue_count()
+            bot_status_var.set("Fila cheia")
 
     def schedule_bot_delivery_confirmation(payload: dict[str, Any]) -> None:
         delivery_id = str(payload.get("deliveryId") or f"bot-{uuid.uuid4().hex}")
@@ -13968,9 +14019,13 @@ def run_gui(config_path: Path) -> int:
             payload["deliveryId"] = f"bot-{uuid.uuid4().hex}"
             stop_tikfinity_direct_bridge(silent=True)
             bot_next_allowed_at = 0.0
-            bot_reply_queue.put(payload)
-            update_bot_queue_count()
-            bot_status_var.set("Reenviando")
+            if enqueue_bot_reply_payload(payload):
+                update_bot_queue_count()
+                bot_status_var.set("Reenviando")
+            else:
+                update_bot_queue_count()
+                bot_status_var.set("Fila cheia")
+                return
             log(
                 "TikFinity recebeu o pacote do bot, mas a mensagem nao apareceu no chat em 7s; "
                 "reiniciando a ponte direta e reenviando uma vez."
@@ -14136,7 +14191,7 @@ def run_gui(config_path: Path) -> int:
         try:
             settings = bot_settings_from_vars()
         except Exception as exc:
-            bot_send_result_queue.put((False, str(exc), payload))
+            enqueue_bot_send_result(False, str(exc), payload)
             if not app_closing:
                 root.after(250, pump_bot_send_results)
             return
@@ -14144,9 +14199,9 @@ def run_gui(config_path: Path) -> int:
         def send() -> None:
             try:
                 detail = send_chatbot_message_via_streamerbot(settings, payload)
-                bot_send_result_queue.put((True, detail, payload))
+                enqueue_bot_send_result(True, detail, payload)
             except Exception as exc:
-                bot_send_result_queue.put((False, str(exc), payload))
+                enqueue_bot_send_result(False, str(exc), payload)
 
         threading.Thread(target=send, name="AizenBotReplySend", daemon=True).start()
         if not app_closing:
