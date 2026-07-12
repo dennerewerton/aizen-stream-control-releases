@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.100"
+APP_VERSION = "2.6.101"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -88,6 +88,7 @@ AVATAR_IMAGE_CACHE_LIMIT = 240
 AVATAR_PENDING_LIMIT = 120
 AVATAR_DOWNLOAD_WORKERS = 3
 RAFFLE_SEEN_MESSAGES_LIMIT = 2500
+LIVEPIX_HISTORY_RENDER_LIMIT = 30
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
@@ -6234,6 +6235,7 @@ def run_gui(config_path: Path) -> int:
     livepix_overlay_window: Any | None = None
     livepix_overlay_frame: Any | None = None
     livepix_widgets: list[Any] = []
+    livepix_history_render_pending = False
 
     def log(message: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
@@ -14522,13 +14524,20 @@ def run_gui(config_path: Path) -> int:
         livepix_status_var.set("Evento ocultado")
         refresh_livepix_dashboard()
 
-    def render_livepix_events() -> None:
+    def is_livepix_tab_active() -> bool:
+        try:
+            return tabview.get() == "Livepix"
+        except (AttributeError, tk.TclError):
+            return False
+
+    def render_livepix_events(force: bool = False) -> None:
+        nonlocal livepix_history_render_pending
         if "livepix_events_frame" not in globals() and not hasattr(render_livepix_events, "frame"):
             return
         frame = getattr(render_livepix_events, "frame", None)
         if frame is None:
             return
-        events = livepix_events[:80]
+        events = livepix_events[:LIVEPIX_HISTORY_RENDER_LIMIT]
         render_signature = [
             (
                 livepix_event_identity(event),
@@ -14542,9 +14551,16 @@ def run_gui(config_path: Path) -> int:
             for event in events
         ]
         render_signature.append(("currency", livepix_currency_var.get().strip().upper()))
-        if getattr(render_livepix_events, "_signature", None) == render_signature:
+        if not force and not is_livepix_tab_active():
+            if getattr(render_livepix_events, "_deferred_signature", None) != render_signature:
+                render_livepix_events._deferred_signature = render_signature  # type: ignore[attr-defined]
+                livepix_history_render_pending = True
+            return
+        if getattr(render_livepix_events, "_signature", None) == render_signature and not livepix_history_render_pending:
             return
         render_livepix_events._signature = render_signature  # type: ignore[attr-defined]
+        render_livepix_events._deferred_signature = []  # type: ignore[attr-defined]
+        livepix_history_render_pending = False
         for widget in livepix_widgets:
             try:
                 widget.destroy()
@@ -17625,6 +17641,8 @@ def run_gui(config_path: Path) -> int:
                 refresh_kills_rank_table(force=True)
             if kills_ignored_render_pending or not kills_ignored_rows:
                 refresh_kills_ignored_list(force=True)
+        if is_livepix_tab_active() and (livepix_history_render_pending or not livepix_widgets):
+            render_livepix_events(force=True)
         root.after(350, pump_deferred_kills_render)
 
     device_name_var.trace_add("write", update_local_source_labels)

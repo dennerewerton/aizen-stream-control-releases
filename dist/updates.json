@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.100",
-    "notes":  "Otimiza abertura do app: adia a montagem visual dos rankings Kills FF ate a aba ser aberta, mantendo dados e contadores atualizados.",
+    "version":  "2.6.101",
+    "notes":  "Otimiza Livepix: historico visual agora renderiza sob demanda na aba Livepix e mostra lote inicial menor, reduzindo carga ao abrir e sincronizar.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.100/AizenStreamControl.exe",
-                    "sha256":  "f5efef5915b287d927baba2b0aa02d464d2bdf5d02183bb052ee97bfbec124fc"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.101/AizenStreamControl.exe",
+                    "sha256":  "aedf10b20304e6ec84ae6c6f7b754099fd70205db5da5362d683275b13a40a43"
                 }
 }
