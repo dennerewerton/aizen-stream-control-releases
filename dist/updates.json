@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.141",
-    "notes":  "Reduz ciclos em repouso: a aba Logs agora acorda menos quando nao esta aberta e nao ha mensagens novas, ajudando o app a ficar mais leve por longos periodos.",
+    "version":  "2.6.142",
+    "notes":  "Reduz trabalho em segundo plano: o pump do Livepix nao inicia mais quando Livepix esta desligado; ele acorda sob demanda quando chega evento, sync ou webhook.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.141/AizenStreamControl.exe",
-                    "sha256":  "f181410892479728423d5cd845ff73e136547d6121bd0e276eae2c6c3440a3b1"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.142/AizenStreamControl.exe",
+                    "sha256":  "2e984b9927d52d9a8759e60e04b946ec94739fba43a55d43e683519f026b0223"
                 }
 }

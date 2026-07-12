@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.141"
+APP_VERSION = "2.6.142"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6666,7 +6666,13 @@ def run_gui(config_path: Path) -> int:
         return enqueue_limited_queue(ff_queue_sync_queue, (kind, payload), "ff_queue", "Fila FF cheia")
 
     def enqueue_livepix_event(kind: str, payload: Any) -> bool:
-        return enqueue_limited_queue(livepix_queue, (kind, payload), "livepix", "Fila Livepix cheia")
+        queued = enqueue_limited_queue(livepix_queue, (kind, payload), "livepix", "Fila Livepix cheia")
+        if queued and livepix_pump_after_id is None:
+            try:
+                schedule_livepix_queue_pump(0)
+            except NameError:
+                pass
+        return queued
 
     def enqueue_avatar_result(url: str, size: int, image: Image.Image | None) -> bool:
         return enqueue_limited_queue(
@@ -18683,7 +18689,8 @@ def run_gui(config_path: Path) -> int:
     if not chat_listener_hidden:
         pump_chat_event_queue()
     pump_deferred_kills_render()
-    schedule_livepix_queue_pump(0)
+    if livepix_enabled_var.get() or livepix_webhook_server is not None or livepix_overlay_frame is not None:
+        schedule_livepix_queue_pump(0)
     root.after(900, start_livepix_history_load)
     root.after(650, lambda: schedule_livepix_dashboard_refresh(0))
     root.after(LIVEPIX_STARTUP_SYNC_DELAY_MS, auto_sync_livepix_on_start)
