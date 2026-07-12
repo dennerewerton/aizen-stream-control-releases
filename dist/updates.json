@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.93",
-    "notes":  "Otimiza estabilidade: limita logs acumulados, reduz redesenhos repetidos do Kills FF enquanto edita e evita reconstruir tabela quando o Jarvis retorna o mesmo ranking.",
+    "version":  "2.6.94",
+    "notes":  "Melhora carregamento inicial: cv2, numpy e captura de tela agora sao carregados somente quando OCR/captura antiga for usada, deixando a abertura do app mais leve.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.93/AizenStreamControl.exe",
-                    "sha256":  "69f08b0123dec1bbc960524da1a09b203fb8981dae9e6793ef067ecf563562ca"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.94/AizenStreamControl.exe",
+                    "sha256":  "4563ea4357170c0671ce115a24000875a53cbafc45652a23fa58cf2ce4f303e6"
                 }
 }

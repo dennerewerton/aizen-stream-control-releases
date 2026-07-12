@@ -32,10 +32,32 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
-import cv2
-import numpy as np
 import requests
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageGrab, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
+
+cv2: Any | None = None
+np: Any | None = None
+ImageGrab: Any | None = None
+
+
+def ensure_image_processing_modules() -> tuple[Any, Any]:
+    global cv2, np
+    if cv2 is None or np is None:
+        import cv2 as cv2_module
+        import numpy as numpy_module
+
+        cv2 = cv2_module
+        np = numpy_module
+    return cv2, np
+
+
+def ensure_image_grab_module() -> Any:
+    global ImageGrab
+    if ImageGrab is None:
+        from PIL import ImageGrab as image_grab_module
+
+        ImageGrab = image_grab_module
+    return ImageGrab
 
 
 IS_FROZEN = getattr(sys, "frozen", False)
@@ -49,7 +71,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.93"
+APP_VERSION = "2.6.94"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -2885,6 +2907,7 @@ def filter_ignored_players(players: list[PlayerKill], ignored_players: Any) -> l
 
 
 def prepare_name_crops(image: Image.Image, box: tuple[int, int, int, int]) -> list[tuple[str, Image.Image]]:
+    ensure_image_processing_modules()
     crop = image.crop(box).convert("RGB")
     resized = crop.resize((crop.width * 4, crop.height * 4), Image.Resampling.LANCZOS)
     resized_5x = crop.resize((crop.width * 5, crop.height * 5), Image.Resampling.LANCZOS)
@@ -2943,6 +2966,7 @@ def run_windows_ocr(paths: list[Path]) -> dict[str, list[str]]:
 
 
 def digit_templates() -> list[tuple[int, np.ndarray]]:
+    ensure_image_processing_modules()
     font_candidates = [
         Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "bahnschrift.ttf",
         Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "seguisb.ttf",
@@ -2968,6 +2992,7 @@ def digit_templates() -> list[tuple[int, np.ndarray]]:
 
 
 def symbol_templates(symbols: tuple[str, ...] = ("/",)) -> list[tuple[str, np.ndarray]]:
+    ensure_image_processing_modules()
     font_candidates = [
         Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "bahnschrift.ttf",
         Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "seguisb.ttf",
@@ -2993,6 +3018,7 @@ def symbol_templates(symbols: tuple[str, ...] = ("/",)) -> list[tuple[str, np.nd
 
 
 def normalize_digit_mask(mask: np.ndarray) -> np.ndarray | None:
+    ensure_image_processing_modules()
     ys, xs = np.where(mask > 0)
     if len(xs) == 0:
         return None
@@ -3001,6 +3027,7 @@ def normalize_digit_mask(mask: np.ndarray) -> np.ndarray | None:
 
 
 def template_score(sample: np.ndarray, template: np.ndarray) -> float:
+    ensure_image_processing_modules()
     best = 0.0
     for dx in range(-3, 4):
         for dy in range(-3, 4):
@@ -3014,6 +3041,7 @@ def template_score(sample: np.ndarray, template: np.ndarray) -> float:
 
 
 def read_kills(image: Image.Image, box: tuple[int, int, int, int], templates: list[tuple[int, np.ndarray]]) -> int:
+    ensure_image_processing_modules()
     crop = np.array(image.crop(box).convert("RGB"))
     gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
     mask = cv2.inRange(gray, 180, 255)
@@ -3057,6 +3085,7 @@ def read_kda_kills(
     templates: list[tuple[int, np.ndarray]],
     separators: list[tuple[str, np.ndarray]],
 ) -> int:
+    ensure_image_processing_modules()
     crop = np.array(image.crop(box).convert("RGB"))
     gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
     mask = cv2.inRange(gray, 150, 255)
@@ -5470,17 +5499,18 @@ def capture_screen(captures_dir: Path, capture_target: str = "primary") -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = captures_dir / f"freefire_{stamp}.png"
 
+    image_grab = ensure_image_grab_module()
     target = (capture_target or "primary").strip().lower()
     if target == "all":
-        image = ImageGrab.grab(all_screens=True)
+        image = image_grab.grab(all_screens=True)
     elif target == "active_monitor":
         box = active_monitor_box()
-        image = ImageGrab.grab(bbox=box) if box else ImageGrab.grab()
+        image = image_grab.grab(bbox=box) if box else image_grab.grab()
     elif target == "foreground":
         box = foreground_window_box()
-        image = ImageGrab.grab(bbox=box) if box else ImageGrab.grab()
+        image = image_grab.grab(bbox=box) if box else image_grab.grab()
     else:
-        image = ImageGrab.grab()
+        image = image_grab.grab()
 
     image.save(path)
     return path
