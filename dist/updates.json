@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.135",
-    "notes":  "Kills FF mais rapido ao salvar: o app lembra o endpoint de snapshot do Jarvis que funcionou e pula tentativas repetidas nas proximas partidas.",
+    "version":  "2.6.136",
+    "notes":  "Menos travadas em segundo plano: bot, temporizadores e Livepix agora usam agendamento unico e ficam em repouso mais longo quando desligados/inativos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.135/AizenStreamControl.exe",
-                    "sha256":  "d6180b17e1d392f28c91c4917969a75e358cb7b22ba46a12ee88f703b71a3156"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.136/AizenStreamControl.exe",
+                    "sha256":  "d2534b3e861c156684289a536453f595ff4882892f47862ecd34c12c6cf91722"
                 }
 }

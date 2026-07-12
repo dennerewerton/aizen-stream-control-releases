@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.135"
+APP_VERSION = "2.6.136"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -110,7 +110,7 @@ STARTUP_IDLE_TASK_DELAY_MS = 650
 BACKGROUND_IDLE_PUMP_MS = 2000
 SYNC_QUEUE_IDLE_PUMP_MS = 1200
 SYNC_QUEUE_PROCESSED_PUMP_MS = 140
-BOT_DISABLED_IDLE_PUMP_MS = 3000
+BACKGROUND_DISABLED_PUMP_MS = 8000
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
 WRITE_TEXT_CACHE_LOCK = threading.Lock()
 KILLS_SNAPSHOT_ENDPOINT_CACHE: dict[str, str] = {}
@@ -6566,6 +6566,9 @@ def run_gui(config_path: Path) -> int:
     queue_drop_last_log_at: dict[str, float] = {}
     bot_sending = False
     bot_next_allowed_at = 0.0
+    bot_pump_after_id: str | None = None
+    chat_timer_after_id: str | None = None
+    livepix_pump_after_id: str | None = None
     app_closing = False
     hidden_main_tabs = {"Fila FF", "Overlay FF", "Chat Ao Vivo"}
     kills_ff_site_sync_hidden = "Kills FF" in hidden_main_tabs
@@ -14283,7 +14286,20 @@ def run_gui(config_path: Path) -> int:
         else:
             timer_status_var.set("Timer vazio")
 
+    def schedule_chat_timer_pump(delay_ms: int = 0) -> None:
+        nonlocal chat_timer_after_id
+        if app_closing:
+            return
+        if chat_timer_after_id is not None:
+            try:
+                root.after_cancel(chat_timer_after_id)
+            except tk.TclError:
+                pass
+        chat_timer_after_id = root.after(max(0, delay_ms), pump_chat_timers)
+
     def pump_chat_timers() -> None:
+        nonlocal chat_timer_after_id
+        chat_timer_after_id = None
         if app_closing:
             return
         now = time.time()
@@ -14303,14 +14319,14 @@ def run_gui(config_path: Path) -> int:
             timer_status_var.set("Desligado")
             timer_next_send_var.set("-")
             if not app_closing:
-                root.after(3000, pump_chat_timers)
+                schedule_chat_timer_pump(BACKGROUND_DISABLED_PUMP_MS)
             return
 
         if not active_rows:
             timer_status_var.set("Sem timers ativos")
             timer_next_send_var.set("-")
             if not app_closing:
-                root.after(3000, pump_chat_timers)
+                schedule_chat_timer_pump(3000)
             return
 
         nearest_next_at: float | None = None
@@ -14362,7 +14378,7 @@ def run_gui(config_path: Path) -> int:
             remaining = max(0, int(nearest_next_at - now))
             timer_next_send_var.set(f"{remaining // 60:02d}:{remaining % 60:02d}")
         if not app_closing:
-            root.after(1000, pump_chat_timers)
+            schedule_chat_timer_pump(1000)
 
     def queue_bot_reply(text: str, message: LiveChatMessage, command: str, args: str, test: bool = False) -> None:
         response_text = re.sub(r"\s+", " ", text).strip()
@@ -14386,6 +14402,7 @@ def run_gui(config_path: Path) -> int:
             update_bot_queue_count()
             bot_status_var.set("Na fila")
             log(f"Resposta do bot enfileirada: {response_text[:120]}")
+            schedule_bot_send_pump(0)
         else:
             update_bot_queue_count()
             bot_status_var.set("Fila cheia")
@@ -14435,7 +14452,7 @@ def run_gui(config_path: Path) -> int:
                 "TikFinity recebeu o pacote do bot, mas a mensagem nao apareceu no chat em 7s; "
                 "reiniciando a ponte direta e reenviando uma vez."
             )
-            root.after(200, pump_bot_send_results)
+            schedule_bot_send_pump(200)
             return
         bot_status_var.set("Sem confirmação")
         log(
@@ -14514,8 +14531,20 @@ def run_gui(config_path: Path) -> int:
             test=True,
         )
 
+    def schedule_bot_send_pump(delay_ms: int = 0) -> None:
+        nonlocal bot_pump_after_id
+        if app_closing:
+            return
+        if bot_pump_after_id is not None:
+            try:
+                root.after_cancel(bot_pump_after_id)
+            except tk.TclError:
+                pass
+        bot_pump_after_id = root.after(max(0, delay_ms), pump_bot_send_results)
+
     def pump_bot_send_results() -> None:
-        nonlocal bot_sending, bot_next_allowed_at
+        nonlocal bot_sending, bot_next_allowed_at, bot_pump_after_id
+        bot_pump_after_id = None
         if app_closing:
             return
         processed_results = 0
@@ -14547,12 +14576,12 @@ def run_gui(config_path: Path) -> int:
                 bot_status_var.set("Erro")
                 log(f"Erro ao enviar resposta do bot: {detail}")
         if not bot_send_result_queue.empty():
-            root.after(50, pump_bot_send_results)
+            schedule_bot_send_pump(50)
             return
 
         if bot_sending:
             if not app_closing:
-                root.after(300, pump_bot_send_results)
+                schedule_bot_send_pump(300)
             return
 
         if bot_reply_queue.empty():
@@ -14572,8 +14601,8 @@ def run_gui(config_path: Path) -> int:
                     chat_commands_enabled_var.get()
                     or chat_timers_enabled_var.get()
                     or bot_pending_confirmations
-                ) else BOT_DISABLED_IDLE_PUMP_MS
-                root.after(idle_delay, pump_bot_send_results)
+                ) else BACKGROUND_DISABLED_PUMP_MS
+                schedule_bot_send_pump(idle_delay)
             return
 
         remaining = bot_next_allowed_at - time.time()
@@ -14581,7 +14610,7 @@ def run_gui(config_path: Path) -> int:
             bot_status_var.set(f"Delay seguro {int(remaining) + 1}s")
             update_bot_queue_count()
             if not app_closing:
-                root.after(500, pump_bot_send_results)
+                schedule_bot_send_pump(500)
             return
 
         payload = bot_reply_queue.get_nowait()
@@ -14594,7 +14623,7 @@ def run_gui(config_path: Path) -> int:
         except Exception as exc:
             enqueue_bot_send_result(False, str(exc), payload)
             if not app_closing:
-                root.after(250, pump_bot_send_results)
+                schedule_bot_send_pump(250)
             return
 
         def send() -> None:
@@ -14606,7 +14635,7 @@ def run_gui(config_path: Path) -> int:
 
         threading.Thread(target=send, name="AizenBotReplySend", daemon=True).start()
         if not app_closing:
-            root.after(250, pump_bot_send_results)
+            schedule_bot_send_pump(250)
 
     def livepix_webhook_port() -> int:
         try:
@@ -15829,8 +15858,21 @@ def run_gui(config_path: Path) -> int:
         livepix_overlay_window = None
         livepix_overlay_frame = None
 
+    def schedule_livepix_queue_pump(delay_ms: int = 0) -> None:
+        nonlocal livepix_pump_after_id
+        if app_closing:
+            return
+        if livepix_pump_after_id is not None:
+            try:
+                root.after_cancel(livepix_pump_after_id)
+            except tk.TclError:
+                pass
+        livepix_pump_after_id = root.after(max(0, delay_ms), pump_livepix_queue)
+
     def pump_livepix_queue() -> None:
         nonlocal livepix_dashboard_state, livepix_sync_running, livepix_events_loaded, livepix_events_loading
+        nonlocal livepix_pump_after_id
+        livepix_pump_after_id = None
         if app_closing:
             return
         processed = False
@@ -16008,8 +16050,8 @@ def run_gui(config_path: Path) -> int:
             elif livepix_sync_running or livepix_webhook_server is not None or livepix_overlay_frame is not None or is_livepix_tab_active():
                 delay_ms = 800
             else:
-                delay_ms = BACKGROUND_IDLE_PUMP_MS
-            root.after(delay_ms, pump_livepix_queue)
+                delay_ms = BACKGROUND_IDLE_PUMP_MS if livepix_enabled_var.get() else BACKGROUND_DISABLED_PUMP_MS
+            schedule_livepix_queue_pump(delay_ms)
 
     def appearance_config_from_vars() -> dict[str, str]:
         preset = appearance_preset_var.get().strip() or DEFAULT_THEME_NAME
@@ -17685,6 +17727,7 @@ def run_gui(config_path: Path) -> int:
         nonlocal ff_queue_sync_after_id, ff_queue_poll_after_id
         nonlocal ff_overlay_sync_after_id, ff_overlay_poll_after_id
         nonlocal config_auto_save_after_id
+        nonlocal bot_pump_after_id, chat_timer_after_id, livepix_pump_after_id
         if app_closing:
             return
         save_current_config_silent(compact=True)
@@ -17700,6 +17743,9 @@ def run_gui(config_path: Path) -> int:
             ff_overlay_sync_after_id,
             ff_overlay_poll_after_id,
             config_auto_save_after_id,
+            bot_pump_after_id,
+            chat_timer_after_id,
+            livepix_pump_after_id,
         ):
             if after_id is not None:
                 try:
@@ -17716,6 +17762,9 @@ def run_gui(config_path: Path) -> int:
         ff_overlay_sync_after_id = None
         ff_overlay_poll_after_id = None
         config_auto_save_after_id = None
+        bot_pump_after_id = None
+        chat_timer_after_id = None
+        livepix_pump_after_id = None
         try:
             if raffle_worker is not None:
                 raffle_worker.stop()
@@ -18464,6 +18513,10 @@ def run_gui(config_path: Path) -> int:
     def ensure_bot_runtime(*_args: Any) -> None:
         ensure_chat_listener_for_bot()
         refresh_tikfinity_direct_bridge()
+        if chat_commands_enabled_var.get() or chat_timers_enabled_var.get() or not bot_reply_queue.empty():
+            schedule_bot_send_pump(0)
+        if chat_timers_enabled_var.get():
+            schedule_chat_timer_pump(0)
 
     def pump_deferred_kills_render() -> None:
         if app_closing:
@@ -18540,12 +18593,12 @@ def run_gui(config_path: Path) -> int:
     if not chat_listener_hidden:
         pump_chat_event_queue()
     pump_deferred_kills_render()
-    pump_livepix_queue()
+    schedule_livepix_queue_pump(0)
     root.after(900, start_livepix_history_load)
     root.after(650, lambda: schedule_livepix_dashboard_refresh(0))
     root.after(LIVEPIX_STARTUP_SYNC_DELAY_MS, auto_sync_livepix_on_start)
-    pump_bot_send_results()
-    pump_chat_timers()
+    schedule_bot_send_pump(0)
+    schedule_chat_timer_pump(0)
     pump_avatar_results()
     if not ff_queue_site_sync_hidden:
         root.after(1400, lambda: fetch_ff_queue(force=False))
