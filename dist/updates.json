@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.127",
-    "notes":  "Otimizacao de logs: mensagens continuam guardadas, mas a tela de Logs so renderiza quando a aba esta aberta, reduzindo trabalho da interface durante lives movimentadas.",
+    "version":  "2.6.128",
+    "notes":  "Otimizacao em repouso: a fila de eventos do chat reduz a frequencia quando nao ha comandos, timers, sorteio ou chat visivel usando o chat, mantendo resposta rapida quando algum recurso depende dele.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.127/AizenStreamControl.exe",
-                    "sha256":  "b825c29b8ef4677c22e99390017ee6f61d23cb37909e87e8fbc5146651397c1a"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.128/AizenStreamControl.exe",
+                    "sha256":  "a990adffeaa4031aa21b699e51c58924bbdc7343d419326b44093f89b740a4fd"
                 }
 }

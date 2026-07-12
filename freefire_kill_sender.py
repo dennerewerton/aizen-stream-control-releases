@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.127"
+APP_VERSION = "2.6.128"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -13641,6 +13641,16 @@ def run_gui(config_path: Path) -> int:
             except tk.TclError:
                 pass
 
+    def chat_event_runtime_active() -> bool:
+        if chat_commands_enabled_var.get() or chat_timers_enabled_var.get() or bot_pending_confirmations:
+            return True
+        if not chat_tab_hidden or chat_monitor_messages_frame is not None or chat_overlay_messages_frame is not None:
+            return True
+        try:
+            return bool(raffle_worker and raffle_worker.is_running())
+        except Exception:
+            return False
+
     def pump_chat_event_queue() -> None:
         if app_closing:
             return
@@ -13678,8 +13688,9 @@ def run_gui(config_path: Path) -> int:
         if updated:
             refresh_chat_messages()
         if not app_closing:
+            idle_delay_ms = CHAT_EVENT_IDLE_PUMP_MS if chat_event_runtime_active() else BACKGROUND_IDLE_PUMP_MS
             root.after(
-                CHAT_EVENT_BUSY_PUMP_MS if not chat_event_queue.empty() else CHAT_EVENT_IDLE_PUMP_MS,
+                CHAT_EVENT_BUSY_PUMP_MS if not chat_event_queue.empty() else idle_delay_ms,
                 pump_chat_event_queue,
             )
 
