@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.119"
+APP_VERSION = "2.6.120"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6325,7 +6325,10 @@ def run_gui(config_path: Path) -> int:
     ff_overlay_site_sync_hidden = "Overlay FF" in hidden_main_tabs or (kills_ff_site_sync_hidden and ff_queue_site_sync_hidden)
     config_auto_save_after_id: str | None = None
     config_auto_save_running = False
-    livepix_events = load_livepix_events(livepix_events_path(config_path))
+    livepix_events: list[LivepixEvent] = []
+    livepix_events_loaded = False
+    livepix_events_loading = False
+    livepix_history_load_generation = 0
     livepix_dashboard_state: dict[str, Any] = {}
     livepix_sync_running = False
     livepix_overlay_window: Any | None = None
@@ -6397,6 +6400,24 @@ def run_gui(config_path: Path) -> int:
             "avatar_result",
             "Fila de avatares cheia",
         )
+
+    def start_livepix_history_load() -> None:
+        nonlocal livepix_events_loading, livepix_history_load_generation
+        if app_closing or livepix_events_loaded or livepix_events_loading:
+            return
+        livepix_events_loading = True
+        livepix_history_load_generation += 1
+        generation = livepix_history_load_generation
+        history_path = livepix_events_path(config_path)
+
+        def run() -> None:
+            try:
+                events = load_livepix_events(history_path)
+                enqueue_livepix_event("history_loaded", {"generation": generation, "events": events})
+            except Exception as exc:
+                enqueue_livepix_event("history_load_error", str(exc))
+
+        threading.Thread(target=run, name="AizenLivepixHistoryLoad", daemon=True).start()
 
     def set_text_var(var: tk.StringVar, value: Any) -> None:
         text = str(value)
@@ -14328,7 +14349,7 @@ def run_gui(config_path: Path) -> int:
     def livepix_event_identity(event: LivepixEvent) -> tuple[str, str]:
         return (event.kind, event.event_id or event.reference)
 
-    def merge_livepix_events(new_events: list[LivepixEvent], refresh: bool = True) -> int:
+    def merge_livepix_events(new_events: list[LivepixEvent], refresh: bool = True, persist: bool = True) -> int:
         existing = {livepix_event_identity(event): event for event in livepix_events}
         added = 0
         updated = False
@@ -14357,7 +14378,7 @@ def run_gui(config_path: Path) -> int:
             added += 1
         livepix_events.sort(key=lambda item: item.created_at or "", reverse=True)
         del livepix_events[LIVEPIX_EVENT_STORAGE_LIMIT:]
-        if added or updated:
+        if (added or updated) and persist:
             save_livepix_events(livepix_events_path(config_path), livepix_events)
         if refresh:
             schedule_livepix_dashboard_refresh()
@@ -15350,6 +15371,10 @@ def run_gui(config_path: Path) -> int:
         threading.Thread(target=run, daemon=True).start()
 
     def clear_livepix_events() -> None:
+        nonlocal livepix_events_loaded, livepix_events_loading, livepix_history_load_generation
+        livepix_events_loaded = True
+        livepix_events_loading = False
+        livepix_history_load_generation += 1
         livepix_events.clear()
         save_livepix_events(livepix_events_path(config_path), livepix_events)
         refresh_livepix_dashboard()
@@ -15445,7 +15470,7 @@ def run_gui(config_path: Path) -> int:
         livepix_overlay_frame = None
 
     def pump_livepix_queue() -> None:
-        nonlocal livepix_dashboard_state, livepix_sync_running
+        nonlocal livepix_dashboard_state, livepix_sync_running, livepix_events_loaded, livepix_events_loading
         if app_closing:
             return
         processed = False
@@ -15458,7 +15483,22 @@ def run_gui(config_path: Path) -> int:
                 break
             processed_count += 1
             processed = True
-            if kind == "webhook":
+            if kind == "history_loaded":
+                livepix_events_loading = False
+                if not isinstance(payload, dict) or int(payload.get("generation") or 0) != livepix_history_load_generation:
+                    continue
+                livepix_events_loaded = True
+                loaded_events = payload.get("events")
+                if isinstance(loaded_events, list):
+                    added = merge_livepix_events(loaded_events, refresh=False, persist=False)
+                    if loaded_events or added:
+                        log(f"Historico Livepix carregado em segundo plano ({len(loaded_events)} evento(s)).")
+                schedule_livepix_dashboard_refresh()
+            elif kind == "history_load_error":
+                livepix_events_loading = False
+                livepix_events_loaded = True
+                log(f"Nao consegui carregar historico Livepix em segundo plano: {payload}")
+            elif kind == "webhook":
                 event = parse_livepix_event(payload, source="webhook")
                 if event is not None:
                     livepix_status_var.set("Webhook recebido")
@@ -18079,6 +18119,7 @@ def run_gui(config_path: Path) -> int:
         pump_chat_event_queue()
     pump_deferred_kills_render()
     pump_livepix_queue()
+    root.after(900, start_livepix_history_load)
     root.after(650, lambda: schedule_livepix_dashboard_refresh(0))
     root.after(LIVEPIX_STARTUP_SYNC_DELAY_MS, auto_sync_livepix_on_start)
     pump_bot_send_results()
