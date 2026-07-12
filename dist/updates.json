@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.134",
-    "notes":  "Abertura mais leve: cache/rank do Kills FF, chat/sorteio e runtime do bot agora carregam em idle logo apos a janela abrir, reduzindo travas no inicio.",
+    "version":  "2.6.135",
+    "notes":  "Kills FF mais rapido ao salvar: o app lembra o endpoint de snapshot do Jarvis que funcionou e pula tentativas repetidas nas proximas partidas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.134/AizenStreamControl.exe",
-                    "sha256":  "3c2b07a9f338a18cd6dd16e21f0820234a7e24056ca6ff441dd22817b155a49f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.135/AizenStreamControl.exe",
+                    "sha256":  "d6180b17e1d392f28c91c4917969a75e358cb7b22ba46a12ee88f703b71a3156"
                 }
 }

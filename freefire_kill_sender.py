@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.134"
+APP_VERSION = "2.6.135"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -113,6 +113,8 @@ SYNC_QUEUE_PROCESSED_PUMP_MS = 140
 BOT_DISABLED_IDLE_PUMP_MS = 3000
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
 WRITE_TEXT_CACHE_LOCK = threading.Lock()
+KILLS_SNAPSHOT_ENDPOINT_CACHE: dict[str, str] = {}
+KILLS_SNAPSHOT_ENDPOINT_CACHE_LOCK = threading.Lock()
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
@@ -4644,6 +4646,33 @@ def kills_delta_actions(
     return actions
 
 
+def kills_snapshot_url_candidates(endpoint_url: str) -> tuple[str, list[str]]:
+    cache_key = normalize_endpoint_url(endpoint_url)
+    action_url = derive_kills_action_endpoint(cache_key)
+    snapshot_urls: list[str] = []
+    with KILLS_SNAPSHOT_ENDPOINT_CACHE_LOCK:
+        preferred_url = KILLS_SNAPSHOT_ENDPOINT_CACHE.get(cache_key, "")
+    for candidate_url in (preferred_url, action_url, cache_key):
+        if candidate_url and candidate_url not in snapshot_urls:
+            snapshot_urls.append(candidate_url)
+    return cache_key, snapshot_urls
+
+
+def remember_kills_snapshot_endpoint(cache_key: str, snapshot_url: str) -> None:
+    if not cache_key or not snapshot_url:
+        return
+    with KILLS_SNAPSHOT_ENDPOINT_CACHE_LOCK:
+        KILLS_SNAPSHOT_ENDPOINT_CACHE[cache_key] = snapshot_url
+
+
+def forget_kills_snapshot_endpoint(cache_key: str, snapshot_url: str) -> None:
+    if not cache_key or not snapshot_url:
+        return
+    with KILLS_SNAPSHOT_ENDPOINT_CACHE_LOCK:
+        if KILLS_SNAPSHOT_ENDPOINT_CACHE.get(cache_key) == snapshot_url:
+            KILLS_SNAPSHOT_ENDPOINT_CACHE.pop(cache_key, None)
+
+
 def send_kills_snapshot_update(
     endpoint_url: str,
     daily_players: list[PlayerKill],
@@ -4691,10 +4720,7 @@ def send_kills_snapshot_update(
     if token:
         headers["X-Aizen-Token"] = token
 
-    snapshot_urls: list[str] = []
-    for candidate_url in (derive_kills_action_endpoint(endpoint_url), normalize_endpoint_url(endpoint_url)):
-        if candidate_url not in snapshot_urls:
-            snapshot_urls.append(candidate_url)
+    snapshot_cache_key, snapshot_urls = kills_snapshot_url_candidates(endpoint_url)
     with requests.Session() as session:
         final_state: RealtimeState | None = None
         for snapshot_url in snapshot_urls:
@@ -4712,8 +4738,10 @@ def send_kills_snapshot_update(
                 response.raise_for_status()
                 state = parse_realtime_state(response.text)
                 if kills_snapshot_matches_state(state, daily_players, general_players):
+                    remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
                     return state
                 if response_acknowledges_kills_snapshot(response.text):
+                    remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
                     return local_kills_snapshot_state(daily_players, general_players, updated_by=device_name)
                 try:
                     refreshed_state = fetch_kills_realtime(
@@ -4724,12 +4752,15 @@ def send_kills_snapshot_update(
                         token=token,
                     )
                     if kills_snapshot_matches_state(refreshed_state, daily_players, general_players):
+                        remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
                         return refreshed_state
                 except Exception:
                     pass
             except requests.HTTPError as exc:
                 status_code = exc.response.status_code if exc.response is not None else 0
-                if status_code not in {400, 404, 405, 409, 422}:
+                if status_code in {400, 404, 405, 409, 422}:
+                    forget_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
+                else:
                     raise
             except requests.RequestException:
                 raise
