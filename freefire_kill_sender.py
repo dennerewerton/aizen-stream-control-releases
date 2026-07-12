@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.123"
+APP_VERSION = "2.6.124"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6395,6 +6395,9 @@ def run_gui(config_path: Path) -> int:
     ff_overlay_poll_after_id: str | None = None
     ff_overlay_applying_remote = False
     custom_command_rows: list[dict[str, Any]] = []
+    custom_command_cache: list[ChatCommand] = []
+    custom_command_lookup_cache: dict[str, ChatCommand] = {}
+    custom_command_cache_dirty = True
     chat_timer_rows: list[dict[str, Any]] = []
     custom_command_bulk_loading = False
     chat_timer_bulk_loading = False
@@ -13744,9 +13747,14 @@ def run_gui(config_path: Path) -> int:
             except tk.TclError:
                 pass
 
+    def mark_custom_command_cache_dirty(*_args: Any) -> None:
+        nonlocal custom_command_cache_dirty
+        custom_command_cache_dirty = True
+
     def remove_custom_command_row(row: dict[str, Any]) -> None:
         if row in custom_command_rows:
             custom_command_rows.remove(row)
+            mark_custom_command_cache_dirty()
         try:
             row["frame"].destroy()
         except tk.TclError:
@@ -13801,11 +13809,13 @@ def run_gui(config_path: Path) -> int:
         )
         custom_command_rows.append(row)
         for variable in (enabled_var, command_var, response_var, cooldown_var):
-            variable.trace_add("write", lambda *_args: schedule_config_autosave())
+            variable.trace_add("write", lambda *_args: (mark_custom_command_cache_dirty(), schedule_config_autosave()))
+        mark_custom_command_cache_dirty()
         if not custom_command_bulk_loading:
             reindex_custom_command_rows()
 
-    def collect_custom_commands() -> list[ChatCommand]:
+    def collect_custom_commands(normalize_inputs: bool = True) -> list[ChatCommand]:
+        nonlocal custom_command_cache, custom_command_lookup_cache, custom_command_cache_dirty
         commands: list[ChatCommand] = []
         seen: set[str] = set()
         for row in custom_command_rows:
@@ -13818,8 +13828,11 @@ def run_gui(config_path: Path) -> int:
             except ValueError:
                 cooldown = bot_default_cooldown_seconds()
             cooldown = max(0, cooldown)
-            row["command"].set(command)
-            row["cooldown"].set(str(cooldown))
+            if normalize_inputs:
+                if row["command"].get() != command:
+                    row["command"].set(command)
+                if row["cooldown"].get() != str(cooldown):
+                    row["cooldown"].set(str(cooldown))
             commands.append(
                 ChatCommand(
                     command=command,
@@ -13829,7 +13842,15 @@ def run_gui(config_path: Path) -> int:
                 )
             )
             seen.add(command)
+        custom_command_cache = commands
+        custom_command_lookup_cache = {command.command: command for command in commands}
+        custom_command_cache_dirty = False
         return commands
+
+    def runtime_custom_command(token: str) -> ChatCommand | None:
+        if custom_command_cache_dirty:
+            collect_custom_commands(normalize_inputs=False)
+        return custom_command_lookup_cache.get(token)
 
     def set_custom_commands(commands: list[ChatCommand]) -> None:
         nonlocal custom_command_bulk_loading
@@ -13846,6 +13867,7 @@ def run_gui(config_path: Path) -> int:
                     add_custom_command_row(command.command, command.response, command.cooldown_seconds, command.enabled)
         finally:
             custom_command_bulk_loading = previous_bulk_loading
+        mark_custom_command_cache_dirty()
         reindex_custom_command_rows()
 
     def reindex_chat_timer_rows() -> None:
@@ -14185,37 +14207,33 @@ def run_gui(config_path: Path) -> int:
         if not token:
             return
         now = time.time()
-        matched_command = False
-        for command in collect_custom_commands():
-            if command.command != token:
-                continue
-            matched_command = True
-            if not command.enabled:
-                bot_status_var.set(f"{token} desativado")
-                if now - bot_command_last_missed.get(f"disabled:{token}", 0.0) >= 10:
-                    bot_command_last_missed[f"disabled:{token}"] = now
-                    log(f"Comando do chat recebido, mas esta desativado: {token}")
-                return
-            cooldown = max(0, command.cooldown_seconds)
-            last_sent = bot_command_last_sent.get(command.command, 0.0)
-            if cooldown and now - last_sent < cooldown:
-                remaining = int(cooldown - (now - last_sent))
-                bot_status_var.set(f"Cooldown {remaining}s")
-                if now - bot_command_last_missed.get(f"cooldown:{token}", 0.0) >= 10:
-                    bot_command_last_missed[f"cooldown:{token}"] = now
-                    log(f"Comando {token} recebido, aguardando cooldown ({remaining}s).")
-                return
-            response = render_chat_command_response(command.response, message, command.command, args)
-            bot_command_last_sent[command.command] = now
-            bot_status_var.set(f"Comando {token}")
-            log(f"Comando do chat reconhecido: {message.username}: {token}")
-            queue_bot_reply(response, message, command.command, args)
-            return
-        if not matched_command:
+        command = runtime_custom_command(token)
+        if command is None:
             bot_status_var.set(f"{token} sem cadastro")
             if now - bot_command_last_missed.get(f"missing:{token}", 0.0) >= 10:
                 bot_command_last_missed[f"missing:{token}"] = now
                 log(f"Comando do chat recebido, mas nao existe comando ativo para: {token}")
+            return
+        if not command.enabled:
+            bot_status_var.set(f"{token} desativado")
+            if now - bot_command_last_missed.get(f"disabled:{token}", 0.0) >= 10:
+                bot_command_last_missed[f"disabled:{token}"] = now
+                log(f"Comando do chat recebido, mas esta desativado: {token}")
+            return
+        cooldown = max(0, command.cooldown_seconds)
+        last_sent = bot_command_last_sent.get(command.command, 0.0)
+        if cooldown and now - last_sent < cooldown:
+            remaining = int(cooldown - (now - last_sent))
+            bot_status_var.set(f"Cooldown {remaining}s")
+            if now - bot_command_last_missed.get(f"cooldown:{token}", 0.0) >= 10:
+                bot_command_last_missed[f"cooldown:{token}"] = now
+                log(f"Comando {token} recebido, aguardando cooldown ({remaining}s).")
+            return
+        response = render_chat_command_response(command.response, message, command.command, args)
+        bot_command_last_sent[command.command] = now
+        bot_status_var.set(f"Comando {token}")
+        log(f"Comando do chat reconhecido: {message.username}: {token}")
+        queue_bot_reply(response, message, command.command, args)
 
     def test_custom_command_row(row: dict[str, Any]) -> None:
         command = normalize_chat_command(row["command"].get()) or "!teste"

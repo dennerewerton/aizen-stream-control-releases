@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.123",
-    "notes":  "Kills FF: recupera nicks quando a tabela geral/diaria fica com kills mas sem nome, usando o rank do Jarvis/cache antes de renderizar e salvar. Tambem mantem o carregamento inicial mais leve na aba Aparencia.",
+    "version":  "2.6.124",
+    "notes":  "Otimizacao do bot de comandos: comandos personalizados agora ficam em cache e cada mensagem do chat faz busca direta, reduzindo trabalho na UI durante live movimentada.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.123/AizenStreamControl.exe",
-                    "sha256":  "9adf1401470e11c0caf6b800ccab3f4340fc600d5a26c868426243f2ff3d44eb"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.124/AizenStreamControl.exe",
+                    "sha256":  "38a2da977e8077d103d512f217121eb7904eba80ed75f95ddc7712abae18d2b4"
                 }
 }
