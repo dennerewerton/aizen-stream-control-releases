@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.131"
+APP_VERSION = "2.6.132"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -110,6 +110,8 @@ BACKGROUND_IDLE_PUMP_MS = 2000
 SYNC_QUEUE_IDLE_PUMP_MS = 1200
 SYNC_QUEUE_PROCESSED_PUMP_MS = 140
 BOT_DISABLED_IDLE_PUMP_MS = 3000
+WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
+WRITE_TEXT_CACHE_LOCK = threading.Lock()
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
@@ -624,16 +626,47 @@ def merge_defaults(data: dict[str, Any], defaults: dict[str, Any]) -> dict[str, 
     return merged
 
 
+def file_signature(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
 def write_text_if_changed(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        if path.exists() and path.read_text(encoding="utf-8") == content:
+        cache_key = path.resolve()
+    except OSError:
+        cache_key = path
+
+    signature = file_signature(path)
+    if signature is not None:
+        with WRITE_TEXT_CACHE_LOCK:
+            cached = WRITE_TEXT_CACHE.get(cache_key)
+        if cached == (signature, content):
             return
+
+    try:
+        if path.exists():
+            existing = path.read_text(encoding="utf-8")
+            if existing == content:
+                current_signature = file_signature(path) or signature
+                if current_signature is not None:
+                    with WRITE_TEXT_CACHE_LOCK:
+                        WRITE_TEXT_CACHE[cache_key] = (current_signature, content)
+                return
     except Exception:
         pass
+
     tmp_path = path.with_name(f"{path.name}.tmp")
     tmp_path.write_text(content, encoding="utf-8")
     tmp_path.replace(path)
+    current_signature = file_signature(path)
+    if current_signature is not None:
+        with WRITE_TEXT_CACHE_LOCK:
+            WRITE_TEXT_CACHE[cache_key] = (current_signature, content)
 
 
 def save_config(path: Path, config: dict[str, Any]) -> None:

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.131",
-    "notes":  "Autosave mais leve: salvamentos automaticos e ao fechar agora usam JSON compacto, reduzindo CPU e I/O em segundo plano sem mudar o botao Salvar manual.",
+    "version":  "2.6.132",
+    "notes":  "Autosave/I/O mais leve: gravacoes repetidas agora usam cache seguro por assinatura do arquivo para evitar reler config quando nada mudou.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.131/AizenStreamControl.exe",
-                    "sha256":  "e3bc2e83b25e4d322c56cc3d9dcbeadbbdc8a5cb0288033214cdc82d40148534"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.132/AizenStreamControl.exe",
+                    "sha256":  "5282b670f9042b33352ce63878e7eb98a201cae7a224a8ade3861c6d11e813ed"
                 }
 }
