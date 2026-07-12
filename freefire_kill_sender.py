@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.105"
+APP_VERSION = "2.6.106"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6240,6 +6240,7 @@ def run_gui(config_path: Path) -> int:
     config_auto_save_running = False
     livepix_events = load_livepix_events(livepix_events_path(config_path))
     livepix_dashboard_state: dict[str, Any] = {}
+    livepix_sync_running = False
     livepix_overlay_window: Any | None = None
     livepix_overlay_frame: Any | None = None
     livepix_widgets: list[Any] = []
@@ -13693,14 +13694,14 @@ def run_gui(config_path: Path) -> int:
             timer_status_var.set("Desligado")
             timer_next_send_var.set("-")
             if not app_closing:
-                root.after(1000, pump_chat_timers)
+                root.after(3000, pump_chat_timers)
             return
 
         if not active_rows:
             timer_status_var.set("Sem timers ativos")
             timer_next_send_var.set("-")
             if not app_closing:
-                root.after(1000, pump_chat_timers)
+                root.after(3000, pump_chat_timers)
             return
 
         nearest_next_at: float | None = None
@@ -14739,6 +14740,12 @@ def run_gui(config_path: Path) -> int:
             log("Webhook Livepix parado.")
 
     def sync_livepix_from_api(show_error_dialog: bool = True) -> None:
+        nonlocal livepix_sync_running
+        if livepix_sync_running:
+            livepix_status_var.set("Sincronizando")
+            if show_error_dialog:
+                log("Livepix sincronizacao ja esta em andamento; aguarde finalizar.")
+            return
         try:
             save_config(config_path, update_config_from_form())
             client = livepix_client()
@@ -14750,6 +14757,7 @@ def run_gui(config_path: Path) -> int:
             if show_error_dialog:
                 messagebox.showerror("Livepix", detail)
             return
+        livepix_sync_running = True
         livepix_status_var.set("Sincronizando")
 
         def run() -> None:
@@ -14918,7 +14926,7 @@ def run_gui(config_path: Path) -> int:
                     )
                 )
             except Exception as exc:
-                livepix_queue.put(("error", livepix_error_detail(exc)))
+                livepix_queue.put(("api_sync_error", livepix_error_detail(exc)))
 
         threading.Thread(target=run, name="AizenLivepixSync", daemon=True).start()
 
@@ -15161,7 +15169,7 @@ def run_gui(config_path: Path) -> int:
         livepix_overlay_frame = None
 
     def pump_livepix_queue() -> None:
-        nonlocal livepix_dashboard_state
+        nonlocal livepix_dashboard_state, livepix_sync_running
         if app_closing:
             return
         processed = False
@@ -15194,6 +15202,7 @@ def run_gui(config_path: Path) -> int:
                     announce_livepix_event(payload)
                     livepix_status_var.set("Webhook detalhado")
             elif kind == "api_synced":
+                livepix_sync_running = False
                 account = payload.get("account", {}) if isinstance(payload, dict) else {}
                 events = payload.get("events", []) if isinstance(payload, dict) else []
                 wallet = payload.get("wallet", []) if isinstance(payload, dict) else []
@@ -15298,6 +15307,15 @@ def run_gui(config_path: Path) -> int:
                     livepix_status_var.set("Plano criado")
             elif kind == "status":
                 livepix_status_var.set(str(payload))
+            elif kind == "api_sync_error":
+                livepix_sync_running = False
+                detail = str(payload)
+                if detail:
+                    livepix_status_var.set(detail[:34])
+                    livepix_extra_var.set(detail)
+                else:
+                    livepix_status_var.set("Erro")
+                log(f"Livepix erro: {payload}")
             elif kind == "error":
                 detail = str(payload)
                 if detail:
@@ -16662,7 +16680,7 @@ def run_gui(config_path: Path) -> int:
             except Exception:
                 pass
         if not app_closing:
-            root.after(40 if not avatar_result_queue.empty() else 300, pump_avatar_results)
+            root.after(40 if not avatar_result_queue.empty() else 300 if avatar_pending else 1500, pump_avatar_results)
 
     def refresh_winner_messages(items: list[dict[str, str]]) -> None:
         rendered = "\n".join(
