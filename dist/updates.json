@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.107",
-    "notes":  "Reduz trabalho em segundo plano: pumps de bot, Livepix e renders pendentes dormem mais quando estão ociosos, mantendo resposta rápida quando há fila, aba aberta ou sincronização ativa.",
+    "version":  "2.6.108",
+    "notes":  "Acelera Salvar/Atualizar Kills FF: usa snapshot leve de Jarvis em vez de salvar/configurar o app inteiro antes de enviar as kills.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.107/AizenStreamControl.exe",
-                    "sha256":  "7adaf6f502a11ba91dae4681175781fe7e1451193b7420904569e50848a9b280"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.108/AizenStreamControl.exe",
+                    "sha256":  "6bbc20b0cd51a3e93713a4fc0470943cacdc757d696d3ac299e3dde6e354da4e"
                 }
 }

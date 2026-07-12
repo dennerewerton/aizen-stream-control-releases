@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.107"
+APP_VERSION = "2.6.108"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -15593,6 +15593,29 @@ def run_gui(config_path: Path) -> int:
         except NameError:
             pass
 
+    def manual_kills_send_config() -> dict[str, Any]:
+        jarvis_base_url = normalize_endpoint_url(jarvis_base_url_var.get()).rstrip("/")
+        endpoint_url = normalize_endpoint_url(sync_url_var.get())
+        if jarvis_base_url and not endpoint_url:
+            endpoint_url = derive_jarvis_endpoint(jarvis_base_url, "kills")
+            sync_url_var.set(endpoint_url)
+        if jarvis_base_url != str(config.get("jarvis_base_url", "") or ""):
+            jarvis_base_url_var.set(jarvis_base_url)
+        device_id = str(config.get("device_id") or "").strip()
+        if not device_id:
+            device_id = uuid.uuid4().hex
+            config["device_id"] = device_id
+        return {
+            "kills_realtime_url": endpoint_url,
+            "jarvis_endpoint_url": endpoint_url,
+            "jarvis_base_url": jarvis_base_url,
+            "kills_manual_scope": normalize_kills_scope_value(manual_scope_var.get()),
+            "device_id": device_id,
+            "device_name": device_name_var.get().strip() or default_device_name(),
+            "kills_sync_room": sync_room_var.get().strip() or "principal",
+            "jarvis_api_token": jarvis_token_var.get().strip(),
+        }
+
     def send_manual_kills(force: bool = True) -> None:
         nonlocal manual_bulk_updating, manual_sending, manual_sync_after_id, manual_last_signature
         manual_sync_after_id = None
@@ -15604,8 +15627,7 @@ def run_gui(config_path: Path) -> int:
             return
         cancel_manual_visual_refresh()
         try:
-            local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            local_config = manual_kills_send_config()
         except Exception as exc:
             messagebox.showerror("Erro", str(exc))
             return
@@ -15618,10 +15640,7 @@ def run_gui(config_path: Path) -> int:
         if not endpoint_url and str(local_config.get("jarvis_base_url") or "").strip():
             endpoint_url = derive_jarvis_endpoint(str(local_config.get("jarvis_base_url") or ""), "kills")
             local_config["kills_realtime_url"] = endpoint_url
-            try:
-                save_config(config_path, local_config)
-            except Exception:
-                pass
+            sync_url_var.set(endpoint_url)
         active_scope = normalize_kills_scope_value(local_config.get("kills_manual_scope", "daily"))
         if active_scope not in {"daily", "general"}:
             active_scope = "daily"
@@ -15632,6 +15651,18 @@ def run_gui(config_path: Path) -> int:
         general_players = merge_manual_player_kills(manual_scope_buffers.get("general", []))
         manual_scope_buffers["daily"] = clone_player_list(daily_players)
         manual_scope_buffers["general"] = clone_player_list(general_players)
+        config["kills_realtime_url"] = endpoint_url
+        config["jarvis_endpoint_url"] = endpoint_url
+        config["jarvis_base_url"] = str(local_config.get("jarvis_base_url") or "")
+        config["kills_manual_scope"] = active_scope
+        config["manual_kills"] = player_payload(manual_scope_buffers.get(active_scope, []))
+        config["manual_kills_by_scope"] = {
+            "daily": player_payload(daily_players),
+            "general": player_payload(general_players),
+        }
+        config["device_name"] = str(local_config.get("device_name") or default_device_name())
+        config["jarvis_api_token"] = str(local_config.get("jarvis_api_token") or "")
+        config["kills_sync_room"] = str(local_config.get("kills_sync_room") or "principal")
         previous_bulk_updating = manual_bulk_updating
         manual_bulk_updating = True
         try:
@@ -15651,6 +15682,10 @@ def run_gui(config_path: Path) -> int:
             if force:
                 log("Adicione pelo menos um jogador antes de enviar as kills.")
             return
+        try:
+            schedule_config_autosave(700)
+        except NameError:
+            pass
         if not force and signature == manual_last_signature:
             manual_status_var.set("Sincronizado")
             return
@@ -15699,9 +15734,9 @@ def run_gui(config_path: Path) -> int:
         if not force:
             return
         try:
-            local_config = update_config_from_form()
+            local_config = manual_kills_send_config()
             if force:
-                save_config(config_path, local_config)
+                schedule_config_autosave(900)
         except Exception as exc:
             local_config = dict(config)
             endpoint_url = str(local_config.get("kills_realtime_url") or local_config.get("jarvis_endpoint_url") or "").strip()
