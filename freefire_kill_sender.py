@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.132"
+APP_VERSION = "2.6.133"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4603,6 +4603,9 @@ def response_acknowledges_kills_snapshot(response_text: str) -> bool:
     clean_text = str(response_text or "").strip()
     if not clean_text:
         return True
+    clean_status = clean_text.casefold()
+    if clean_status in {"1", "true", "ok", "success", "saved", "updated", "sincronizado"}:
+        return True
     try:
         payload = json.loads(clean_text)
     except json.JSONDecodeError:
@@ -4612,7 +4615,14 @@ def response_acknowledges_kills_snapshot(response_text: str) -> bool:
     if payload.get("ok") is True or payload.get("success") is True or payload.get("saved") is True:
         return True
     status = str(payload.get("status") or payload.get("state") or "").strip().casefold()
-    return status in {"ok", "success", "saved", "updated", "sincronizado"}
+    message = str(payload.get("message") or payload.get("detail") or "").strip().casefold()
+    return status in {"ok", "success", "saved", "updated", "sincronizado"} or message in {
+        "ok",
+        "success",
+        "saved",
+        "updated",
+        "sincronizado",
+    }
 
 
 def kills_delta_actions(
@@ -10071,6 +10081,17 @@ def run_gui(config_path: Path) -> int:
         refresh_kills_rank_table._deferred_signature = ""  # type: ignore[attr-defined]
         kills_rank_render_pending = False
 
+        def rank_render_signature(players: list[PlayerKill], limit: int) -> str:
+            return json.dumps(player_payload(players[:limit]), ensure_ascii=False, sort_keys=True)
+
+        def table_render_unchanged(signature_key: str, row_widgets: list[Any], signature: str) -> bool:
+            if force or not row_widgets:
+                return False
+            if getattr(refresh_kills_rank_table, signature_key, None) == signature:
+                return True
+            setattr(refresh_kills_rank_table, signature_key, signature)
+            return False
+
         def render_rank(
             table_frame: Any,
             row_widgets: list[Any],
@@ -10080,14 +10101,18 @@ def run_gui(config_path: Path) -> int:
             empty_text: str,
             scope_label: str,
         ) -> None:
+            row_signature = rank_render_signature(players, KILLS_RANK_RENDER_LIMIT)
+            set_text_var(count_var, len(players))
+            set_text_var(total_var, sum(player.kills for player in players))
+            if table_render_unchanged(f"_rank_signature_{scope_label}", row_widgets, row_signature):
+                return
+            setattr(refresh_kills_rank_table, f"_rank_signature_{scope_label}", row_signature)
             for widget in row_widgets:
                 try:
                     widget.destroy()
                 except tk.TclError:
                     pass
             row_widgets.clear()
-            set_text_var(count_var, len(players))
-            set_text_var(total_var, sum(player.kills for player in players))
 
             if not players:
                 empty = ctk.CTkLabel(
@@ -10140,7 +10165,17 @@ def run_gui(config_path: Path) -> int:
                 ).grid(row=0, column=3, sticky="e", padx=(4, 10), pady=6)
                 row_widgets.append(row_frame)
 
-        def render_overlay_rank(table_frame: Any, row_widgets: list[Any], players: list[PlayerKill], empty_text: str) -> None:
+        def render_overlay_rank(
+            table_frame: Any,
+            row_widgets: list[Any],
+            players: list[PlayerKill],
+            empty_text: str,
+            signature_key: str,
+        ) -> None:
+            row_signature = rank_render_signature(players, KILLS_OVERLAY_RENDER_LIMIT)
+            if table_render_unchanged(signature_key, row_widgets, row_signature):
+                return
+            setattr(refresh_kills_rank_table, signature_key, row_signature)
             for widget in row_widgets:
                 try:
                     widget.destroy()
@@ -10221,12 +10256,14 @@ def run_gui(config_path: Path) -> int:
             kills_overlay_daily_rows,
             daily_overlay_players,
             "Rank diário ainda não recebido do Jarvis.",
+            "_overlay_signature_daily",
         )
         render_overlay_rank(
             kills_overlay_global_frame,
             kills_overlay_global_rows,
             global_overlay_players,
             "Rank geral ainda não recebido do Jarvis.",
+            "_overlay_signature_global",
         )
 
     def apply_kills_rankings(state: RealtimeState) -> None:
