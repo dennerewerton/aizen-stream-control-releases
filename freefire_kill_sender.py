@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.120"
+APP_VERSION = "2.6.121"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6306,6 +6306,8 @@ def run_gui(config_path: Path) -> int:
     ff_overlay_applying_remote = False
     custom_command_rows: list[dict[str, Any]] = []
     chat_timer_rows: list[dict[str, Any]] = []
+    custom_command_bulk_loading = False
+    chat_timer_bulk_loading = False
     chat_timer_runtime: dict[str, dict[str, Any]] = {}
     bot_reply_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=BOT_REPLY_QUEUE_LIMIT)
     bot_send_result_queue: queue.Queue[tuple[bool, str, dict[str, Any]]] = queue.Queue(maxsize=BOT_RESULT_QUEUE_LIMIT)
@@ -13700,11 +13702,12 @@ def run_gui(config_path: Path) -> int:
             row["frame"].destroy()
         except tk.TclError:
             pass
-        reindex_custom_command_rows()
-        try:
-            schedule_config_autosave()
-        except NameError:
-            pass
+        if not custom_command_bulk_loading:
+            reindex_custom_command_rows()
+            try:
+                schedule_config_autosave()
+            except NameError:
+                pass
 
     def add_custom_command_row(
         command: str = "",
@@ -13750,7 +13753,8 @@ def run_gui(config_path: Path) -> int:
         custom_command_rows.append(row)
         for variable in (enabled_var, command_var, response_var, cooldown_var):
             variable.trace_add("write", lambda *_args: schedule_config_autosave())
-        reindex_custom_command_rows()
+        if not custom_command_bulk_loading:
+            reindex_custom_command_rows()
 
     def collect_custom_commands() -> list[ChatCommand]:
         commands: list[ChatCommand] = []
@@ -13779,14 +13783,21 @@ def run_gui(config_path: Path) -> int:
         return commands
 
     def set_custom_commands(commands: list[ChatCommand]) -> None:
-        for row in list(custom_command_rows):
-            remove_custom_command_row(row)
-        if not commands:
-            add_custom_command_row("!pix", "Pix do Aizen: coloque sua chave aqui, {user}.", 45, False)
-            add_custom_command_row("!dc", "Entre no Discord: coloque seu convite aqui.", 45, False)
-            return
-        for command in commands:
-            add_custom_command_row(command.command, command.response, command.cooldown_seconds, command.enabled)
+        nonlocal custom_command_bulk_loading
+        previous_bulk_loading = custom_command_bulk_loading
+        custom_command_bulk_loading = True
+        try:
+            for row in list(custom_command_rows):
+                remove_custom_command_row(row)
+            if not commands:
+                add_custom_command_row("!pix", "Pix do Aizen: coloque sua chave aqui, {user}.", 45, False)
+                add_custom_command_row("!dc", "Entre no Discord: coloque seu convite aqui.", 45, False)
+            else:
+                for command in commands:
+                    add_custom_command_row(command.command, command.response, command.cooldown_seconds, command.enabled)
+        finally:
+            custom_command_bulk_loading = previous_bulk_loading
+        reindex_custom_command_rows()
 
     def reindex_chat_timer_rows() -> None:
         for index, row in enumerate(chat_timer_rows):
@@ -13804,11 +13815,12 @@ def run_gui(config_path: Path) -> int:
             row["frame"].destroy()
         except tk.TclError:
             pass
-        reindex_chat_timer_rows()
-        try:
-            schedule_config_autosave()
-        except NameError:
-            pass
+        if not chat_timer_bulk_loading:
+            reindex_chat_timer_rows()
+            try:
+                schedule_config_autosave()
+            except NameError:
+                pass
 
     def add_chat_timer_row(
         name: str = "",
@@ -13861,7 +13873,8 @@ def run_gui(config_path: Path) -> int:
         chat_timer_rows.append(row)
         for variable in (enabled_var, name_var, message_var, interval_var, min_messages_var):
             variable.trace_add("write", lambda *_args: schedule_config_autosave())
-        reindex_chat_timer_rows()
+        if not chat_timer_bulk_loading:
+            reindex_chat_timer_rows()
 
     def timer_row_interval_seconds(row: dict[str, Any]) -> int:
         try:
@@ -13905,20 +13918,27 @@ def run_gui(config_path: Path) -> int:
         return timers
 
     def set_chat_timers(timers: list[ChatTimer]) -> None:
-        for row in list(chat_timer_rows):
-            remove_chat_timer_row(row)
-        if not timers:
-            add_chat_timer_row("Discord", "Entre no Discord do Aizen: coloque seu convite aqui.", 600, 6, False)
-            add_chat_timer_row("LivePix", "Apoie a live pelo LivePix: coloque seu link ou chave aqui.", 600, 8, False)
-            return
-        for timer in timers:
-            add_chat_timer_row(
-                timer.name,
-                timer.message,
-                timer.interval_seconds,
-                timer.min_chat_messages,
-                timer.enabled,
-            )
+        nonlocal chat_timer_bulk_loading
+        previous_bulk_loading = chat_timer_bulk_loading
+        chat_timer_bulk_loading = True
+        try:
+            for row in list(chat_timer_rows):
+                remove_chat_timer_row(row)
+            if not timers:
+                add_chat_timer_row("Discord", "Entre no Discord do Aizen: coloque seu convite aqui.", 600, 6, False)
+                add_chat_timer_row("LivePix", "Apoie a live pelo LivePix: coloque seu link ou chave aqui.", 600, 8, False)
+            else:
+                for timer in timers:
+                    add_chat_timer_row(
+                        timer.name,
+                        timer.message,
+                        timer.interval_seconds,
+                        timer.min_chat_messages,
+                        timer.enabled,
+                    )
+        finally:
+            chat_timer_bulk_loading = previous_bulk_loading
+        reindex_chat_timer_rows()
 
     def queue_chat_timer_row(row: dict[str, Any], test: bool = False) -> bool:
         name = re.sub(r"\s+", " ", row["name"].get().strip())[:80] or "Timer"

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.120",
-    "notes":  "Carregamento inicial mais leve: historico local do Livepix agora carrega em segundo plano depois da janela abrir e nao regrava o arquivo durante essa carga.",
+    "version":  "2.6.121",
+    "notes":  "Carregamento mais leve de Comandos e Temporizador: linhas agora sao montadas em lote, evitando reindexacao e autosave repetidos durante a abertura do app.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.120/AizenStreamControl.exe",
-                    "sha256":  "2abafaa923a33a94b77c7250e5b2b099f3962c04292344b2d56710adb9019035"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.121/AizenStreamControl.exe",
+                    "sha256":  "40f63e1cf699d74c379244949b2674305948c1badbf592b6e5aaebfd5be22ee2"
                 }
 }
