@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.104"
+APP_VERSION = "2.6.105"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -91,6 +91,8 @@ AVATAR_DOWNLOAD_WORKERS = 3
 RAFFLE_SEEN_MESSAGES_LIMIT = 2500
 LIVEPIX_EVENT_STORAGE_LIMIT = 1000
 LIVEPIX_HISTORY_RENDER_LIMIT = 30
+LIVEPIX_STARTUP_SYNC_DELAY_MS = 3500
+KILLS_VISUAL_REFRESH_DELAY_MS = 220
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
 DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
@@ -6177,6 +6179,7 @@ def run_gui(config_path: Path) -> int:
     manual_sync_after_id: str | None = None
     manual_poll_after_id: str | None = None
     manual_visual_after_id: str | None = None
+    kills_visual_after_id: str | None = None
     manual_fetching = False
     manual_sending = False
     manual_applying_remote = False
@@ -9914,7 +9917,7 @@ def run_gui(config_path: Path) -> int:
         else:
             kills_global_ranking = []
         kills_ignored_players = list(state.ignored_players or [])
-        refresh_kills_rank_table()
+        schedule_kills_visual_refresh(delay_ms=80)
         refresh_kills_ignored_list()
         current_scope = current_manual_scope()
         if current_scope not in manual_scope_dirty:
@@ -9935,10 +9938,7 @@ def run_gui(config_path: Path) -> int:
             if (kills_daily_ranking or kills_global_ranking)
             else "Jarvis respondeu sem ranking",
         )
-        try:
-            refresh_ff_overlay(force=True)
-        except NameError:
-            pass
+        schedule_kills_visual_refresh(delay_ms=80)
 
     def save_kills_rank_cache() -> None:
         if not (kills_daily_ranking or kills_global_ranking):
@@ -10034,10 +10034,6 @@ def run_gui(config_path: Path) -> int:
         total_value = manual_remote_total_override if manual_remote_total_override is not None else sum(player.kills for player in players)
         set_text_var(manual_count_var, count_value)
         set_text_var(manual_total_var, total_value)
-        try:
-            refresh_kills_rank_table()
-        except NameError:
-            pass
         return
 
     def clear_manual_metric_overrides() -> None:
@@ -10077,14 +10073,7 @@ def run_gui(config_path: Path) -> int:
             kills_daily_ranking = clone_player_list(players)
         if manual_bulk_updating:
             return
-        try:
-            refresh_kills_rank_table()
-        except NameError:
-            pass
-        try:
-            refresh_ff_overlay(force=True)
-        except NameError:
-            pass
+        schedule_kills_visual_refresh()
 
     def fill_visible_manual_missing_names_from_rank(scope: str | None = None) -> bool:
         nonlocal manual_applying_remote
@@ -10180,6 +10169,40 @@ def run_gui(config_path: Path) -> int:
             except tk.TclError:
                 pass
             manual_visual_after_id = None
+
+    def run_kills_visual_refresh() -> None:
+        nonlocal kills_visual_after_id
+        kills_visual_after_id = None
+        if app_closing:
+            return
+        try:
+            refresh_kills_rank_table()
+        except NameError:
+            pass
+        try:
+            refresh_ff_overlay()
+        except NameError:
+            pass
+
+    def schedule_kills_visual_refresh(delay_ms: int = KILLS_VISUAL_REFRESH_DELAY_MS) -> None:
+        nonlocal kills_visual_after_id
+        if app_closing:
+            return
+        if kills_visual_after_id is not None:
+            try:
+                root.after_cancel(kills_visual_after_id)
+            except tk.TclError:
+                pass
+        kills_visual_after_id = root.after(max(40, delay_ms), run_kills_visual_refresh)
+
+    def cancel_kills_visual_refresh() -> None:
+        nonlocal kills_visual_after_id
+        if kills_visual_after_id is not None:
+            try:
+                root.after_cancel(kills_visual_after_id)
+            except tk.TclError:
+                pass
+            kills_visual_after_id = None
 
     def on_manual_change(*_args: Any) -> None:
         nonlocal manual_last_local_edit_at
@@ -10457,11 +10480,7 @@ def run_gui(config_path: Path) -> int:
         sync_kills_rank_tab_with_manual_scope(active_scope)
         clear_manual_metric_overrides()
         manual_last_local_edit_at = time.monotonic()
-        refresh_kills_rank_table()
-        try:
-            refresh_ff_overlay(force=True)
-        except NameError:
-            pass
+        schedule_kills_visual_refresh(delay_ms=80)
         update_manual_metrics()
         manual_status_var.set("Adicionado no diario e geral")
         try:
@@ -15587,11 +15606,7 @@ def run_gui(config_path: Path) -> int:
             refresh_local_rank_from_manual_scope("general")
         finally:
             manual_bulk_updating = previous_bulk_updating
-        refresh_kills_rank_table()
-        try:
-            refresh_ff_overlay(force=True)
-        except NameError:
-            pass
+        schedule_kills_visual_refresh(delay_ms=80)
         signature = manual_snapshot_signature(daily_players, general_players)
         if not endpoint_url:
             manual_status_var.set("Sem endpoint")
@@ -16906,7 +16921,7 @@ def run_gui(config_path: Path) -> int:
 
     def close_app() -> None:
         nonlocal app_closing
-        nonlocal manual_sync_after_id, manual_poll_after_id, manual_visual_after_id
+        nonlocal manual_sync_after_id, manual_poll_after_id, manual_visual_after_id, kills_visual_after_id
         nonlocal ff_queue_sync_after_id, ff_queue_poll_after_id
         nonlocal ff_overlay_sync_after_id, ff_overlay_poll_after_id
         nonlocal config_auto_save_after_id
@@ -16918,6 +16933,7 @@ def run_gui(config_path: Path) -> int:
             manual_sync_after_id,
             manual_poll_after_id,
             manual_visual_after_id,
+            kills_visual_after_id,
             ff_queue_sync_after_id,
             ff_queue_poll_after_id,
             ff_overlay_sync_after_id,
@@ -16932,6 +16948,7 @@ def run_gui(config_path: Path) -> int:
         manual_sync_after_id = None
         manual_poll_after_id = None
         manual_visual_after_id = None
+        kills_visual_after_id = None
         ff_queue_sync_after_id = None
         ff_queue_poll_after_id = None
         ff_overlay_sync_after_id = None
@@ -17687,7 +17704,7 @@ def run_gui(config_path: Path) -> int:
     pump_deferred_kills_render()
     pump_livepix_queue()
     root.after(650, refresh_livepix_dashboard)
-    root.after(1200, auto_sync_livepix_on_start)
+    root.after(LIVEPIX_STARTUP_SYNC_DELAY_MS, auto_sync_livepix_on_start)
     pump_bot_send_results()
     pump_chat_timers()
     pump_avatar_results()

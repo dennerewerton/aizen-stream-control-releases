@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.104",
-    "notes":  "Otimiza carregamento do Kills FF: a tabela manual preserva todos os jogadores no buffer e monta os widgets apenas ao abrir a aba.",
+    "version":  "2.6.105",
+    "notes":  "Otimiza estabilidade: agrupa refresh visual do Kills FF, evita redesenho imediato ao salvar/adicionar kills e adia a sincronização pesada do Livepix na abertura.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.104/AizenStreamControl.exe",
-                    "sha256":  "f599898d37e9c981e2521b31a2d036b8cfe3c6877adb91613a7d22d9033c4e99"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.105/AizenStreamControl.exe",
+                    "sha256":  "5ca32d25b5bf177a15ccbfb4022127ba97e418847fb45399ea67fe6f3f94b17d"
                 }
 }
