@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.98",
-    "notes":  "Melhora Kills FF: evita nick vazio no rank geral apos salvar, aceita nomes alternativos do Jarvis e limita esperas de rede do Livepix.",
+    "version":  "2.6.99",
+    "notes":  "Otimiza o Kills FF: reduz recalculos imediatos ao editar nick/kills, mantendo o rank atualizado por refresh agrupado e mais leve.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.98/AizenStreamControl.exe",
-                    "sha256":  "748b031c6bf4e4af4947b888ae81423b318440df5e982910e22e8fdcf8862066"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.99/AizenStreamControl.exe",
+                    "sha256":  "87e04d75d7088214085275951a122f6059af32af4f65287c2291e538d0897a9d"
                 }
 }

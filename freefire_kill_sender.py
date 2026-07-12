@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.98"
+APP_VERSION = "2.6.99"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -10133,7 +10133,6 @@ def run_gui(config_path: Path) -> int:
         if manual_applying_remote:
             return
         scope = current_manual_scope()
-        manual_scope_buffers[scope] = clone_player_list(collect_manual_players(fill_missing_names=False))
         manual_scope_dirty.add(scope)
         clear_manual_metric_overrides()
         manual_last_local_edit_at = time.monotonic()
