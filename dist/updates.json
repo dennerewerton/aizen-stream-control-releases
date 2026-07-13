@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.167",
-    "notes":  "Otimizacao: o renderizador diferido de abas agora fica cancelavel, dorme mais tempo quando o app esta parado e acorda imediatamente ao trocar de aba, reduzindo trabalho ocioso da UI.",
+    "version":  "2.6.168",
+    "notes":  "Kills FF mais rapido: o Salvar agora faz confirmacao curta no rank publico antes de partir para o fallback, evitando esperar demais quando o endpoint base so responde OK.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.167/AizenStreamControl.exe",
-                    "sha256":  "a01bb7f048731899a9adc26bf24f6f7ec8bf7b9964b01d27a877750b6da16302"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.168/AizenStreamControl.exe",
+                    "sha256":  "cdc6078e91e8ee9898b2a3ecf31178ed9e4a78965d60e4f698d64d927ef4c1a4"
                 }
 }

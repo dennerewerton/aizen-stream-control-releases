@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.167"
+APP_VERSION = "2.6.168"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -119,6 +119,7 @@ MANUAL_TABLE_RENDER_CHUNK_SIZE = 10
 MANUAL_TABLE_RENDER_CHUNK_DELAY_MS = 15
 KILLS_POST_TIMEOUT_SECONDS = 10
 KILLS_GET_TIMEOUT_SECONDS = 8
+KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS = (0.0, 0.2)
 KILLS_RANK_CONFIRM_DELAYS_SECONDS = (0.0, 0.35, 0.85)
 STARTUP_IDLE_TASK_DELAY_MS = 650
 BACKGROUND_IDLE_PUMP_MS = 2000
@@ -4844,9 +4845,10 @@ def fetch_confirmed_kills_rank_state(
     room: str = "principal",
     token: str = "",
     session: requests.Session | None = None,
+    delays: tuple[float, ...] = KILLS_RANK_CONFIRM_DELAYS_SECONDS,
 ) -> RealtimeState | None:
     last_state: RealtimeState | None = None
-    for delay_seconds in KILLS_RANK_CONFIRM_DELAYS_SECONDS:
+    for delay_seconds in delays:
         if delay_seconds > 0:
             time.sleep(delay_seconds)
         try:
@@ -5134,6 +5136,7 @@ def send_kills_snapshot_update(
         headers["X-Aizen-Token"] = token
 
     snapshot_cache_key, snapshot_urls = kills_snapshot_url_candidates(endpoint_url)
+    snapshot_action_url = derive_kills_action_endpoint(endpoint_url)
     with requests.Session() as session:
         final_state: RealtimeState | None = None
         for snapshot_url in snapshot_urls:
@@ -5160,6 +5163,7 @@ def send_kills_snapshot_update(
                         room=room,
                         token=token,
                         session=session,
+                        delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
                     )
                     if confirmed_state is not None:
                         remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
@@ -5175,6 +5179,7 @@ def send_kills_snapshot_update(
                         room=room,
                         token=token,
                         session=session,
+                        delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
                     )
                     if confirmed_state is not None:
                         remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
@@ -5241,6 +5246,7 @@ def send_kills_snapshot_update(
                         session=session,
                     )
                     if fetched_state is not None:
+                        remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_action_url)
                         return fetched_state
                 except Exception:
                     pass
@@ -5304,6 +5310,7 @@ def send_kills_snapshot_update(
             token=token,
         )
         if fetched_state is not None:
+            remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_action_url)
             return fetched_state
     except Exception:
         pass
