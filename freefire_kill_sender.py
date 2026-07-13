@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.152"
+APP_VERSION = "2.6.153"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -8393,6 +8393,7 @@ def run_gui(config_path: Path) -> int:
         corner_radius=14,
         border_width=1,
         border_color=border,
+        command=lambda: schedule_kills_visual_refresh(40),
     )
     kills_overlay_tabview.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 18))
     kills_overlay_tabview.add("Diário")
@@ -10450,7 +10451,7 @@ def run_gui(config_path: Path) -> int:
                 refresh_kills_rank_table._deferred_signature = table_signature  # type: ignore[attr-defined]
                 kills_rank_render_pending = True
             return
-        if getattr(refresh_kills_rank_table, "_signature", None) == table_signature and not kills_rank_render_pending:
+        if not force and getattr(refresh_kills_rank_table, "_signature", None) == table_signature and not kills_rank_render_pending:
             return
         refresh_kills_rank_table._signature = table_signature  # type: ignore[attr-defined]
         refresh_kills_rank_table._deferred_signature = ""  # type: ignore[attr-defined]
@@ -10605,41 +10606,50 @@ def run_gui(config_path: Path) -> int:
                 ).grid(row=0, column=2, sticky="e", padx=(8, 14), pady=10)
                 row_widgets.append(row_frame)
 
-        daily_overlay_players = sorted_rank_players(kills_daily_ranking)
-        global_overlay_players = sorted_rank_players(kills_global_ranking)
+        try:
+            admin_rank_visible = bool(kills_rank_card.winfo_ismapped())
+        except tk.TclError:
+            admin_rank_visible = False
+        if admin_rank_visible:
+            render_rank(
+                kills_daily_rank_table_frame,
+                kills_daily_rank_rows,
+                kills_daily_ranking,
+                kills_daily_rank_count_var,
+                kills_daily_rank_total_var,
+                "Busque o painel Jarvis para carregar as kills diárias.",
+                "Diario",
+            )
+            render_rank(
+                kills_global_rank_table_frame,
+                kills_global_rank_rows,
+                kills_global_ranking,
+                kills_global_rank_count_var,
+                kills_global_rank_total_var,
+                "Busque o painel Jarvis para carregar as kills gerais.",
+                "Geral",
+            )
 
-        render_rank(
-            kills_daily_rank_table_frame,
-            kills_daily_rank_rows,
-            kills_daily_ranking,
-            kills_daily_rank_count_var,
-            kills_daily_rank_total_var,
-            "Busque o painel Jarvis para carregar as kills diárias.",
-            "Diario",
-        )
-        render_rank(
-            kills_global_rank_table_frame,
-            kills_global_rank_rows,
-            kills_global_ranking,
-            kills_global_rank_count_var,
-            kills_global_rank_total_var,
-            "Busque o painel Jarvis para carregar as kills gerais.",
-            "Geral",
-        )
-        render_overlay_rank(
-            kills_overlay_daily_frame,
-            kills_overlay_daily_rows,
-            daily_overlay_players,
-            "Rank diário ainda não recebido do Jarvis.",
-            "_overlay_signature_daily",
-        )
-        render_overlay_rank(
-            kills_overlay_global_frame,
-            kills_overlay_global_rows,
-            global_overlay_players,
-            "Rank geral ainda não recebido do Jarvis.",
-            "_overlay_signature_global",
-        )
+        try:
+            overlay_rank_tab = kills_overlay_tabview.get()
+        except (AttributeError, tk.TclError):
+            overlay_rank_tab = "Diário"
+        if overlay_rank_tab == "Geral":
+            render_overlay_rank(
+                kills_overlay_global_frame,
+                kills_overlay_global_rows,
+                sorted_rank_players(kills_global_ranking),
+                "Rank geral ainda não recebido do Jarvis.",
+                "_overlay_signature_global",
+            )
+        else:
+            render_overlay_rank(
+                kills_overlay_daily_frame,
+                kills_overlay_daily_rows,
+                sorted_rank_players(kills_daily_ranking),
+                "Rank diário ainda não recebido do Jarvis.",
+                "_overlay_signature_daily",
+            )
 
     def apply_kills_rankings(state: RealtimeState) -> None:
         nonlocal kills_daily_ranking, kills_global_ranking, kills_ignored_players
@@ -19034,7 +19044,16 @@ def run_gui(config_path: Path) -> int:
                     scope=render_scope,
                     force_render=True,
                 )
-            if kills_rank_render_pending or not kills_daily_rank_rows or not kills_global_rank_rows:
+            try:
+                active_overlay_rank_tab = kills_overlay_tabview.get()
+            except (AttributeError, tk.TclError):
+                active_overlay_rank_tab = "Diário"
+            active_overlay_missing = (
+                not kills_overlay_global_rows
+                if active_overlay_rank_tab == "Geral"
+                else not kills_overlay_daily_rows
+            )
+            if kills_rank_render_pending or active_overlay_missing:
                 refresh_kills_rank_table(force=True)
             if kills_ignored_render_pending or not kills_ignored_rows:
                 refresh_kills_ignored_list(force=True)
