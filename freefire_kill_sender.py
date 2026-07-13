@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.153"
+APP_VERSION = "2.6.154"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -107,6 +107,9 @@ LIVEPIX_DASHBOARD_REFRESH_DELAY_MS = 180
 KILLS_VISUAL_REFRESH_DELAY_MS = 220
 KILLS_RANK_RENDER_LIMIT = 100
 KILLS_OVERLAY_RENDER_LIMIT = 50
+MANUAL_TABLE_INCREMENTAL_THRESHOLD = 18
+MANUAL_TABLE_RENDER_CHUNK_SIZE = 10
+MANUAL_TABLE_RENDER_CHUNK_DELAY_MS = 15
 KILLS_POST_TIMEOUT_SECONDS = 10
 KILLS_GET_TIMEOUT_SECONDS = 8
 STARTUP_IDLE_TASK_DELAY_MS = 650
@@ -6706,6 +6709,8 @@ def run_gui(config_path: Path) -> int:
     manual_scope_dirty: set[str] = set()
     manual_table_render_pending = False
     manual_table_render_scope = ""
+    manual_table_render_after_id: str | None = None
+    manual_table_render_generation = 0
     manual_active_scope = normalize_kills_scope_value(config.get("kills_manual_scope", "daily"))
     if manual_active_scope not in {"daily", "general"}:
         manual_active_scope = "daily"
@@ -11473,6 +11478,93 @@ def run_gui(config_path: Path) -> int:
         update_manual_metrics()
         on_manual_change()
 
+    def cancel_manual_table_incremental_render() -> None:
+        nonlocal manual_table_render_after_id, manual_table_render_generation
+        manual_table_render_generation += 1
+        if manual_table_render_after_id is None:
+            return
+        try:
+            root.after_cancel(manual_table_render_after_id)
+        except tk.TclError:
+            pass
+        manual_table_render_after_id = None
+
+    def apply_manual_row_player(row: dict[str, Any], index: int, player: PlayerKill) -> None:
+        try:
+            hide_manual_name_suggestions(row)
+            row["name_var"].set(player.name)
+            row["kills_var"].set(str(normalize_kill_value(player.kills)))
+            row["frame"].grid(row=index, column=0, sticky="ew", padx=8, pady=4)
+            row["index_label"].configure(text=f"{index + 1:02d}")
+            row["frame"].configure(fg_color="#171014" if index % 2 == 0 else "#0f0b0e")
+        except tk.TclError:
+            pass
+
+    def start_incremental_manual_table_render(
+        players: list[PlayerKill],
+        minimum_rows: int,
+        total_players: int | None,
+        total_kills: int | None,
+        scope: str,
+    ) -> None:
+        nonlocal manual_applying_remote, manual_bulk_updating, manual_remote_count_override, manual_remote_total_override
+        nonlocal manual_table_render_after_id, manual_table_render_pending, manual_table_render_scope
+        clean_scope = normalize_kills_scope_value(scope)
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        snapshot_players = clone_player_list(players)
+        target_rows = max(len(snapshot_players), minimum_rows)
+        cancel_manual_table_incremental_render()
+        render_generation = manual_table_render_generation
+        manual_table_render_pending = True
+        manual_table_render_scope = clean_scope
+        manual_remote_count_override = total_players
+        manual_remote_total_override = total_kills
+
+        while len(manual_rows) > target_rows:
+            row = manual_rows.pop()
+            try:
+                row["frame"].destroy()
+            except tk.TclError:
+                pass
+
+        def render_chunk(start_index: int = 0) -> None:
+            nonlocal manual_applying_remote, manual_bulk_updating, manual_table_render_after_id
+            nonlocal manual_table_render_pending, manual_table_render_scope
+            manual_table_render_after_id = None
+            if app_closing or render_generation != manual_table_render_generation:
+                return
+            end_index = min(target_rows, start_index + MANUAL_TABLE_RENDER_CHUNK_SIZE)
+            previous_applying_remote = manual_applying_remote
+            previous_bulk_updating = manual_bulk_updating
+            manual_applying_remote = True
+            manual_bulk_updating = True
+            try:
+                while len(manual_rows) < end_index:
+                    add_manual_row(notify=False)
+                for index in range(start_index, end_index):
+                    player = snapshot_players[index] if index < len(snapshot_players) else PlayerKill("", 0)
+                    apply_manual_row_player(manual_rows[index], index, player)
+            finally:
+                manual_bulk_updating = previous_bulk_updating
+                manual_applying_remote = previous_applying_remote
+
+            if end_index < target_rows:
+                manual_table_render_after_id = root.after(
+                    MANUAL_TABLE_RENDER_CHUNK_DELAY_MS,
+                    lambda next_index=end_index: render_chunk(next_index),
+                )
+                return
+
+            update_manual_row_numbers()
+            if manual_table_render_scope == clean_scope:
+                manual_table_render_pending = False
+                manual_table_render_scope = ""
+            if not manual_bulk_updating:
+                update_manual_metrics(snapshot_players)
+
+        manual_table_render_after_id = root.after(0, render_chunk)
+
     def set_manual_players(
         players: list[PlayerKill],
         minimum_rows: int = 8,
@@ -11495,6 +11587,7 @@ def run_gui(config_path: Path) -> int:
             players = merge_manual_player_kills(complete_manual_player_names(players, clean_scope))
             manual_scope_buffers[clean_scope] = clone_player_list(players)
             if not force_render and not is_kills_ff_tab_active():
+                cancel_manual_table_incremental_render()
                 for row in manual_rows:
                     row["frame"].destroy()
                 manual_rows.clear()
@@ -11502,6 +11595,11 @@ def run_gui(config_path: Path) -> int:
                 manual_table_render_scope = clean_scope
                 return
             target_rows = max(len(players), minimum_rows)
+            widget_delta = abs(len(manual_rows) - target_rows)
+            if target_rows >= MANUAL_TABLE_INCREMENTAL_THRESHOLD and widget_delta > MANUAL_TABLE_RENDER_CHUNK_SIZE:
+                start_incremental_manual_table_render(players, minimum_rows, total_players, total_kills, clean_scope)
+                return
+            cancel_manual_table_incremental_render()
             while len(manual_rows) > target_rows:
                 row = manual_rows.pop()
                 try:
@@ -11512,12 +11610,7 @@ def run_gui(config_path: Path) -> int:
                 add_manual_row(notify=False)
             for index, row in enumerate(manual_rows):
                 player = players[index] if index < len(players) else PlayerKill("", 0)
-                try:
-                    hide_manual_name_suggestions(row)
-                    row["name_var"].set(player.name)
-                    row["kills_var"].set(str(normalize_kill_value(player.kills)))
-                except tk.TclError:
-                    pass
+                apply_manual_row_player(row, index, player)
             update_manual_row_numbers()
             if manual_table_render_scope == clean_scope:
                 manual_table_render_pending = False
@@ -19037,7 +19130,7 @@ def run_gui(config_path: Path) -> int:
         if timers_active:
             ensure_chat_timer_rows_rendered()
         if kills_active:
-            if manual_table_render_pending:
+            if manual_table_render_pending and manual_table_render_after_id is None:
                 render_scope = manual_table_render_scope if manual_table_render_scope in {"daily", "general"} else current_manual_scope()
                 set_manual_players(
                     manual_scope_display_players(render_scope, prefer_remote=False),

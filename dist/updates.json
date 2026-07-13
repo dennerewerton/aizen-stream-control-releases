@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.153",
-    "notes":  "Deixa o ranking Kills FF mais leve renderizando apenas a aba visivel e adiando ranks ocultos.",
+    "version":  "2.6.154",
+    "notes":  "Deixa o Kills FF mais leve ao montar tabelas grandes em blocos, mantendo a janela responsiva enquanto carrega os jogadores.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.153/AizenStreamControl.exe",
-                    "sha256":  "18a50f07bd4f300a3ef14c01bd40b2206091055989c0a9d83d3bb1e47702b217"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.154/AizenStreamControl.exe",
+                    "sha256":  "e20cb483c1d03614093b0dad54f8e2e14e77158af3c5dbb672f955723ff48dcd"
                 }
 }
