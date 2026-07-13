@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.157"
+APP_VERSION = "2.6.158"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4961,6 +4961,8 @@ def send_kills_snapshot_update(
 ) -> RealtimeState:
     daily_players = sorted_player_kills(daily_players)
     general_players = sorted_player_kills(general_players)
+    daily_payload = player_wire_payload(daily_players)
+    general_payload = player_wire_payload(general_players)
     now = datetime.now().isoformat(timespec="seconds")
     payload: dict[str, Any] = {
         "source": "aizen-stream-control",
@@ -4976,10 +4978,21 @@ def send_kills_snapshot_update(
         "action": "replace",
         "scope": "both",
         "replace": True,
-        "players": player_wire_payload(general_players),
-        "ranking": player_wire_payload(general_players),
-        "global_ranking": player_wire_payload(general_players),
-        "daily_ranking": player_wire_payload(daily_players),
+        "players": general_payload,
+        "ranking": general_payload,
+        "global_ranking": general_payload,
+        "globalRanking": general_payload,
+        "general_ranking": general_payload,
+        "generalRanking": general_payload,
+        "daily_ranking": daily_payload,
+        "dailyRanking": daily_payload,
+        "daily": daily_payload,
+        "general": general_payload,
+        "rankings": {
+            "daily": daily_payload,
+            "global": general_payload,
+            "general": general_payload,
+        },
         "totals": {
             "total_players": len(general_players),
             "total_kills": sum(player.kills for player in general_players),
@@ -5017,9 +5030,7 @@ def send_kills_snapshot_update(
                 if kills_snapshot_matches_state(state, daily_players, general_players):
                     remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
                     return state
-                if response_acknowledges_kills_snapshot(response.text):
-                    remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
-                    return local_kills_snapshot_state(daily_players, general_players, updated_by=device_name)
+                response_acknowledged = response_acknowledges_kills_snapshot(response.text)
                 try:
                     refreshed_state = fetch_kills_realtime(
                         endpoint_url,
@@ -5033,6 +5044,8 @@ def send_kills_snapshot_update(
                         return refreshed_state
                 except Exception:
                     pass
+                if response_acknowledged:
+                    continue
             except requests.HTTPError as exc:
                 status_code = exc.response.status_code if exc.response is not None else 0
                 if status_code in {400, 404, 405, 409, 422}:

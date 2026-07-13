@@ -509,6 +509,10 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
             if mode == "kills_snapshot" and self.state.get("debug", {}).get("reject_snapshot"):
                 self._send_json({"ok": False, "error": "snapshot unsupported in mock"}, status=422)
                 return
+            if mode == "kills_snapshot" and self.state.get("debug", {}).get("weak_snapshot_ack"):
+                self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
+                self._send_json({"ok": True, "status": "saved"})
+                return
             self.state["kills"] = payload
             self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
         self._send_json({"ok": True})
@@ -1107,6 +1111,11 @@ def verify(
         global_snapshot = {item.name.casefold(): item.kills for item in snapshot_state.global_ranking or []}
         if daily_snapshot != {"pedro": 5, "ana": 1} or global_snapshot != {"pedro": 5}:
             raise RuntimeError(f"Snapshot Kills FF nao substituiu corretamente: {snapshot_state!r}")
+        persisted_snapshot = fetch_kills_realtime(kills_url, device_id=device_id, device_name=device_name, room=room, token=token)
+        persisted_daily = {item.name.casefold(): item.kills for item in persisted_snapshot.daily_ranking or []}
+        persisted_global = {item.name.casefold(): item.kills for item in persisted_snapshot.global_ranking or []}
+        if persisted_daily != {"pedro": 5, "ana": 1} or persisted_global != {"pedro": 5}:
+            raise RuntimeError(f"Snapshot Kills FF retornou sucesso, mas nao persistiu no Jarvis: {persisted_snapshot!r}")
         replaced_snapshot = send_kills_snapshot_update(
             kills_url,
             [PlayerKill("Pedro", 1)],
@@ -1120,6 +1129,30 @@ def verify(
         replaced_global = {item.name.casefold(): item.kills for item in replaced_snapshot.global_ranking or []}
         if replaced_daily != {"pedro": 1} or replaced_global:
             raise RuntimeError(f"Snapshot Kills FF somou ou manteve dados antigos: {replaced_snapshot!r}")
+        persisted_replaced = fetch_kills_realtime(kills_url, device_id=device_id, device_name=device_name, room=room, token=token)
+        persisted_replaced_daily = {item.name.casefold(): item.kills for item in persisted_replaced.daily_ranking or []}
+        persisted_replaced_global = {item.name.casefold(): item.kills for item in persisted_replaced.global_ranking or []}
+        if persisted_replaced_daily != {"pedro": 1} or persisted_replaced_global:
+            raise RuntimeError(f"Snapshot Kills FF nao substituiu o diario persistido: {persisted_replaced!r}")
+        MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {"kills_actions": [], "weak_snapshot_ack": True}
+        weak_ack_snapshot = send_kills_snapshot_update(
+            kills_url,
+            [PlayerKill("DiarioOk", 7)],
+            [PlayerKill("GeralOk", 9)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        weak_ack_daily = {item.name.casefold(): item.kills for item in weak_ack_snapshot.daily_ranking or []}
+        weak_ack_global = {item.name.casefold(): item.kills for item in weak_ack_snapshot.global_ranking or []}
+        weak_ack_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
+        if weak_ack_daily != {"diariook": 7} or weak_ack_global != {"geralok": 9}:
+            raise RuntimeError(f"Snapshot Kills FF com ack fraco nao caiu para fallback: {weak_ack_snapshot!r}")
+        if weak_ack_actions.count("set") < 2:
+            raise RuntimeError(f"Fallback do Snapshot Kills FF nao gravou diario e geral: {weak_ack_actions!r}")
         MockJarvisHandler.state["kills"] = {
             "daily_ranking": [{"name": "AizenDelta", "kills": 10}, {"name": "JarvisDelta", "kills": 2}],
             "ranking": [{"name": "AizenDelta", "kills": 20}, {"name": "JarvisDelta", "kills": 4}],

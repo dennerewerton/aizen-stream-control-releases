@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.157",
-    "notes":  "Corrige erro da ponte TikFinity quando a porta 8080 esta ocupada: tenta portas alternativas e mostra o novo endereco para configurar no TikFinity.",
+    "version":  "2.6.158",
+    "notes":  "Corrige o Salvar do Kills FF para confirmar o rank diario no Jarvis e cair para envio individual quando o snapshot nao persistir.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.157/AizenStreamControl.exe",
-                    "sha256":  "75b1a9a0d2a4b79cc9db045d387496b5fe4628343506ca3a17383a29845d2a6f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.158/AizenStreamControl.exe",
+                    "sha256":  "cce1dae78726362751f024a5955fefd7b1061b5c5404a3dc4f637b3f10201d85"
                 }
 }
