@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.149"
+APP_VERSION = "2.6.150"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4732,8 +4732,81 @@ def response_acknowledges_kills_snapshot(response_text: str) -> bool:
     clean_text = str(response_text or "").strip()
     if not clean_text:
         return True
-    clean_status = clean_text.casefold()
-    if clean_status in {"1", "true", "ok", "success", "saved", "updated", "sincronizado"}:
+
+    def ack_text(value: Any) -> str:
+        normalized = unicodedata.normalize("NFKD", str(value or "").casefold())
+        return "".join(character for character in normalized if not unicodedata.combining(character)).strip()
+
+    positive_values = {
+        "1",
+        "true",
+        "ok",
+        "success",
+        "saved",
+        "updated",
+        "stored",
+        "accepted",
+        "received",
+        "persisted",
+        "synced",
+        "synchronized",
+        "created",
+        "done",
+        "salvo",
+        "salva",
+        "atualizado",
+        "atualizada",
+        "sincronizado",
+        "sincronizada",
+        "recebido",
+        "recebida",
+        "gravado",
+        "gravada",
+        "concluido",
+        "concluida",
+    }
+    positive_fragments = (
+        "salvo",
+        "salva",
+        "sucesso",
+        "atualizado",
+        "atualizada",
+        "sincronizado",
+        "sincronizada",
+        "recebido",
+        "recebida",
+        "gravado",
+        "gravada",
+        "concluido",
+        "concluida",
+        "stored",
+        "accepted",
+        "received",
+        "persisted",
+        "synced",
+        "synchronized",
+        "created",
+        "updated",
+        "saved",
+        "success",
+    )
+    negative_values = {"0", "false", "error", "erro", "failed", "failure", "falha", "invalid", "unsupported", "rejected"}
+    negative_fragments = ("erro", "error", "falh", "failed", "failure", "invalid", "invalido", "unsupported", "nao suport", "rejeitad")
+    bool_keys = {"ok", "success", "saved", "updated", "synced", "accepted", "received", "persisted"}
+    text_keys = {"status", "state", "message", "detail", "result", "resultado", "mensagem"}
+    error_keys = {"error", "errors", "erro", "erros", "failure", "failed", "falha"}
+
+    def text_is_positive(value: Any) -> bool:
+        text = ack_text(value)
+        return text in positive_values or any(fragment in text for fragment in positive_fragments)
+
+    def text_is_negative(value: Any) -> bool:
+        text = ack_text(value)
+        return text in negative_values or any(fragment in text for fragment in negative_fragments)
+
+    clean_status = ack_text(clean_text)
+    looks_like_json = clean_text.startswith("{") or clean_text.startswith("[")
+    if clean_status in positive_values or (not looks_like_json and text_is_positive(clean_status)):
         return True
     try:
         payload = json.loads(clean_text)
@@ -4741,17 +4814,40 @@ def response_acknowledges_kills_snapshot(response_text: str) -> bool:
         return False
     if not isinstance(payload, dict):
         return False
-    if payload.get("ok") is True or payload.get("success") is True or payload.get("saved") is True:
-        return True
-    status = str(payload.get("status") or payload.get("state") or "").strip().casefold()
-    message = str(payload.get("message") or payload.get("detail") or "").strip().casefold()
-    return status in {"ok", "success", "saved", "updated", "sincronizado"} or message in {
-        "ok",
-        "success",
-        "saved",
-        "updated",
-        "sincronizado",
-    }
+
+    def has_negative_ack(value: Any) -> bool:
+        if isinstance(value, dict):
+            for raw_key, raw_value in value.items():
+                key = ack_text(raw_key)
+                if key in bool_keys and raw_value is False:
+                    return True
+                if key in error_keys and raw_value not in (None, "", False, [], {}):
+                    return True
+                if key in text_keys and isinstance(raw_value, str) and text_is_negative(raw_value):
+                    return True
+                if has_negative_ack(raw_value):
+                    return True
+        elif isinstance(value, list):
+            return any(has_negative_ack(item) for item in value)
+        return False
+
+    def has_positive_ack(value: Any) -> bool:
+        if isinstance(value, dict):
+            for raw_key, raw_value in value.items():
+                key = ack_text(raw_key)
+                if key in bool_keys and raw_value is True:
+                    return True
+                if key in text_keys and isinstance(raw_value, str) and text_is_positive(raw_value):
+                    return True
+                if has_positive_ack(raw_value):
+                    return True
+        elif isinstance(value, list):
+            return any(has_positive_ack(item) for item in value)
+        return False
+
+    if has_negative_ack(payload):
+        return False
+    return has_positive_ack(payload)
 
 
 def kills_delta_actions(

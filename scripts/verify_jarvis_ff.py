@@ -43,6 +43,7 @@ from freefire_kill_sender import (  # noqa: E402
     parse_ff_queue_state,
     parse_realtime_state,
     player_wire_payload,
+    response_acknowledges_kills_snapshot,
     send_ff_overlay_realtime_update,
     send_ff_overlay_config_action,
     send_ff_queue_action_update,
@@ -712,6 +713,20 @@ def verify_contracts() -> None:
     for expected_key in ("name", "nick", "nickname", "player_name", "playerName", "display_name", "displayName", "username"):
         if wire_player.get(expected_key) != "Xiom TTK":
             raise RuntimeError(f"Payload Kills FF sem alias de nick {expected_key!r}: {wire_player!r}")
+    ack_samples = (
+        '{"status":"stored","message":"Ranking salvo com sucesso"}',
+        '{"data":{"success":true,"message":"snapshot accepted"}}',
+        "Ranking sincronizado com sucesso",
+    )
+    if not all(response_acknowledges_kills_snapshot(sample) for sample in ack_samples):
+        raise RuntimeError("ACK positivo de snapshot Kills FF nao foi reconhecido.")
+    reject_samples = (
+        '{"ok":false,"error":"snapshot unsupported"}',
+        '{"status":"error","message":"falha ao salvar"}',
+        '{"data":{"success":false,"message":"invalid request"}}',
+    )
+    if any(response_acknowledges_kills_snapshot(sample) for sample in reject_samples):
+        raise RuntimeError("ACK negativo de snapshot Kills FF foi aceito por engano.")
     with tempfile.TemporaryDirectory(prefix="aizen_mei_cleanup_") as tmpdir:
         base = Path(tmpdir)
         old_mei = base / "_MEI100001"
