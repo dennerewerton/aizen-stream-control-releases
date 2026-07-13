@@ -78,13 +78,14 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.161"
+APP_VERSION = "2.6.163"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
 TIKFINITY_DIRECT_FALLBACK_PORTS = (8080, 8081, 8082, 8090, 18080)
 UPDATE_DOWNLOAD_ATTEMPTS = 3
 UPDATE_DOWNLOAD_CHUNK_BYTES = 256 * 1024
+UPDATE_MANIFEST_TIMEOUT_SECONDS = 4
 UPDATE_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 12
 UPDATE_DOWNLOAD_READ_TIMEOUT_SECONDS = 18
 LOG_QUEUE_SOFT_LIMIT = 1500
@@ -3524,6 +3525,8 @@ def player_wire_payload(players: list[PlayerKill]) -> list[dict[str, Any]]:
             "nick": name,
             "nickname": name,
             "username": name,
+            "nome": name,
+            "apelido": name,
             "player_name": name,
             "playerName": name,
             "display_name": name,
@@ -4687,6 +4690,10 @@ def send_kills_action_update(
     token: str = "",
     session: requests.Session | None = None,
 ) -> RealtimeState:
+    clean_scope = normalize_kills_scope_value(scope)
+    scope_payload = clean_scope if clean_scope in {"daily", "general", "both"} else "both"
+    scope_label = kills_scope_label(scope_payload)
+    scope_slug = "diario" if scope_payload == "daily" else "geral" if scope_payload == "general" else "ambos"
     payload: dict[str, Any] = {
         "source": "aizen-stream-control",
         "mode": "manual",
@@ -4696,7 +4703,19 @@ def send_kills_action_update(
         "client_name": device_name,
         "updated_by": device_name,
         "action": action,
-        "scope": scope,
+        "scope": scope_payload,
+        "scope_label": scope_label,
+        "scopeLabel": scope_label,
+        "scope_slug": scope_slug,
+        "scopeSlug": scope_slug,
+        "rank_scope": scope_payload,
+        "rankScope": scope_payload,
+        "ranking_scope": scope_payload,
+        "rankingScope": scope_payload,
+        "target_scope": scope_payload,
+        "targetScope": scope_payload,
+        "rank": scope_payload,
+        "ranking": scope_payload,
     }
     if player is not None:
         payload.update(
@@ -4706,6 +4725,8 @@ def send_kills_action_update(
                 "nick": player.name,
                 "nickname": player.name,
                 "username": player.name,
+                "nome": player.name,
+                "apelido": player.name,
                 "player_name": player.name,
                 "playerName": player.name,
                 "display_name": player.name,
@@ -5004,14 +5025,39 @@ def send_kills_snapshot_update(
         "globalRanking": general_payload,
         "general_ranking": general_payload,
         "generalRanking": general_payload,
+        "general_rank": general_payload,
+        "generalRank": general_payload,
+        "general_players": general_payload,
+        "generalPlayers": general_payload,
+        "geral_ranking": general_payload,
+        "geralRanking": general_payload,
+        "geral": general_payload,
         "daily_ranking": daily_payload,
         "dailyRanking": daily_payload,
+        "daily_rank": daily_payload,
+        "dailyRank": daily_payload,
+        "daily_players": daily_payload,
+        "dailyPlayers": daily_payload,
+        "day_ranking": daily_payload,
+        "dayRanking": daily_payload,
+        "dia_ranking": daily_payload,
+        "diaRanking": daily_payload,
+        "diario": daily_payload,
         "daily": daily_payload,
         "general": general_payload,
+        "scopes": ["daily", "general"],
+        "replace_daily": True,
+        "replaceDaily": True,
+        "replace_general": True,
+        "replaceGeneral": True,
         "rankings": {
             "daily": daily_payload,
+            "day": daily_payload,
+            "dia": daily_payload,
+            "diario": daily_payload,
             "global": general_payload,
             "general": general_payload,
+            "geral": general_payload,
         },
         "totals": {
             "total_players": len(general_players),
@@ -5188,7 +5234,10 @@ def send_kills_snapshot_update(
         pass
     if final_state is not None and kills_snapshot_matches_state(final_state, daily_players, general_players):
         return final_state
-    return local_kills_snapshot_state(daily_players, general_players, updated_by=device_name)
+    raise RuntimeError(
+        "Jarvis respondeu, mas o ranking diario/geral nao confirmou as kills enviadas. "
+        "Clique em Atualizar rank e tente Salvar de novo."
+    )
 
 
 def send_ff_queue_realtime_update(
@@ -5837,7 +5886,7 @@ def cache_busted_url(url: str) -> str:
 def read_update_manifest(manifest_url: str) -> dict[str, Any]:
     response = requests.get(
         cache_busted_url(manifest_url.strip()),
-        timeout=12,
+        timeout=UPDATE_MANIFEST_TIMEOUT_SECONDS,
         headers={
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
@@ -6094,14 +6143,11 @@ def maybe_apply_auto_update(config_path: Path) -> bool:
         manifest_url = str(config.get("updates_manifest_url", "")).strip()
         if not manifest_url:
             return False
-        status_window = UpdateStatusWindow()
-        status_window.set_status("Buscando atualizações...", "Verificando manifesto remoto.")
         asset = update_asset_from_manifest(read_update_manifest(manifest_url))
         if not is_newer_version(asset["version"]):
-            status_window.set_status("Tudo atualizado", f"Versão atual: {APP_VERSION}. Abrindo painel...")
-            time.sleep(0.35)
             return False
         write_update_log(f"Atualizacao encontrada: {APP_VERSION} -> {asset['version']}")
+        status_window = UpdateStatusWindow()
         status_window.set_status(
             "Atualização encontrada",
             f"Baixando versão {asset['version']}...",

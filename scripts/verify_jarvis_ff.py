@@ -177,6 +177,9 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
             if action == "replace" and self.state.get("debug", {}).get("reject_snapshot"):
                 self._send_json({"ok": False, "error": "snapshot unsupported in mock"}, status=422)
                 return
+            if self.state.get("debug", {}).get("ignore_kills_actions"):
+                self._send_json({"ok": True, **self.state.get("kills", {})})
+                return
 
             def clean_key(value: Any) -> str:
                 return " ".join(str(value or "").strip().casefold().split())
@@ -1165,6 +1168,28 @@ def verify(
             raise RuntimeError(f"Snapshot Kills FF com ack fraco nao caiu para fallback: {weak_ack_snapshot!r}")
         if weak_ack_actions.count("set") < 2:
             raise RuntimeError(f"Fallback do Snapshot Kills FF nao gravou diario e geral: {weak_ack_actions!r}")
+        MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {
+            "kills_actions": [],
+            "weak_snapshot_ack": True,
+            "ignore_kills_actions": True,
+        }
+        try:
+            send_kills_snapshot_update(
+                kills_url,
+                [PlayerKill("NaoPersistiuDia", 3)],
+                [PlayerKill("NaoPersistiuGeral", 5)],
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+            )
+        except RuntimeError as exc:
+            if "nao confirmou" not in str(exc).casefold():
+                raise RuntimeError(f"Erro de persistencia Kills FF inesperado: {exc}") from exc
+        else:
+            raise RuntimeError("Snapshot Kills FF retornou sucesso sem persistencia confirmada.")
         MockJarvisHandler.state["kills"] = {
             "daily_ranking": [{"name": "AizenDelta", "kills": 10}, {"name": "JarvisDelta", "kills": 2}],
             "ranking": [{"name": "AizenDelta", "kills": 20}, {"name": "JarvisDelta", "kills": 4}],
