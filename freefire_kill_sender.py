@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.150"
+APP_VERSION = "2.6.151"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -118,6 +118,7 @@ STALE_MEI_MIN_AGE_SECONDS = 24 * 60 * 60
 STALE_MEI_CLEANUP_LIMIT = 8
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
 WRITE_TEXT_CACHE_LOCK = threading.Lock()
+WRITE_TEXT_IO_LOCK = threading.Lock()
 KILLS_SNAPSHOT_ENDPOINT_CACHE: dict[str, str] = {}
 KILLS_SNAPSHOT_ENDPOINT_CACHE_LOCK = threading.Lock()
 DEFAULT_TIKFINITY_WEBSOCKET_URL = "ws://127.0.0.1:21213/"
@@ -644,37 +645,38 @@ def file_signature(path: Path) -> tuple[int, int] | None:
 
 def write_text_if_changed(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        cache_key = path.resolve()
-    except OSError:
-        cache_key = path
+    with WRITE_TEXT_IO_LOCK:
+        try:
+            cache_key = path.resolve()
+        except OSError:
+            cache_key = path
 
-    signature = file_signature(path)
-    if signature is not None:
-        with WRITE_TEXT_CACHE_LOCK:
-            cached = WRITE_TEXT_CACHE.get(cache_key)
-        if cached == (signature, content):
-            return
-
-    try:
-        if path.exists():
-            existing = path.read_text(encoding="utf-8")
-            if existing == content:
-                current_signature = file_signature(path) or signature
-                if current_signature is not None:
-                    with WRITE_TEXT_CACHE_LOCK:
-                        WRITE_TEXT_CACHE[cache_key] = (current_signature, content)
+        signature = file_signature(path)
+        if signature is not None:
+            with WRITE_TEXT_CACHE_LOCK:
+                cached = WRITE_TEXT_CACHE.get(cache_key)
+            if cached == (signature, content):
                 return
-    except Exception:
-        pass
 
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    tmp_path.write_text(content, encoding="utf-8")
-    tmp_path.replace(path)
-    current_signature = file_signature(path)
-    if current_signature is not None:
-        with WRITE_TEXT_CACHE_LOCK:
-            WRITE_TEXT_CACHE[cache_key] = (current_signature, content)
+        try:
+            if path.exists():
+                existing = path.read_text(encoding="utf-8")
+                if existing == content:
+                    current_signature = file_signature(path) or signature
+                    if current_signature is not None:
+                        with WRITE_TEXT_CACHE_LOCK:
+                            WRITE_TEXT_CACHE[cache_key] = (current_signature, content)
+                    return
+        except Exception:
+            pass
+
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_text(content, encoding="utf-8")
+        tmp_path.replace(path)
+        current_signature = file_signature(path)
+        if current_signature is not None:
+            with WRITE_TEXT_CACHE_LOCK:
+                WRITE_TEXT_CACHE[cache_key] = (current_signature, content)
 
 
 def save_config(path: Path, config: dict[str, Any]) -> None:
@@ -6808,6 +6810,7 @@ def run_gui(config_path: Path) -> int:
     ff_overlay_site_sync_hidden = "Overlay FF" in hidden_main_tabs or (kills_ff_site_sync_hidden and ff_queue_site_sync_hidden)
     config_auto_save_after_id: str | None = None
     config_auto_save_running = False
+    config_auto_save_write_generation = 0
     livepix_events: list[LivepixEvent] = []
     livepix_events_loaded = False
     livepix_events_loading = False
@@ -16619,15 +16622,38 @@ def run_gui(config_path: Path) -> int:
         config["ui_theme"] = appearance_config_from_vars()
         return config
 
-    def save_current_config_silent(compact: bool = False) -> bool:
-        nonlocal config_auto_save_running
+    def save_config_text_in_background(path: Path, content: str) -> None:
+        nonlocal config_auto_save_write_generation
+        config_auto_save_write_generation += 1
+        generation = config_auto_save_write_generation
+
+        def run() -> None:
+            if generation != config_auto_save_write_generation:
+                return
+            try:
+                write_text_if_changed(path, content)
+            except Exception as exc:
+                log(f"Auto-save em segundo plano falhou: {exc}")
+
+        threading.Thread(target=run, name="AizenConfigAutosave", daemon=True).start()
+
+    def save_current_config_silent(compact: bool = False, background: bool = False) -> bool:
+        nonlocal config_auto_save_running, config_auto_save_write_generation
         try:
             config_auto_save_running = True
             current_config = update_config_from_form()
-            if compact:
-                save_config_compact(config_path, current_config)
+            if background:
+                if compact:
+                    content = json.dumps(current_config, ensure_ascii=False, separators=(",", ":"))
+                else:
+                    content = json.dumps(current_config, ensure_ascii=False, indent=2)
+                save_config_text_in_background(config_path, content)
             else:
-                save_config(config_path, current_config)
+                config_auto_save_write_generation += 1
+                if compact:
+                    save_config_compact(config_path, current_config)
+                else:
+                    save_config(config_path, current_config)
             return True
         except Exception as exc:
             log(f"Auto-save aguardando configuração válida: {exc}")
@@ -16640,7 +16666,7 @@ def run_gui(config_path: Path) -> int:
         config_auto_save_after_id = None
         if app_closing:
             return
-        save_current_config_silent(compact=True)
+        save_current_config_silent(compact=True, background=True)
 
     def schedule_config_autosave(delay_ms: int = 1800) -> None:
         nonlocal config_auto_save_after_id

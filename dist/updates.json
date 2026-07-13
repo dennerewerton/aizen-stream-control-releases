@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.150",
-    "notes":  "Otimiza o Salvar do Kills FF reconhecendo respostas positivas comuns do Jarvis e evitando GET/reset/set extras quando o snapshot ja foi aceito.",
+    "version":  "2.6.151",
+    "notes":  "Deixa o autosave mais leve: grava config.json em segundo plano, usa ultima versao vence e protege escritas concorrentes para reduzir travamentos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.150/AizenStreamControl.exe",
-                    "sha256":  "b4d2be8bae699ffe280ab7edf6d1f9f0efd856dcd3503aa239725c65c516b3e0"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.151/AizenStreamControl.exe",
+                    "sha256":  "ea4f8ecff5d2774b476a0aa9f4bf1fb3bf4762c9904f82b775766afcdf044dd6"
                 }
 }

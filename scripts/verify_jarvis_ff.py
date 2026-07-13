@@ -54,6 +54,7 @@ from freefire_kill_sender import (  # noqa: E402
     send_kills_realtime_update,
     send_tikfinity_ff_gifts_action,
     serve_next_queue_entries,
+    write_text_if_changed,
 )
 
 
@@ -739,6 +740,26 @@ def verify_contracts() -> None:
         removed_mei = cleanup_stale_pyinstaller_dirs(base, min_age_seconds=24 * 60 * 60, max_dirs=4)
         if removed_mei != 1 or old_mei.exists() or not fresh_mei.exists() or not similar_name.exists():
             raise RuntimeError("Limpeza _MEI antiga removeu pasta errada ou deixou lixo antigo.")
+    with tempfile.TemporaryDirectory(prefix="aizen_write_lock_") as tmpdir:
+        output = Path(tmpdir) / "config.json"
+        errors: list[str] = []
+
+        def write_config(index: int) -> None:
+            try:
+                write_text_if_changed(output, json.dumps({"index": index, "items": list(range(10))}, ensure_ascii=False))
+            except Exception as exc:
+                errors.append(str(exc))
+
+        threads = [threading.Thread(target=write_config, args=(index,)) for index in range(12)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if errors:
+            raise RuntimeError(f"Escrita concorrente de config falhou: {errors!r}")
+        written = json.loads(output.read_text(encoding="utf-8"))
+        if not isinstance(written.get("index"), int) or list(Path(tmpdir).glob("*.tmp")):
+            raise RuntimeError("Escrita concorrente deixou config invalido ou tmp sobrando.")
 
     queue_state = parse_ff_queue_state(
         {
