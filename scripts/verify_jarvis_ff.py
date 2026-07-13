@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -14,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 from freefire_kill_sender import (  # noqa: E402
     FFQueueEntry,
     chat_command_token,
+    cleanup_stale_pyinstaller_dirs,
     complete_player_names_from_references,
     derive_ff_overlay_config_endpoint,
     PlayerKill,
@@ -708,6 +712,18 @@ def verify_contracts() -> None:
     for expected_key in ("name", "nick", "nickname", "player_name", "playerName", "display_name", "displayName", "username"):
         if wire_player.get(expected_key) != "Xiom TTK":
             raise RuntimeError(f"Payload Kills FF sem alias de nick {expected_key!r}: {wire_player!r}")
+    with tempfile.TemporaryDirectory(prefix="aizen_mei_cleanup_") as tmpdir:
+        base = Path(tmpdir)
+        old_mei = base / "_MEI100001"
+        fresh_mei = base / "_MEI100002"
+        similar_name = base / "_MEIabc"
+        for path in (old_mei, fresh_mei, similar_name):
+            path.mkdir()
+        old_time = time.time() - (48 * 60 * 60)
+        os.utime(old_mei, (old_time, old_time))
+        removed_mei = cleanup_stale_pyinstaller_dirs(base, min_age_seconds=24 * 60 * 60, max_dirs=4)
+        if removed_mei != 1 or old_mei.exists() or not fresh_mei.exists() or not similar_name.exists():
+            raise RuntimeError("Limpeza _MEI antiga removeu pasta errada ou deixou lixo antigo.")
 
     queue_state = parse_ff_queue_state(
         {

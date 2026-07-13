@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.148"
+APP_VERSION = "2.6.149"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -114,6 +114,8 @@ BACKGROUND_IDLE_PUMP_MS = 2000
 SYNC_QUEUE_IDLE_PUMP_MS = 1200
 SYNC_QUEUE_PROCESSED_PUMP_MS = 140
 BACKGROUND_DISABLED_PUMP_MS = 8000
+STALE_MEI_MIN_AGE_SECONDS = 24 * 60 * 60
+STALE_MEI_CLEANUP_LIMIT = 8
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
 WRITE_TEXT_CACHE_LOCK = threading.Lock()
 KILLS_SNAPSHOT_ENDPOINT_CACHE: dict[str, str] = {}
@@ -2053,6 +2055,69 @@ def clean_pyinstaller_subprocess_env() -> dict[str, str]:
             part for part in clean_env["PATH"].split(";") if part and not re.search(r"_MEI\d+", part, re.IGNORECASE)
         )
     return clean_env
+
+
+def current_pyinstaller_temp_dir() -> Path | None:
+    raw_path = str(getattr(sys, "_MEIPASS", "") or "").strip()
+    if not raw_path:
+        return None
+    try:
+        return Path(raw_path).resolve(strict=False)
+    except OSError:
+        return None
+
+
+def cleanup_stale_pyinstaller_dirs(
+    base_dir: Path | None = None,
+    min_age_seconds: int = STALE_MEI_MIN_AGE_SECONDS,
+    max_dirs: int = STALE_MEI_CLEANUP_LIMIT,
+) -> int:
+    if max_dirs <= 0:
+        return 0
+    try:
+        base = Path(base_dir or APP_DIR).resolve(strict=False)
+    except OSError:
+        return 0
+    current_temp_dir = current_pyinstaller_temp_dir()
+    now = time.time()
+    candidates: list[tuple[float, Path]] = []
+    try:
+        children = list(base.iterdir())
+    except OSError:
+        return 0
+    for child in children:
+        if not re.fullmatch(r"_MEI\d+", child.name, re.IGNORECASE):
+            continue
+        try:
+            resolved = child.resolve(strict=False)
+        except OSError:
+            continue
+        if resolved.parent != base or not child.is_dir():
+            continue
+        if current_temp_dir is not None and resolved == current_temp_dir:
+            continue
+        try:
+            modified_at = child.stat().st_mtime
+        except OSError:
+            continue
+        if now - modified_at < max(0, min_age_seconds):
+            continue
+        candidates.append((modified_at, resolved))
+
+    removed = 0
+    for _, target in sorted(candidates, key=lambda item: item[0])[:max_dirs]:
+        try:
+            resolved = target.resolve(strict=False)
+        except OSError:
+            continue
+        if resolved.parent != base or not re.fullmatch(r"_MEI\d+", resolved.name, re.IGNORECASE):
+            continue
+        try:
+            shutil.rmtree(resolved)
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def connect_plain_websocket_client(url: str, timeout: float = 8.0) -> socket.socket:
@@ -18873,6 +18938,17 @@ def run_gui(config_path: Path) -> int:
         if chat_commands_enabled_var.get() or chat_timers_enabled_var.get():
             root.after(700, lambda: ensure_chat_listener_for_bot())
 
+    def start_stale_pyinstaller_cleanup() -> None:
+        if app_closing:
+            return
+
+        def run() -> None:
+            removed = cleanup_stale_pyinstaller_dirs(APP_DIR)
+            if removed:
+                log(f"Limpeza leve: {removed} pasta(s) temporaria(s) antiga(s) removida(s).")
+
+        threading.Thread(target=run, name="AizenPyInstallerCleanup", daemon=True).start()
+
     device_name_var.trace_add("write", update_local_source_labels)
     chat_commands_enabled_var.trace_add("write", ensure_bot_runtime)
     chat_timers_enabled_var.trace_add("write", ensure_bot_runtime)
@@ -18901,6 +18977,7 @@ def run_gui(config_path: Path) -> int:
         schedule_ff_queue_poll()
     root.after(STARTUP_IDLE_TASK_DELAY_MS, run_startup_ui_tasks)
     root.after(STARTUP_IDLE_TASK_DELAY_MS + 250, run_startup_runtime_tasks)
+    root.after(STARTUP_IDLE_TASK_DELAY_MS + 1800, start_stale_pyinstaller_cleanup)
     log("Kills FF ativo em modo manual. Abas Fila FF, Overlay FF e Chat Ao Vivo seguem ocultas.")
     root.mainloop()
     return 0

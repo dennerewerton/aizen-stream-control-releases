@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.148",
-    "notes":  "Corrige Kills FF preservando nicks no rank geral apos adicionar/salvar kills e envia aliases de nome para o Jarvis.",
+    "version":  "2.6.149",
+    "notes":  "Otimiza a abertura limpando em segundo plano pastas temporarias _MEI antigas deixadas por versoes anteriores, sem bloquear a janela nem apagar a pasta em uso.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.148/AizenStreamControl.exe",
-                    "sha256":  "70344f9934edce84e2ee7577e7a542b9bc6f3820e2744e723fe435593e4d009f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.149/AizenStreamControl.exe",
+                    "sha256":  "cf7af093254ffc1b01d537f36f8c0dd1ba923fa1f74d90f38c076a8f92be2690"
                 }
 }
