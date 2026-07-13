@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.158",
-    "notes":  "Corrige o Salvar do Kills FF para confirmar o rank diario no Jarvis e cair para envio individual quando o snapshot nao persistir.",
+    "version":  "2.6.159",
+    "notes":  "Otimiza o Salvar do Kills FF tentando primeiro o endpoint em lote do Jarvis, reduzindo tentativas lentas em /action.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.158/AizenStreamControl.exe",
-                    "sha256":  "cce1dae78726362751f024a5955fefd7b1061b5c5404a3dc4f637b3f10201d85"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.159/AizenStreamControl.exe",
+                    "sha256":  "7a2fd9fc27fa21e8508712fa715314b26d1625eb643aa3db73aa7a3aaaddedd6"
                 }
 }

@@ -25,6 +25,7 @@ from freefire_kill_sender import (  # noqa: E402
     derive_jarvis_endpoint,
     derive_kills_action_endpoint,
     derive_kills_rank_endpoint,
+    derive_kills_snapshot_endpoint,
     derive_kills_style_endpoint,
     derive_tikfinity_ff_gifts_endpoint,
     fetch_ff_overlay_realtime,
@@ -34,6 +35,7 @@ from freefire_kill_sender import (  # noqa: E402
     fetch_kills_realtime,
     fetch_tikfinity_ff_gifts,
     is_live_chat_event_payload,
+    kills_snapshot_url_candidates,
     kills_scope_label,
     merge_ff_queue_entries,
     normalize_live_chat_payload,
@@ -617,6 +619,16 @@ def verify_contracts() -> None:
         raise RuntimeError(f"Derivacao entre endpoints falhou: {direct_kills_to_queue}")
     if derive_kills_action_endpoint(expected_endpoints["kills"]) != "https://jarvis.squareweb.app/api/freefire-kills/action":
         raise RuntimeError("Derivacao da action Kills FF falhou.")
+    if derive_kills_snapshot_endpoint("https://jarvis.squareweb.app/api/freefire-kills/action") != expected_endpoints["kills"]:
+        raise RuntimeError("Derivacao do snapshot Kills FF por action falhou.")
+    if derive_kills_snapshot_endpoint("https://jarvis.squareweb.app/freefire-kills/obs") != expected_endpoints["kills"]:
+        raise RuntimeError("Derivacao do snapshot Kills FF por OBS falhou.")
+    _snapshot_cache_key, snapshot_candidates = kills_snapshot_url_candidates(expected_endpoints["kills"])
+    if snapshot_candidates[:2] != [
+        expected_endpoints["kills"],
+        "https://jarvis.squareweb.app/api/freefire-kills/action",
+    ]:
+        raise RuntimeError(f"Ordem de endpoints Kills FF lenta ou divergente: {snapshot_candidates!r}")
     if derive_kills_rank_endpoint(expected_endpoints["kills"]) != "https://jarvis.squareweb.app/api/freefire-kills/rank":
         raise RuntimeError("Derivacao do rank Kills FF falhou.")
     if derive_kills_rank_endpoint("https://jarvis.squareweb.app/api/freefire-kills/action") != "https://jarvis.squareweb.app/api/freefire-kills/rank":

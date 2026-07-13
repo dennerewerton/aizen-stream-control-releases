@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.158"
+APP_VERSION = "2.6.159"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4555,6 +4555,25 @@ def derive_kills_action_endpoint(endpoint_url: str) -> str:
     return parsed._replace(path=path, query="", fragment="").geturl()
 
 
+def derive_kills_snapshot_endpoint(endpoint_url: str) -> str:
+    clean = normalize_endpoint_url(endpoint_url)
+    parsed = urlparse(clean)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/api/freefire-kills/action"):
+        next_path = path[: -len("/action")]
+    elif path.endswith("/api/freefire-kills/rank"):
+        next_path = path[: -len("/rank")]
+    elif path.endswith("/api/freefire-kills/style"):
+        next_path = path[: -len("/style")]
+    elif path.endswith("/api/freefire-kills"):
+        next_path = path
+    elif path.endswith("/freefire-kills/obs") or path.endswith("/freefire-kills"):
+        next_path = "/api/freefire-kills"
+    else:
+        next_path = path or "/api/freefire-kills"
+    return parsed._replace(path=next_path, query="", fragment="").geturl()
+
+
 def derive_kills_style_endpoint(endpoint_url: str) -> str:
     clean = normalize_endpoint_url(endpoint_url)
     parsed = urlparse(clean)
@@ -4925,11 +4944,12 @@ def kills_delta_actions(
 
 def kills_snapshot_url_candidates(endpoint_url: str) -> tuple[str, list[str]]:
     cache_key = normalize_endpoint_url(endpoint_url)
+    snapshot_url = derive_kills_snapshot_endpoint(cache_key)
     action_url = derive_kills_action_endpoint(cache_key)
     snapshot_urls: list[str] = []
     with KILLS_SNAPSHOT_ENDPOINT_CACHE_LOCK:
         preferred_url = KILLS_SNAPSHOT_ENDPOINT_CACHE.get(cache_key, "")
-    for candidate_url in (preferred_url, action_url, cache_key):
+    for candidate_url in (preferred_url, snapshot_url, cache_key, action_url):
         if candidate_url and candidate_url not in snapshot_urls:
             snapshot_urls.append(candidate_url)
     return cache_key, snapshot_urls
