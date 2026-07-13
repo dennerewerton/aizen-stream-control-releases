@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.169"
+APP_VERSION = "2.6.170"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11094,10 +11094,19 @@ def run_gui(config_path: Path) -> int:
 
     def update_manual_row_numbers() -> None:
         for index, row in enumerate(manual_rows, start=1):
-            row["frame"].grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
-            row["index_label"].configure(text=f"{index:02d}")
+            grid_row = index - 1
+            label_text = f"{index:02d}"
+            row_color = "#171014" if index % 2 else "#0f0b0e"
             try:
-                row["frame"].configure(fg_color="#171014" if index % 2 else "#0f0b0e")
+                if row.get("_grid_row") != grid_row:
+                    row["frame"].grid(row=grid_row, column=0, sticky="ew", padx=8, pady=4)
+                    row["_grid_row"] = grid_row
+                if row.get("_index_text") != label_text:
+                    row["index_label"].configure(text=label_text)
+                    row["_index_text"] = label_text
+                if row.get("_row_color") != row_color:
+                    row["frame"].configure(fg_color=row_color)
+                    row["_row_color"] = row_color
             except tk.TclError:
                 pass
 
@@ -11784,11 +11793,19 @@ def run_gui(config_path: Path) -> int:
     def apply_manual_row_player(row: dict[str, Any], index: int, player: PlayerKill) -> None:
         try:
             hide_manual_name_suggestions(row)
-            row["name_var"].set(player.name)
-            row["kills_var"].set(str(normalize_kill_value(player.kills)))
-            row["frame"].grid(row=index, column=0, sticky="ew", padx=8, pady=4)
-            row["index_label"].configure(text=f"{index + 1:02d}")
-            row["frame"].configure(fg_color="#171014" if index % 2 == 0 else "#0f0b0e")
+            set_text_var(row["name_var"], player.name)
+            set_text_var(row["kills_var"], normalize_kill_value(player.kills))
+            label_text = f"{index + 1:02d}"
+            row_color = "#171014" if index % 2 == 0 else "#0f0b0e"
+            if row.get("_grid_row") != index:
+                row["frame"].grid(row=index, column=0, sticky="ew", padx=8, pady=4)
+                row["_grid_row"] = index
+            if row.get("_index_text") != label_text:
+                row["index_label"].configure(text=label_text)
+                row["_index_text"] = label_text
+            if row.get("_row_color") != row_color:
+                row["frame"].configure(fg_color=row_color)
+                row["_row_color"] = row_color
         except tk.TclError:
             pass
 
