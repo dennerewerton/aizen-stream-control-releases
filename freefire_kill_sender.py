@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.160"
+APP_VERSION = "2.6.161"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -16013,9 +16013,8 @@ def run_gui(config_path: Path) -> int:
     def handle_livepix_webhook(payload: dict[str, Any]) -> None:
         enqueue_livepix_event("webhook", payload)
 
-    def fetch_livepix_webhook_details(payload: dict[str, Any]) -> None:
+    def fetch_livepix_webhook_details(payload: dict[str, Any], client: LivepixApiClient) -> None:
         try:
-            client = livepix_client()
             data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
             resource = data.get("resource") if isinstance(data.get("resource"), dict) else {}
             resource_id = _first_text(resource.get("id"), data.get("id"))
@@ -16105,6 +16104,7 @@ def run_gui(config_path: Path) -> int:
         try:
             save_livepix_config_silent()
             client = livepix_client()
+            selected_currency = livepix_currency_var.get().strip().upper() or "BRL"
         except Exception as exc:
             detail = str(exc)
             livepix_status_var.set("Configure a API")
@@ -16202,7 +16202,6 @@ def run_gui(config_path: Path) -> int:
                 ]
                 wallet_payload = try_livepix("carteira", lambda: client.request("GET", "/wallet"), {})
                 wallet = livepix_wallet_items(wallet_payload)
-                selected_currency = livepix_currency_var.get().strip().upper() or "BRL"
                 extras: dict[str, Any] = {}
                 raw_payloads: dict[str, Any] = {
                     "account": account_payload if isinstance(account_payload, dict) else {},
@@ -16323,6 +16322,8 @@ def run_gui(config_path: Path) -> int:
             amount = livepix_checkout_amount_cents()
             currency = livepix_currency_var.get().strip().upper() or "BRL"
             redirect_url = livepix_redirect_url_var.get().strip() or "https://livepix.gg"
+            checkout_user = livepix_checkout_user_var.get().strip() or "Apoiador"
+            checkout_message = livepix_checkout_message_var.get().strip() or "Apoio para a live!"
         except Exception as exc:
             messagebox.showerror("Livepix", str(exc))
             return
@@ -16332,8 +16333,8 @@ def run_gui(config_path: Path) -> int:
             try:
                 if kind == "message":
                     data = client.create_message(
-                        livepix_checkout_user_var.get().strip() or "Apoiador",
-                        livepix_checkout_message_var.get().strip() or "Apoio para a live!",
+                        checkout_user,
+                        checkout_message,
                         amount,
                         currency,
                         redirect_url,
@@ -16603,10 +16604,19 @@ def run_gui(config_path: Path) -> int:
                 if event is not None:
                     livepix_status_var.set("Webhook recebido")
                     log(f"Livepix webhook: {event.kind} {event.reference}; buscando detalhes.")
-                    start_livepix_worker(
-                        lambda current_payload=payload: fetch_livepix_webhook_details(current_payload),
-                        name="AizenLivepixWebhookDetail",
-                    )
+                    try:
+                        detail_client = livepix_client()
+                    except Exception as exc:
+                        enqueue_livepix_event("webhook_detail", event)
+                        enqueue_livepix_event("status", f"Webhook recebido; detalhe API falhou: {livepix_error_detail(exc)}")
+                    else:
+                        start_livepix_worker(
+                            lambda current_payload=payload, current_client=detail_client: fetch_livepix_webhook_details(
+                                current_payload,
+                                current_client,
+                            ),
+                            name="AizenLivepixWebhookDetail",
+                        )
                 else:
                     livepix_status_var.set("Webhook sem detalhes")
                     log(f"Livepix webhook recebido. Use sincronizar para buscar detalhes: {compact_json_preview(payload)}")

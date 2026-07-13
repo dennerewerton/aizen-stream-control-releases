@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.160",
-    "notes":  "Deixa o Livepix mais leve ao sincronizar/salvar usando um salvamento parcial dos campos Livepix em vez de recalcular toda a configuração do app.",
+    "version":  "2.6.161",
+    "notes":  "Melhora estabilidade do Livepix evitando leitura de variaveis Tkinter dentro de threads de fundo, reduzindo travamentos intermitentes.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.160/AizenStreamControl.exe",
-                    "sha256":  "0edc57b04d0195f0be56a45fc8a9bea7aab0db180f0a12247e7283925d1be811"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.161/AizenStreamControl.exe",
+                    "sha256":  "794e1973d6a694cb1b208c89adca58f79d43ca1bc5d0b0700453b5024b856ae2"
                 }
 }
