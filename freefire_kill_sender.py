@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.168"
+APP_VERSION = "2.6.169"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -16924,7 +16924,7 @@ def run_gui(config_path: Path) -> int:
         base["logo_path"] = logo_path_var.get().strip()
         for key in THEME_COLOR_KEYS:
             base[key] = normalize_hex_color(theme_color_vars[key].get(), base[key])
-            theme_color_vars[key].set(base[key])
+            set_text_var(theme_color_vars[key], base[key])
         return base
 
     def update_config_from_form() -> dict[str, Any]:
@@ -16932,11 +16932,11 @@ def run_gui(config_path: Path) -> int:
         endpoint_url = normalize_endpoint_url(sync_url_var.get())
         if jarvis_base_url and not endpoint_url:
             endpoint_url = derive_jarvis_endpoint(jarvis_base_url, "kills")
-        sync_url_var.set(endpoint_url)
+        set_text_var(sync_url_var, endpoint_url)
         config["kills_realtime_url"] = endpoint_url
         config["jarvis_endpoint_url"] = endpoint_url
         config["jarvis_base_url"] = jarvis_base_url
-        jarvis_base_url_var.set(jarvis_base_url)
+        set_text_var(jarvis_base_url_var, jarvis_base_url)
         config["kills_realtime_auto_sync"] = False
         config["kills_realtime_poll_seconds"] = poll_interval_seconds()
         config["kills_sync_room"] = sync_room_var.get().strip() or "principal"
@@ -16946,26 +16946,26 @@ def run_gui(config_path: Path) -> int:
         elif jarvis_base_url and not kills_style_url:
             kills_style_url = derive_kills_style_endpoint(jarvis_base_url)
         config["freefire_kills_style_url"] = kills_style_url
-        kills_style_url_var.set(kills_style_url)
+        set_text_var(kills_style_url_var, kills_style_url)
         if kills_style_url:
-            kills_obs_url_var.set(derive_kills_obs_url(kills_style_url))
+            set_text_var(kills_obs_url_var, derive_kills_obs_url(kills_style_url))
         queue_url = normalize_endpoint_url(ff_queue_url_var.get())
         if jarvis_base_url and not queue_url:
             queue_url = derive_jarvis_endpoint(jarvis_base_url, "queue")
         config["ff_queue_realtime_url"] = queue_url
-        ff_queue_url_var.set(config["ff_queue_realtime_url"])
+        set_text_var(ff_queue_url_var, config["ff_queue_realtime_url"])
         overlay_url = normalize_endpoint_url(ff_overlay_url_var.get())
         if jarvis_base_url and not overlay_url:
             overlay_url = derive_jarvis_endpoint(jarvis_base_url, "overlay")
         config["ff_overlay_realtime_url"] = overlay_url
-        ff_overlay_url_var.set(config["ff_overlay_realtime_url"])
+        set_text_var(ff_overlay_url_var, config["ff_overlay_realtime_url"])
         overlay_config_url = normalize_endpoint_url(ff_overlay_config_url_var.get())
         if not overlay_config_url and overlay_url:
             overlay_config_url = derive_ff_overlay_config_endpoint(overlay_url)
         if jarvis_base_url and not overlay_config_url:
             overlay_config_url = derive_ff_overlay_config_endpoint(jarvis_base_url)
         config["ff_overlay_config_url"] = overlay_config_url
-        ff_overlay_config_url_var.set(config["ff_overlay_config_url"])
+        set_text_var(ff_overlay_config_url_var, config["ff_overlay_config_url"])
         config["ff_overlay_profile"] = ff_overlay_site_profile_var.get().strip() or "streamer1"
         config["ff_queue_auto_sync"] = bool(ff_queue_enabled_var.get()) and not ff_queue_site_sync_hidden
         config["ff_overlay_auto_sync"] = bool(ff_overlay_enabled_var.get()) and not ff_overlay_site_sync_hidden
@@ -16979,11 +16979,11 @@ def run_gui(config_path: Path) -> int:
         elif queue_url and not tikfinity_ff_url:
             tikfinity_ff_url = derive_tikfinity_ff_gifts_endpoint(queue_url)
         config["tikfinity_ff_gifts_url"] = tikfinity_ff_url
-        tikfinity_ff_url_var.set(tikfinity_ff_url)
+        set_text_var(tikfinity_ff_url_var, tikfinity_ff_url)
         config["tikfinity_ff_profile"] = tikfinity_ff_profile_var.get().strip() or "streamer1"
         config["tikfinity_ff_enabled"] = bool(tikfinity_ff_enabled_var.get()) and not ff_queue_site_sync_hidden
         config["tikfinity_ff_coins_per_room"] = max(1, normalize_kill_value(tikfinity_ff_coins_var.get()))
-        tikfinity_ff_coins_var.set(str(config["tikfinity_ff_coins_per_room"]))
+        set_text_var(tikfinity_ff_coins_var, config["tikfinity_ff_coins_per_room"])
         config["tikfinity_ff_token"] = tikfinity_ff_token_var.get().strip()
         config["device_name"] = device_name_var.get().strip() or default_device_name()
         config["jarvis_api_token"] = jarvis_token_var.get().strip()
@@ -16994,7 +16994,7 @@ def run_gui(config_path: Path) -> int:
         if manual_scope not in {"daily", "general"}:
             manual_scope = "daily"
         config["kills_manual_scope"] = manual_scope
-        manual_scope_var.set(kills_scope_label(config["kills_manual_scope"]))
+        set_text_var(manual_scope_var, kills_scope_label(config["kills_manual_scope"]))
         manual_scope_buffers[manual_scope] = clone_player_list(collect_manual_players(scope=manual_scope))
         config["manual_kills"] = player_payload(manual_scope_buffers.get(manual_scope, []))
         config["manual_kills_by_scope"] = {
@@ -17008,12 +17008,12 @@ def run_gui(config_path: Path) -> int:
         config["chat_webhook_token"] = chat_webhook_token_var.get().strip()
         try:
             config["chat_websocket_url"] = normalize_tikfinity_websocket_url(chat_websocket_url_var.get())
-            chat_websocket_url_var.set(config["chat_websocket_url"])
+            set_text_var(chat_websocket_url_var, config["chat_websocket_url"])
         except ValueError:
             if chat_source_key() == "websocket":
                 raise
             config["chat_websocket_url"] = DEFAULT_TIKFINITY_WEBSOCKET_URL
-            chat_websocket_url_var.set(DEFAULT_TIKFINITY_WEBSOCKET_URL)
+            set_text_var(chat_websocket_url_var, DEFAULT_TIKFINITY_WEBSOCKET_URL)
         config["chat_commands_enabled"] = bool(chat_commands_enabled_var.get())
         config["chat_commands"] = chat_command_payload(collect_custom_commands())
         config["chat_timers_enabled"] = bool(chat_timers_enabled_var.get())
@@ -17024,9 +17024,9 @@ def run_gui(config_path: Path) -> int:
         config["bot_default_timer_min_messages"] = bot_default_timer_min_messages()
         config["bot_delivery_method"] = bot_delivery_method_key()
         config["bot_streamerbot_ws_url"] = normalize_streamerbot_websocket_url(bot_streamerbot_ws_url_var.get())
-        bot_streamerbot_ws_url_var.set(config["bot_streamerbot_ws_url"])
+        set_text_var(bot_streamerbot_ws_url_var, config["bot_streamerbot_ws_url"])
         config["bot_streamerbot_http_url"] = normalize_streamerbot_http_url(bot_streamerbot_http_url_var.get())
-        bot_streamerbot_http_url_var.set(config["bot_streamerbot_http_url"])
+        set_text_var(bot_streamerbot_http_url_var, config["bot_streamerbot_http_url"])
         config["bot_streamerbot_password"] = bot_streamerbot_password_var.get()
         config["bot_streamerbot_action_name"] = bot_streamerbot_action_name_var.get().strip()
         config["bot_streamerbot_action_id"] = bot_streamerbot_action_id_var.get().strip()
@@ -17063,12 +17063,12 @@ def run_gui(config_path: Path) -> int:
         config["raffle_entries_sub"] = raffle_entries_value(raffle_entries_sub_var, 10)
         config["raffle_user_cooldown_seconds"] = raffle_cooldown_seconds()
         config["raffle_include_moderators"] = bool(raffle_include_moderators_var.get())
-        raffle_entries_normal_var.set(str(config["raffle_entries_normal"]))
-        raffle_entries_fan_var.set(str(config["raffle_entries_fan"]))
-        raffle_entries_super_fan_var.set(str(config["raffle_entries_super_fan"]))
-        raffle_entries_gift_var.set(str(config["raffle_entries_gift"]))
-        raffle_entries_sub_var.set(str(config["raffle_entries_sub"]))
-        raffle_cooldown_var.set(str(config["raffle_user_cooldown_seconds"]))
+        set_text_var(raffle_entries_normal_var, config["raffle_entries_normal"])
+        set_text_var(raffle_entries_fan_var, config["raffle_entries_fan"])
+        set_text_var(raffle_entries_super_fan_var, config["raffle_entries_super_fan"])
+        set_text_var(raffle_entries_gift_var, config["raffle_entries_gift"])
+        set_text_var(raffle_entries_sub_var, config["raffle_entries_sub"])
+        set_text_var(raffle_cooldown_var, config["raffle_user_cooldown_seconds"])
         config["ui_layout"] = {
             "participants_height": layout_value(participants_height_var, 240, 900),
             "events_height": layout_value(events_height_var, 90, 360),

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.168",
-    "notes":  "Kills FF mais rapido: o Salvar agora faz confirmacao curta no rank publico antes de partir para o fallback, evitando esperar demais quando o endpoint base so responde OK.",
+    "version":  "2.6.169",
+    "notes":  "Otimizacao: salvar/configurar agora evita atualizar campos internos quando o valor ja esta igual, reduzindo traces, autosaves e pequenos repiques de UI durante carregamento e sincronizacao.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.168/AizenStreamControl.exe",
-                    "sha256":  "cdc6078e91e8ee9898b2a3ecf31178ed9e4a78965d60e4f698d64d927ef4c1a4"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.169/AizenStreamControl.exe",
+                    "sha256":  "6f5e1c9bc13a2c96ab7a3508abb65cbbcab993bd184ef066840102096048cf66"
                 }
 }
