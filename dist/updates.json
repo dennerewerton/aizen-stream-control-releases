@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.165",
-    "notes":  "Deixa o Salvar do Kills FF mais leve: remove reordenacao visual sincronica no clique e reduz campos duplicados no snapshot enviado ao Jarvis sem perder diario/geral.",
+    "version":  "2.6.166",
+    "notes":  "Kills FF: Salvar agora confirma o rank publico /rank antes de marcar como sincronizado e forca fallback para gravar o diario quando o endpoint base apenas responde OK. Tambem reduz trabalho ocioso do leitor de chat.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.165/AizenStreamControl.exe",
-                    "sha256":  "6be33d3f397eabe1728cbc27217e5317ddedd3a27664050fd33b0583a3a2c7cd"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.166/AizenStreamControl.exe",
+                    "sha256":  "b29a65ce6e3d52ac02f613aa6f33728e181c9570c593f0857af44758f58ed08a"
                 }
 }

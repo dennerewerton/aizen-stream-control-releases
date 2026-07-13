@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.165"
+APP_VERSION = "2.6.166"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -119,6 +119,7 @@ MANUAL_TABLE_RENDER_CHUNK_SIZE = 10
 MANUAL_TABLE_RENDER_CHUNK_DELAY_MS = 15
 KILLS_POST_TIMEOUT_SECONDS = 10
 KILLS_GET_TIMEOUT_SECONDS = 8
+KILLS_RANK_CONFIRM_DELAYS_SECONDS = (0.0, 0.35, 0.85)
 STARTUP_IDLE_TASK_DELAY_MS = 650
 BACKGROUND_IDLE_PUMP_MS = 2000
 SYNC_QUEUE_IDLE_PUMP_MS = 1200
@@ -4524,6 +4525,46 @@ def fetch_kills_realtime(
     return state
 
 
+def fetch_kills_rank_realtime(
+    endpoint_url: str,
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+    session: requests.Session | None = None,
+) -> RealtimeState:
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if room:
+        headers["X-Aizen-Room"] = room
+    if token:
+        headers["X-Aizen-Token"] = token
+    params = {
+        "client_id": device_id,
+        "client_name": device_name,
+        "app_version": APP_VERSION,
+        "limit": 200,
+    }
+    if room:
+        params["room"] = room
+    http_client = session or requests
+    response = http_client.get(
+        derive_kills_rank_endpoint(endpoint_url),
+        params=params,
+        headers=headers,
+        timeout=KILLS_GET_TIMEOUT_SECONDS,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    return parse_realtime_state(response.text)
+
+
 def derive_kills_rank_endpoint(endpoint_url: str) -> str:
     clean = normalize_endpoint_url(endpoint_url)
     parsed = urlparse(clean)
@@ -4791,6 +4832,37 @@ def kills_snapshot_matches_state(
     actual_daily = player_kill_map(state.daily_ranking or [])
     actual_general = player_kill_map(state.global_ranking or state.players or [])
     return actual_daily == expected_daily and actual_general == expected_general
+
+
+def fetch_confirmed_kills_rank_state(
+    endpoint_url: str,
+    daily_players: list[PlayerKill],
+    general_players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+    session: requests.Session | None = None,
+) -> RealtimeState | None:
+    last_state: RealtimeState | None = None
+    for delay_seconds in KILLS_RANK_CONFIRM_DELAYS_SECONDS:
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+        try:
+            state = fetch_kills_rank_realtime(
+                endpoint_url,
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+                session=session,
+            )
+        except Exception:
+            continue
+        last_state = state
+        if kills_snapshot_matches_state(state, daily_players, general_players):
+            return state
+    return last_state if last_state is not None and kills_snapshot_matches_state(last_state, daily_players, general_players) else None
 
 
 def clone_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
@@ -5078,20 +5150,34 @@ def send_kills_snapshot_update(
                 response.raise_for_status()
                 state = parse_realtime_state(response.text)
                 if kills_snapshot_matches_state(state, daily_players, general_players):
-                    remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
-                    return state
-                response_acknowledged = response_acknowledges_kills_snapshot(response.text)
-                try:
-                    refreshed_state = fetch_kills_realtime(
+                    confirmed_state = fetch_confirmed_kills_rank_state(
                         endpoint_url,
+                        daily_players,
+                        general_players,
                         device_id=device_id,
                         device_name=device_name,
                         room=room,
                         token=token,
+                        session=session,
                     )
-                    if kills_snapshot_matches_state(refreshed_state, daily_players, general_players):
+                    if confirmed_state is not None:
                         remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
-                        return refreshed_state
+                        return confirmed_state
+                response_acknowledged = response_acknowledges_kills_snapshot(response.text)
+                try:
+                    confirmed_state = fetch_confirmed_kills_rank_state(
+                        endpoint_url,
+                        daily_players,
+                        general_players,
+                        device_id=device_id,
+                        device_name=device_name,
+                        room=room,
+                        token=token,
+                        session=session,
+                    )
+                    if confirmed_state is not None:
+                        remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
+                        return confirmed_state
                 except Exception:
                     pass
                 if response_acknowledged:
@@ -5108,12 +5194,13 @@ def send_kills_snapshot_update(
                 pass
 
         try:
-            current_state = fetch_kills_realtime(
+            current_state = fetch_kills_rank_realtime(
                 endpoint_url,
                 device_id=device_id,
                 device_name=device_name,
                 room=room,
                 token=token,
+                session=session,
             )
             if kills_snapshot_matches_state(current_state, daily_players, general_players):
                 return current_state
@@ -5142,19 +5229,20 @@ def send_kills_snapshot_update(
                         session=session,
                     )
                 try:
-                    fetched_state = fetch_kills_realtime(
+                    fetched_state = fetch_confirmed_kills_rank_state(
                         endpoint_url,
+                        daily_players,
+                        general_players,
                         device_id=device_id,
                         device_name=device_name,
                         room=room,
                         token=token,
+                        session=session,
                     )
-                    if kills_snapshot_matches_state(fetched_state, daily_players, general_players):
+                    if fetched_state is not None:
                         return fetched_state
                 except Exception:
                     pass
-                if final_state is not None and kills_snapshot_matches_state(final_state, daily_players, general_players):
-                    return final_state
         except Exception:
             pass
 
@@ -5205,21 +5293,21 @@ def send_kills_snapshot_update(
                 session=session,
             )
     try:
-        fetched_state = fetch_kills_realtime(
+        fetched_state = fetch_confirmed_kills_rank_state(
             endpoint_url,
+            daily_players,
+            general_players,
             device_id=device_id,
             device_name=device_name,
             room=room,
             token=token,
         )
-        if kills_snapshot_matches_state(fetched_state, daily_players, general_players):
+        if fetched_state is not None:
             return fetched_state
     except Exception:
         pass
-    if final_state is not None and kills_snapshot_matches_state(final_state, daily_players, general_players):
-        return final_state
     raise RuntimeError(
-        "Jarvis respondeu, mas o ranking diario/geral nao confirmou as kills enviadas. "
+        "Jarvis respondeu, mas o endpoint /rank nao confirmou o ranking diario/geral enviado. "
         "Clique em Atualizar rank e tente Salvar de novo."
     )
 
@@ -6976,6 +7064,7 @@ def run_gui(config_path: Path) -> int:
     livepix_workers_active = 0
     sync_pump_after_id: str | None = None
     ff_queue_pump_after_id: str | None = None
+    chat_event_pump_after_id: str | None = None
     bot_pump_after_id: str | None = None
     chat_timer_after_id: str | None = None
     livepix_pump_after_id: str | None = None
@@ -7075,6 +7164,15 @@ def run_gui(config_path: Path) -> int:
         if queued and livepix_pump_after_id is None and in_ui_thread():
             try:
                 schedule_livepix_queue_pump(0)
+            except NameError:
+                pass
+        return queued
+
+    def enqueue_chat_event(kind: str, payload: Any) -> bool:
+        queued = enqueue_limited_queue(chat_event_queue, (kind, payload), "chat_event", "Fila de chat cheia")
+        if queued and chat_event_pump_after_id is None and in_ui_thread():
+            try:
+                schedule_chat_event_pump(0)
             except NameError:
                 pass
         return queued
@@ -13602,20 +13700,8 @@ def run_gui(config_path: Path) -> int:
             chat_endpoint_var.set(f"POST JSON: {chat_endpoint_url(include_token=True)}")
 
     def receive_chat_payload(payload: dict[str, Any], source: str) -> None:
-        event = ("message", {"payload": payload, "source": source})
-        try:
-            chat_event_queue.put_nowait(event)
-            return
-        except queue.Full:
-            pass
-
-        try:
-            chat_event_queue.get_nowait()
-        except queue.Empty:
-            pass
-        try:
-            chat_event_queue.put_nowait(event)
-        except queue.Full:
+        queued = enqueue_chat_event("message", {"payload": payload, "source": source})
+        if queued:
             return
 
         dropped = int(getattr(receive_chat_payload, "_dropped", 0)) + 1
@@ -13675,6 +13761,7 @@ def run_gui(config_path: Path) -> int:
                 chat_webhook_server = server
                 chat_status_var.set("Webhook ativo")
             update_chat_endpoint_text()
+            schedule_chat_event_pump(0)
             if open_monitor:
                 open_chat_monitor_window()
         except Exception as exc:
@@ -14420,8 +14507,22 @@ def run_gui(config_path: Path) -> int:
         except Exception:
             return False
 
+    def schedule_chat_event_pump(delay_ms: int = 0) -> None:
+        nonlocal chat_event_pump_after_id
+        if app_closing:
+            return
+        if not in_ui_thread():
+            return
+        if chat_event_pump_after_id is not None:
+            try:
+                root.after_cancel(chat_event_pump_after_id)
+            except tk.TclError:
+                pass
+        chat_event_pump_after_id = root.after(max(0, delay_ms), pump_chat_event_queue)
+
     def pump_chat_event_queue() -> None:
-        nonlocal chat_event_quiet_cycles
+        nonlocal chat_event_pump_after_id, chat_event_quiet_cycles
+        chat_event_pump_after_id = None
         if app_closing:
             return
         updated = False
@@ -14459,19 +14560,17 @@ def run_gui(config_path: Path) -> int:
                 chat_status_var.set(str(payload))
         if updated:
             refresh_chat_messages()
-        if not app_closing:
-            if processed:
-                chat_event_quiet_cycles = 0
-            else:
-                chat_event_quiet_cycles = min(chat_event_quiet_cycles + 1, 8)
-            if chat_event_runtime_active():
-                idle_delay_ms = CHAT_EVENT_IDLE_PUMP_MS if chat_event_quiet_cycles < 3 else CHAT_EVENT_QUIET_PUMP_MS
-            else:
-                idle_delay_ms = BACKGROUND_IDLE_PUMP_MS
-            root.after(
-                CHAT_EVENT_BUSY_PUMP_MS if not chat_event_queue.empty() else idle_delay_ms,
-                pump_chat_event_queue,
-            )
+        if app_closing:
+            return
+        if processed:
+            chat_event_quiet_cycles = 0
+        else:
+            chat_event_quiet_cycles = min(chat_event_quiet_cycles + 1, 8)
+        if not chat_event_queue.empty():
+            schedule_chat_event_pump(CHAT_EVENT_BUSY_PUMP_MS)
+        elif chat_event_runtime_active():
+            idle_delay_ms = CHAT_EVENT_IDLE_PUMP_MS if chat_event_quiet_cycles < 3 else CHAT_EVENT_QUIET_PUMP_MS
+            schedule_chat_event_pump(idle_delay_ms)
 
     def bot_safe_delay_seconds() -> int:
         try:
@@ -18555,7 +18654,7 @@ def run_gui(config_path: Path) -> int:
         nonlocal ff_queue_sync_after_id, ff_queue_poll_after_id
         nonlocal ff_overlay_sync_after_id, ff_overlay_poll_after_id
         nonlocal config_auto_save_after_id
-        nonlocal sync_pump_after_id, ff_queue_pump_after_id
+        nonlocal sync_pump_after_id, ff_queue_pump_after_id, chat_event_pump_after_id
         nonlocal bot_pump_after_id, chat_timer_after_id, livepix_pump_after_id, avatar_result_after_id
         if app_closing:
             return
@@ -18574,6 +18673,7 @@ def run_gui(config_path: Path) -> int:
             config_auto_save_after_id,
             sync_pump_after_id,
             ff_queue_pump_after_id,
+            chat_event_pump_after_id,
             bot_pump_after_id,
             chat_timer_after_id,
             livepix_pump_after_id,
@@ -18596,6 +18696,7 @@ def run_gui(config_path: Path) -> int:
         config_auto_save_after_id = None
         sync_pump_after_id = None
         ff_queue_pump_after_id = None
+        chat_event_pump_after_id = None
         bot_pump_after_id = None
         chat_timer_after_id = None
         livepix_pump_after_id = None
@@ -19348,10 +19449,16 @@ def run_gui(config_path: Path) -> int:
         start_chat_listener(open_monitor=False)
 
     def ensure_bot_runtime(*_args: Any) -> None:
+        if not (chat_commands_enabled_var.get() or chat_timers_enabled_var.get() or bot_pending_confirmations):
+            stop_tikfinity_direct_bridge(silent=True)
+            if chat_tab_hidden:
+                stop_chat_listener(silent=True)
+            return
         ensure_chat_listener_for_bot()
         refresh_tikfinity_direct_bridge()
         if chat_commands_enabled_var.get() or chat_timers_enabled_var.get() or not bot_reply_queue.empty():
             schedule_bot_send_pump(0)
+            schedule_chat_event_pump(0)
         if chat_timers_enabled_var.get():
             schedule_chat_timer_pump(0)
 
@@ -19450,8 +19557,8 @@ def run_gui(config_path: Path) -> int:
         schedule_sync_queue_pump(0)
     if not ff_queue_sync_queue.empty():
         schedule_ff_queue_sync_pump(0)
-    if not chat_listener_hidden:
-        pump_chat_event_queue()
+    if chat_event_runtime_active() or not chat_event_queue.empty():
+        schedule_chat_event_pump(0)
     pump_deferred_kills_render()
     if livepix_startup_work_needed():
         schedule_livepix_queue_pump(0)

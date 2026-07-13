@@ -32,6 +32,7 @@ from freefire_kill_sender import (  # noqa: E402
     fetch_ff_overlay_config,
     fetch_ff_queue_realtime,
     fetch_kills_style,
+    fetch_kills_rank_realtime,
     fetch_kills_realtime,
     fetch_tikfinity_ff_gifts,
     is_live_chat_event_payload,
@@ -229,6 +230,8 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
                     "daily_total_kills": sum(int(row.get("kills") or 0) for row in daily_rows),
                 }
                 self.state["kills"].update(extra)
+                if self.state.get("debug", {}).get("rank_independent"):
+                    self.state["kills_rank"] = dict(self.state["kills"])
 
             if action == "reset":
                 ranking_rows.clear()
@@ -539,7 +542,10 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
             self.headers_seen["tikfinity"] = {key: value for key, value in self.headers.items()}
             self._send_json({"ok": True, **self.state["tikfinity"]})
         elif "freefire-kills/rank" in self.path:
-            payload = self.state.get("kills_rank") or self.state["kills"]
+            if self.state.get("debug", {}).get("rank_independent"):
+                payload = self.state.get("kills_rank", {})
+            else:
+                payload = self.state.get("kills_rank") or self.state["kills"]
             self._send_json({"ok": True, **payload})
         elif "freefire-kills/style" in self.path:
             self.headers_seen["kills_style"] = {key: value for key, value in self.headers.items()}
@@ -1168,6 +1174,26 @@ def verify(
             raise RuntimeError(f"Snapshot Kills FF com ack fraco nao caiu para fallback: {weak_ack_snapshot!r}")
         if weak_ack_actions.count("set") < 2:
             raise RuntimeError(f"Fallback do Snapshot Kills FF nao gravou diario e geral: {weak_ack_actions!r}")
+        MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
+        MockJarvisHandler.state["kills_rank"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
+        MockJarvisHandler.state["debug"] = {"kills_actions": [], "rank_independent": True}
+        public_rank_snapshot = send_kills_snapshot_update(
+            kills_url,
+            [PlayerKill("RankPublicoDia", 4)],
+            [],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        public_rank_state = fetch_kills_rank_realtime(kills_url, device_id=device_id, device_name=device_name, room=room, token=token)
+        public_rank_daily = {item.name.casefold(): item.kills for item in public_rank_state.daily_ranking or []}
+        public_rank_global = {item.name.casefold(): item.kills for item in public_rank_state.global_ranking or []}
+        public_rank_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
+        if public_rank_daily != {"rankpublicodia": 4} or public_rank_global:
+            raise RuntimeError(f"Snapshot Kills FF confirmou sem gravar /rank diario: {public_rank_snapshot!r}")
+        if not public_rank_actions:
+            raise RuntimeError("Fallback do Snapshot Kills FF nao acionou o endpoint publico de rank.")
         MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["kills_rank"] = {}
         MockJarvisHandler.state["debug"] = {
