@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.164",
-    "notes":  "Deixa a abertura mais leve ao nao criar abas e frames ocultos de Fila FF, Overlay FF e Chat Ao Vivo; os backends necessarios continuam ativos para comandos e timers.",
+    "version":  "2.6.165",
+    "notes":  "Deixa o Salvar do Kills FF mais leve: remove reordenacao visual sincronica no clique e reduz campos duplicados no snapshot enviado ao Jarvis sem perder diario/geral.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.164/AizenStreamControl.exe",
-                    "sha256":  "28838f05b43fefb9553077fafa371e2374706d515276bdec607a6e2ecfc2085e"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.165/AizenStreamControl.exe",
+                    "sha256":  "6be33d3f397eabe1728cbc27217e5317ddedd3a27664050fd33b0583a3a2c7cd"
                 }
 }

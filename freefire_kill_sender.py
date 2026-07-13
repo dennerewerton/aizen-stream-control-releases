@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.164"
+APP_VERSION = "2.6.165"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5025,24 +5025,10 @@ def send_kills_snapshot_update(
         "globalRanking": general_payload,
         "general_ranking": general_payload,
         "generalRanking": general_payload,
-        "general_rank": general_payload,
-        "generalRank": general_payload,
-        "general_players": general_payload,
-        "generalPlayers": general_payload,
         "geral_ranking": general_payload,
-        "geralRanking": general_payload,
-        "geral": general_payload,
         "daily_ranking": daily_payload,
         "dailyRanking": daily_payload,
-        "daily_rank": daily_payload,
-        "dailyRank": daily_payload,
-        "daily_players": daily_payload,
-        "dailyPlayers": daily_payload,
-        "day_ranking": daily_payload,
-        "dayRanking": daily_payload,
         "dia_ranking": daily_payload,
-        "diaRanking": daily_payload,
-        "diario": daily_payload,
         "daily": daily_payload,
         "general": general_payload,
         "scopes": ["daily", "general"],
@@ -5052,9 +5038,7 @@ def send_kills_snapshot_update(
         "replaceGeneral": True,
         "rankings": {
             "daily": daily_payload,
-            "day": daily_payload,
             "dia": daily_payload,
-            "diario": daily_payload,
             "global": general_payload,
             "general": general_payload,
             "geral": general_payload,
@@ -17158,7 +17142,6 @@ def run_gui(config_path: Path) -> int:
         fill_visible_manual_missing_names_from_rank(active_scope)
         repair_manual_scope_buffer_names("daily")
         repair_manual_scope_buffer_names("general")
-        sort_manual_rows_by_kills()
         if active_scope == current_manual_scope():
             unresolved_rows = [
                 index
