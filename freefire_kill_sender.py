@@ -77,10 +77,14 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.155"
+APP_VERSION = "2.6.156"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
+UPDATE_DOWNLOAD_ATTEMPTS = 3
+UPDATE_DOWNLOAD_CHUNK_BYTES = 256 * 1024
+UPDATE_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 12
+UPDATE_DOWNLOAD_READ_TIMEOUT_SECONDS = 18
 LOG_QUEUE_SOFT_LIMIT = 1500
 LOG_TEXT_MAX_LINES = 1200
 LOG_PUMP_BATCH_LIMIT = 60
@@ -5796,33 +5800,89 @@ def sha256_file(path: Path) -> str:
 
 def download_update_asset(url: str, sha256: str = "", progress_callback: Any | None = None) -> Path:
     suffix = Path(urlparse(url).path).suffix or ".bin"
-    target_dir = update_workspace_dir() / f"aizen_update_{int(time.time())}_{secrets.token_hex(4)}"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"update{suffix}"
-    with requests.get(url, timeout=60, stream=True) as response:
-        response.raise_for_status()
-        total = int(response.headers.get("content-length") or 0)
-        downloaded = 0
-        with target.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
-                    downloaded += len(chunk)
-                    if progress_callback and total:
-                        try:
-                            progress_callback(min(99, int(downloaded * 100 / total)))
-                        except Exception:
-                            pass
-    if sha256:
-        actual = sha256_file(target)
-        if actual.lower() != sha256.lower():
-            raise RuntimeError(f"SHA256 da atualizacao nao confere. Esperado {sha256}, obtido {actual}.")
-    if progress_callback:
+    last_error: Exception | None = None
+
+    def report_progress(percent: int, detail: str = "") -> None:
+        if not progress_callback:
+            return
         try:
-            progress_callback(100)
+            progress_callback(max(0, min(100, percent)), detail)
+        except TypeError:
+            progress_callback(max(0, min(100, percent)))
         except Exception:
             pass
-    return target
+
+    for attempt in range(1, UPDATE_DOWNLOAD_ATTEMPTS + 1):
+        target_dir = update_workspace_dir() / f"aizen_update_{int(time.time())}_{secrets.token_hex(4)}"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"update{suffix}"
+        downloaded = 0
+        total = 0
+        try:
+            report_progress(0, f"Iniciando download (tentativa {attempt}/{UPDATE_DOWNLOAD_ATTEMPTS}).")
+            with requests.get(
+                url,
+                timeout=(UPDATE_DOWNLOAD_CONNECT_TIMEOUT_SECONDS, UPDATE_DOWNLOAD_READ_TIMEOUT_SECONDS),
+                stream=True,
+                headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"},
+            ) as response:
+                response.raise_for_status()
+                total = int(response.headers.get("content-length") or 0)
+                last_percent = -1
+                last_report_at = 0.0
+                with target.open("wb") as handle:
+                    for chunk in response.iter_content(chunk_size=UPDATE_DOWNLOAD_CHUNK_BYTES):
+                        if not chunk:
+                            continue
+                        handle.write(chunk)
+                        downloaded += len(chunk)
+                        if total:
+                            percent = min(99, int(downloaded * 100 / total))
+                            now = time.monotonic()
+                            if percent != last_percent or now - last_report_at >= 1.0:
+                                downloaded_mb = downloaded / (1024 * 1024)
+                                total_mb = total / (1024 * 1024)
+                                report_progress(
+                                    percent,
+                                    f"Baixando {downloaded_mb:.1f}/{total_mb:.1f} MB "
+                                    f"(tentativa {attempt}/{UPDATE_DOWNLOAD_ATTEMPTS}).",
+                                )
+                                last_percent = percent
+                                last_report_at = now
+                        else:
+                            downloaded_mb = downloaded / (1024 * 1024)
+                            report_progress(
+                                min(95, 10 + int(downloaded_mb)),
+                                f"Baixando {downloaded_mb:.1f} MB (tentativa {attempt}/{UPDATE_DOWNLOAD_ATTEMPTS}).",
+                            )
+            if total and downloaded < total:
+                raise RuntimeError(f"Download incompleto: {downloaded} de {total} bytes recebidos.")
+            if sha256:
+                report_progress(99, "Conferindo arquivo baixado.")
+                actual = sha256_file(target)
+                if actual.lower() != sha256.lower():
+                    raise RuntimeError(f"SHA256 da atualizacao nao confere. Esperado {sha256}, obtido {actual}.")
+            report_progress(100, "Download concluido.")
+            return target
+        except Exception as exc:
+            last_error = exc
+            write_update_log(
+                "Download da atualizacao falhou "
+                f"(tentativa {attempt}/{UPDATE_DOWNLOAD_ATTEMPTS}, bytes={downloaded}/{total or '?'})"
+                f": {exc}"
+            )
+            try:
+                shutil.rmtree(target_dir, ignore_errors=True)
+            except OSError:
+                pass
+            if attempt >= UPDATE_DOWNLOAD_ATTEMPTS:
+                break
+            report_progress(
+                min(99, max(0, int(downloaded * 100 / total)) if total else 0),
+                f"Rede oscilou; tentando novamente ({attempt + 1}/{UPDATE_DOWNLOAD_ATTEMPTS}).",
+            )
+            time.sleep(1.5 * attempt)
+    raise RuntimeError(f"Download da atualizacao falhou apos {UPDATE_DOWNLOAD_ATTEMPTS} tentativas: {last_error}")
 
 
 def resolve_downloaded_exe(downloaded: Path) -> Path:
@@ -5967,14 +6027,17 @@ def maybe_apply_auto_update(config_path: Path) -> bool:
             "Atualização encontrada",
             f"Baixando versão {asset['version']}...",
         )
+        def update_download_progress(percent: int, detail: str = "") -> None:
+            status_window.set_status(
+                "Baixando atualização",
+                detail or f"Recebendo versão {asset['version']}...",
+                percent,
+            )
+
         downloaded = download_update_asset(
             asset["url"],
             asset.get("sha256", ""),
-            lambda percent: status_window.set_status(
-                "Baixando atualização",
-                f"Recebendo versão {asset['version']}...",
-                percent,
-            ),
+            update_download_progress,
         )
         status_window.set_status("Validando atualização", "Conferindo arquivo baixado...", 100)
         new_exe = resolve_downloaded_exe(downloaded)
