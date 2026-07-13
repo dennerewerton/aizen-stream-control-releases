@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.166",
-    "notes":  "Kills FF: Salvar agora confirma o rank publico /rank antes de marcar como sincronizado e forca fallback para gravar o diario quando o endpoint base apenas responde OK. Tambem reduz trabalho ocioso do leitor de chat.",
+    "version":  "2.6.167",
+    "notes":  "Otimizacao: o renderizador diferido de abas agora fica cancelavel, dorme mais tempo quando o app esta parado e acorda imediatamente ao trocar de aba, reduzindo trabalho ocioso da UI.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.166/AizenStreamControl.exe",
-                    "sha256":  "b29a65ce6e3d52ac02f613aa6f33728e181c9570c593f0857af44758f58ed08a"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.167/AizenStreamControl.exe",
+                    "sha256":  "a01bb7f048731899a9adc26bf24f6f7ec8bf7b9964b01d27a877750b6da16302"
                 }
 }

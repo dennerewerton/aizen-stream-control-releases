@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.166"
+APP_VERSION = "2.6.167"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -125,6 +125,7 @@ BACKGROUND_IDLE_PUMP_MS = 2000
 SYNC_QUEUE_IDLE_PUMP_MS = 1200
 SYNC_QUEUE_PROCESSED_PUMP_MS = 140
 BACKGROUND_DISABLED_PUMP_MS = 8000
+DEFERRED_RENDER_IDLE_PUMP_MS = 8000
 STALE_MEI_MIN_AGE_SECONDS = 24 * 60 * 60
 STALE_MEI_CLEANUP_LIMIT = 8
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
@@ -7068,6 +7069,7 @@ def run_gui(config_path: Path) -> int:
     bot_pump_after_id: str | None = None
     chat_timer_after_id: str | None = None
     livepix_pump_after_id: str | None = None
+    deferred_render_after_id: str | None = None
     app_closing = False
     hidden_main_tabs = {"Fila FF", "Overlay FF", "Chat Ao Vivo"}
     kills_ff_site_sync_hidden = "Kills FF" in hidden_main_tabs
@@ -18656,6 +18658,7 @@ def run_gui(config_path: Path) -> int:
         nonlocal config_auto_save_after_id
         nonlocal sync_pump_after_id, ff_queue_pump_after_id, chat_event_pump_after_id
         nonlocal bot_pump_after_id, chat_timer_after_id, livepix_pump_after_id, avatar_result_after_id
+        nonlocal deferred_render_after_id
         if app_closing:
             return
         save_current_config_silent(compact=True)
@@ -18678,6 +18681,7 @@ def run_gui(config_path: Path) -> int:
             chat_timer_after_id,
             livepix_pump_after_id,
             avatar_result_after_id,
+            deferred_render_after_id,
         ):
             if after_id is not None:
                 try:
@@ -18701,6 +18705,7 @@ def run_gui(config_path: Path) -> int:
         chat_timer_after_id = None
         livepix_pump_after_id = None
         avatar_result_after_id = None
+        deferred_render_after_id = None
         try:
             if raffle_worker is not None:
                 raffle_worker.stop()
@@ -19462,7 +19467,22 @@ def run_gui(config_path: Path) -> int:
         if chat_timers_enabled_var.get():
             schedule_chat_timer_pump(0)
 
+    def schedule_deferred_render_pump(delay_ms: int = 0) -> None:
+        nonlocal deferred_render_after_id
+        if app_closing:
+            return
+        if not in_ui_thread():
+            return
+        if deferred_render_after_id is not None:
+            try:
+                root.after_cancel(deferred_render_after_id)
+            except tk.TclError:
+                pass
+        deferred_render_after_id = root.after(max(0, delay_ms), pump_deferred_kills_render)
+
     def pump_deferred_kills_render() -> None:
+        nonlocal deferred_render_after_id
+        deferred_render_after_id = None
         if app_closing:
             return
         kills_active = is_kills_ff_tab_active()
@@ -19513,8 +19533,10 @@ def run_gui(config_path: Path) -> int:
         elif has_kills_pending or has_livepix_pending or has_raffle_pending or has_appearance_pending:
             delay_ms = 900
         else:
-            delay_ms = BACKGROUND_IDLE_PUMP_MS
-        root.after(delay_ms, pump_deferred_kills_render)
+            delay_ms = DEFERRED_RENDER_IDLE_PUMP_MS
+        schedule_deferred_render_pump(delay_ms)
+
+    tabview.configure(command=lambda: schedule_deferred_render_pump(0))
 
     def run_startup_ui_tasks() -> None:
         if app_closing:
@@ -19559,7 +19581,7 @@ def run_gui(config_path: Path) -> int:
         schedule_ff_queue_sync_pump(0)
     if chat_event_runtime_active() or not chat_event_queue.empty():
         schedule_chat_event_pump(0)
-    pump_deferred_kills_render()
+    schedule_deferred_render_pump(0)
     if livepix_startup_work_needed():
         schedule_livepix_queue_pump(0)
     schedule_livepix_startup_tasks()
