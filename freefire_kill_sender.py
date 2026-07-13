@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.151"
+APP_VERSION = "2.6.152"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -10789,6 +10789,10 @@ def run_gui(config_path: Path) -> int:
         for index, row in enumerate(manual_rows, start=1):
             row["frame"].grid(row=index - 1, column=0, sticky="ew", padx=8, pady=4)
             row["index_label"].configure(text=f"{index:02d}")
+            try:
+                row["frame"].configure(fg_color="#171014" if index % 2 else "#0f0b0e")
+            except tk.TclError:
+                pass
 
     def sort_manual_rows_by_kills() -> None:
         def row_sort_key(row: dict[str, Any]) -> tuple[int, int, str]:
@@ -11487,13 +11491,23 @@ def run_gui(config_path: Path) -> int:
                 manual_table_render_pending = True
                 manual_table_render_scope = clean_scope
                 return
-            for row in manual_rows:
-                row["frame"].destroy()
-            manual_rows.clear()
-            for player in players:
-                add_manual_row(player.name, player.kills, notify=False)
-            while len(manual_rows) < minimum_rows:
+            target_rows = max(len(players), minimum_rows)
+            while len(manual_rows) > target_rows:
+                row = manual_rows.pop()
+                try:
+                    row["frame"].destroy()
+                except tk.TclError:
+                    pass
+            while len(manual_rows) < target_rows:
                 add_manual_row(notify=False)
+            for index, row in enumerate(manual_rows):
+                player = players[index] if index < len(players) else PlayerKill("", 0)
+                try:
+                    hide_manual_name_suggestions(row)
+                    row["name_var"].set(player.name)
+                    row["kills_var"].set(str(normalize_kill_value(player.kills)))
+                except tk.TclError:
+                    pass
             update_manual_row_numbers()
             if manual_table_render_scope == clean_scope:
                 manual_table_render_pending = False

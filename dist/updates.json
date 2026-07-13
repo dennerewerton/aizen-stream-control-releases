@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.151",
-    "notes":  "Deixa o autosave mais leve: grava config.json em segundo plano, usa ultima versao vence e protege escritas concorrentes para reduzir travamentos.",
+    "version":  "2.6.152",
+    "notes":  "Deixa o painel Kills FF mais leve reaproveitando linhas da tabela em vez de destruir e recriar todos os widgets a cada atualizacao.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.151/AizenStreamControl.exe",
-                    "sha256":  "ea4f8ecff5d2774b476a0aa9f4bf1fb3bf4762c9904f82b775766afcdf044dd6"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.152/AizenStreamControl.exe",
+                    "sha256":  "4ed659c9576dc1a959aface27ba7143e27e0b9fc79e1877b593260dea01b3993"
                 }
 }
