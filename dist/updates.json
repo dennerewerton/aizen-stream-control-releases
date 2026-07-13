@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.171",
-    "notes":  "Otimizacao: o painel de logs agora reduz acordadas da UI quando esta inativo e sem mensagens pendentes, mantendo resposta rapida quando ha logs para renderizar.",
+    "version":  "2.6.172",
+    "notes":  "Otimizacao: o Livepix agora reduz acordadas da UI quando esta habilitado mas totalmente inativo, mantendo resposta rapida com webhook, overlay, aba aberta ou sincronizacao em andamento.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.171/AizenStreamControl.exe",
-                    "sha256":  "5ba3142b2e5476302d94afeab3dcb509a37cde089ae316943f1b7c3d5ba86c15"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.172/AizenStreamControl.exe",
+                    "sha256":  "9514e2fdecfcb5cf4daac5c34781307c66303cb94505a45747279badd00ee002"
                 }
 }

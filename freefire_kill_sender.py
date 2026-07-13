@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.171"
+APP_VERSION = "2.6.172"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -101,6 +101,7 @@ CHAT_EVENT_QUIET_PUMP_MS = 500
 SYNC_QUEUE_LIMIT = 240
 FF_QUEUE_SYNC_QUEUE_LIMIT = 180
 LIVEPIX_QUEUE_LIMIT = 600
+LIVEPIX_INACTIVE_IDLE_PUMP_MS = 8000
 BOT_REPLY_QUEUE_LIMIT = 80
 BOT_RESULT_QUEUE_LIMIT = 120
 AVATAR_RESULT_QUEUE_LIMIT = 180
@@ -16929,7 +16930,7 @@ def run_gui(config_path: Path) -> int:
             ):
                 delay_ms = 800
             elif livepix_enabled_var.get():
-                delay_ms = BACKGROUND_IDLE_PUMP_MS
+                delay_ms = LIVEPIX_INACTIVE_IDLE_PUMP_MS
             else:
                 return
             schedule_livepix_queue_pump(delay_ms)
