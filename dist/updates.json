@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.156",
-    "notes":  "Melhora o atualizador: mostra progresso em MB, tenta novamente quando a rede oscila e falha de forma limpa se o download travar ou vier incompleto.",
+    "version":  "2.6.157",
+    "notes":  "Corrige erro da ponte TikFinity quando a porta 8080 esta ocupada: tenta portas alternativas e mostra o novo endereco para configurar no TikFinity.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.156/AizenStreamControl.exe",
-                    "sha256":  "f5d1e504d8b89f7217146442350806405da88aa159aad821ce524c9d54ec9626"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.157/AizenStreamControl.exe",
+                    "sha256":  "75b1a9a0d2a4b79cc9db045d387496b5fe4628343506ca3a17383a29845d2a6f"
                 }
 }

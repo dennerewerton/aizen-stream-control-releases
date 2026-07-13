@@ -4,6 +4,7 @@ import argparse
 import base64
 import ctypes
 import ctypes.wintypes
+import errno
 import hashlib
 import html
 import json
@@ -77,10 +78,11 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.156"
+APP_VERSION = "2.6.157"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
+TIKFINITY_DIRECT_FALLBACK_PORTS = (8080, 8081, 8082, 8090, 18080)
 UPDATE_DOWNLOAD_ATTEMPTS = 3
 UPDATE_DOWNLOAD_CHUNK_BYTES = 256 * 1024
 UPDATE_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 12
@@ -1781,6 +1783,42 @@ def normalize_streamerbot_websocket_url(url: str) -> str:
     return parsed.geturl()
 
 
+def is_address_in_use_error(exc: BaseException) -> bool:
+    return (
+        getattr(exc, "errno", None) == errno.EADDRINUSE
+        or getattr(exc, "errno", None) == errno.EACCES
+        or getattr(exc, "winerror", None) == 10048
+        or getattr(exc, "winerror", None) == 10013
+        or getattr(exc, "errno", None) == 10048
+        or getattr(exc, "errno", None) == 10013
+    )
+
+
+def streamerbot_websocket_url_with_port(url: str, port: int) -> str:
+    parsed = urlparse(normalize_streamerbot_websocket_url(url))
+    host = parsed.hostname or "127.0.0.1"
+    if host.casefold() in {"localhost", "::1"}:
+        host = "127.0.0.1"
+    netloc = f"{host}:{port}"
+    return parsed._replace(netloc=netloc, path=parsed.path or "/").geturl()
+
+
+def tikfinity_direct_bridge_url_candidates(url: str) -> list[str]:
+    normalized = normalize_streamerbot_websocket_url(url)
+    parsed = urlparse(normalized)
+    preferred_port = parsed.port or 8080
+    ports = [preferred_port]
+    for fallback_port in TIKFINITY_DIRECT_FALLBACK_PORTS:
+        if fallback_port not in ports:
+            ports.append(fallback_port)
+    candidates: list[str] = []
+    for port in ports:
+        candidate = streamerbot_websocket_url_with_port(normalized, port)
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
 def normalize_streamerbot_http_url(url: str) -> str:
     text = str(url or "").strip()
     if not text:
@@ -2186,6 +2224,10 @@ def connect_plain_websocket_client(url: str, timeout: float = 8.0) -> socket.soc
         raise
 
 
+class TikfinityBridgePortInUseError(RuntimeError):
+    pass
+
+
 class TikfinityDirectBridgeServer:
     def __init__(self, websocket_url: str, log: callable | None = None):
         url = normalize_streamerbot_websocket_url(websocket_url)
@@ -2228,9 +2270,13 @@ class TikfinityDirectBridgeServer:
                     "Windows/Winsock recusou abrir a ponte local do TikFinity neste processo. "
                     "Feche e abra o app novamente pelo atalho; se continuar, reinicie o Windows ou repare o Winsock."
                 ) from exc
+            if is_address_in_use_error(exc):
+                raise TikfinityBridgePortInUseError(
+                    f"A porta {self.port} ja esta ocupada para a ponte direta do TikFinity."
+                ) from exc
             raise RuntimeError(
                 f"Nao consegui abrir a ponte direta em {self.url}. "
-                "Feche o Streamer.bot ou outro programa usando essa porta, ou mude a porta no TikFinity e no app."
+                "Feche o programa usando essa porta, ou mude a porta no TikFinity e no app."
             ) from exc
         self.server_socket = server_socket
         self.thread = threading.Thread(target=self._accept_loop, name="AizenTikFinityBridge", daemon=True)
@@ -14405,16 +14451,35 @@ def run_gui(config_path: Path) -> int:
         nonlocal bot_bridge_server
         if app_closing:
             raise RuntimeError("O app esta fechando; ponte do TikFinity nao pode iniciar.")
-        url = normalize_streamerbot_websocket_url(bot_streamerbot_ws_url_var.get())
-        bot_streamerbot_ws_url_var.set(url)
-        if bot_bridge_server is not None and bot_bridge_server.url == url and bot_bridge_server.is_running():
+        preferred_url = normalize_streamerbot_websocket_url(bot_streamerbot_ws_url_var.get())
+        bot_streamerbot_ws_url_var.set(preferred_url)
+        candidate_urls = tikfinity_direct_bridge_url_candidates(preferred_url)
+        if bot_bridge_server is not None and bot_bridge_server.url in candidate_urls and bot_bridge_server.is_running():
             return bot_bridge_server
         stop_tikfinity_direct_bridge(silent=True)
-        server = TikfinityDirectBridgeServer(url, log)
-        server.start()
-        bot_bridge_server = server
-        log(f"Ponte direta do TikFinity ativa em {server.url}.")
-        return server
+        port_errors: list[str] = []
+        for candidate_url in candidate_urls:
+            server = TikfinityDirectBridgeServer(candidate_url, log)
+            try:
+                server.start()
+            except TikfinityBridgePortInUseError as exc:
+                port_errors.append(str(exc))
+                continue
+            bot_bridge_server = server
+            if server.url != preferred_url:
+                bot_streamerbot_ws_url_var.set(server.url)
+                log(
+                    f"Porta da ponte TikFinity ocupada ({preferred_url}). "
+                    f"Use no TikFinity: Setup > Streamer.bot Connection = {server.url}"
+                )
+            log(f"Ponte direta do TikFinity ativa em {server.url}.")
+            return server
+        detail = " ".join(port_errors) or "Todas as portas alternativas falharam."
+        raise RuntimeError(
+            "Nao consegui abrir a ponte direta do TikFinity. "
+            f"{detail} Feche o programa usando a porta ou configure no TikFinity uma porta livre como "
+            "ws://127.0.0.1:8081/."
+        )
 
     def refresh_tikfinity_direct_bridge(*_args: Any) -> None:
         if app_closing:
