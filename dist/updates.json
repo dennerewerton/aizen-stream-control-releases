@@ -1,6 +1,6 @@
 {
     "version":  "2.6.164",
-    "notes":  "Deixa a abertura mais leve ao nao criar abas e frames ocultos de Fila FF, Overlay FF e Chat Ao Vivo; mantem os backends necessarios ativos quando comandos/timers usam chat.",
+    "notes":  "Deixa a abertura mais leve ao nao criar abas e frames ocultos de Fila FF, Overlay FF e Chat Ao Vivo; os backends necessarios continuam ativos para comandos e timers.",
     "windows":  {
                     "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.164/AizenStreamControl.exe",
                     "sha256":  "28838f05b43fefb9553077fafa371e2374706d515276bdec607a6e2ecfc2085e"
