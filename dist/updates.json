@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.154",
-    "notes":  "Deixa o Kills FF mais leve ao montar tabelas grandes em blocos, mantendo a janela responsiva enquanto carrega os jogadores.",
+    "version":  "2.6.155",
+    "notes":  "Corrige crash na abertura quando a Fila FF esta oculta e o layout tenta ajustar um painel que nao foi criado.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.154/AizenStreamControl.exe",
-                    "sha256":  "e20cb483c1d03614093b0dad54f8e2e14e77158af3c5dbb672f955723ff48dcd"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.155/AizenStreamControl.exe",
+                    "sha256":  "d8ebf973370b2aaf5ed0a0af1b45e6b237626476d2bf24ac8deccaae4d5253aa"
                 }
 }

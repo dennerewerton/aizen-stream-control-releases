@@ -77,7 +77,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.154"
+APP_VERSION = "2.6.155"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -6723,6 +6723,7 @@ def run_gui(config_path: Path) -> int:
     kills_rank_render_pending = False
     kills_ignored_render_pending = False
     ff_queue_actions: Any | None = None
+    ff_queue_card: Any | None = None
     ff_queue_summary_frame: Any | None = None
     ff_queue_table_frame: Any | None = None
     ff_queue_summary_widgets: list[Any] = []
@@ -9716,7 +9717,8 @@ def run_gui(config_path: Path) -> int:
         log_text.configure(height=events_height, font=("Consolas", max(9, font_size - 2)))
 
         participant_card.grid_propagate(True)
-        ff_queue_card.grid_propagate(True)
+        if ff_queue_card is not None:
+            ff_queue_card.grid_propagate(True)
         winner_card.grid_propagate(False)
         log_card.grid_propagate(True)
 
