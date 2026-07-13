@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.170"
+APP_VERSION = "2.6.171"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -91,6 +91,7 @@ UPDATE_DOWNLOAD_READ_TIMEOUT_SECONDS = 18
 LOG_QUEUE_SOFT_LIMIT = 1500
 LOG_TEXT_MAX_LINES = 1200
 LOG_PUMP_BATCH_LIMIT = 60
+LOG_INACTIVE_IDLE_PUMP_MS = 8000
 CHAT_USER_CACHE_LIMIT = 600
 CHAT_EVENT_QUEUE_LIMIT = 800
 CHAT_EVENT_BATCH_LIMIT = 32
@@ -19315,7 +19316,7 @@ def run_gui(config_path: Path) -> int:
             elif logs_active:
                 delay_ms = 900
             else:
-                delay_ms = BACKGROUND_IDLE_PUMP_MS
+                delay_ms = LOG_INACTIVE_IDLE_PUMP_MS
             root.after(delay_ms, pump_log)
 
     saved_manual_players = parse_players_payload(config.get("manual_kills", []))

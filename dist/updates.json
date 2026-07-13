@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.170",
-    "notes":  "Kills FF mais leve: a tabela de kills agora evita reconfigurar linhas que ja estao iguais, reduzindo trabalho ao carregar/atualizar muitos jogadores.",
+    "version":  "2.6.171",
+    "notes":  "Otimizacao: o painel de logs agora reduz acordadas da UI quando esta inativo e sem mensagens pendentes, mantendo resposta rapida quando ha logs para renderizar.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.170/AizenStreamControl.exe",
-                    "sha256":  "7dac19c45c9dfb47c92ee474455a87686d78768a0a88789524d76f38bccb3c69"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.171/AizenStreamControl.exe",
+                    "sha256":  "5ba3142b2e5476302d94afeab3dcb509a37cde089ae316943f1b7c3d5ba86c15"
                 }
 }
