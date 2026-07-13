@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.159"
+APP_VERSION = "2.6.160"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -16035,10 +16035,40 @@ def run_gui(config_path: Path) -> int:
             enqueue_livepix_event("webhook_detail", fallback)
             enqueue_livepix_event("status", f"Webhook recebido; detalhe API falhou: {livepix_error_detail(exc)}")
 
+    def update_livepix_config_from_vars() -> dict[str, Any]:
+        config["livepix_enabled"] = bool(livepix_enabled_var.get())
+        config["livepix_client_id"] = livepix_client_id_var.get().strip()
+        config["livepix_client_secret"] = livepix_client_secret_var.get().strip()
+        config["livepix_scopes"] = livepix_scopes_var.get().strip()
+        config["livepix_webhook_host"] = livepix_webhook_host_var.get().strip() or "127.0.0.1"
+        config["livepix_webhook_port"] = livepix_webhook_port()
+        config["livepix_webhook_token"] = livepix_webhook_token_var.get().strip()
+        config["livepix_redirect_url"] = livepix_redirect_url_var.get().strip() or "https://livepix.gg"
+        config["livepix_goal_amount"] = livepix_goal_amount_cents()
+        config["livepix_goal_label"] = livepix_goal_label_var.get().strip() or "Meta da live"
+        config["livepix_currency"] = livepix_currency_var.get().strip().upper() or "BRL"
+        config["livepix_checkout_amount"] = livepix_checkout_amount_cents()
+        config["livepix_checkout_user"] = livepix_checkout_user_var.get().strip() or "Apoiador"
+        config["livepix_checkout_message"] = livepix_checkout_message_var.get().strip() or "Apoio para a live!"
+        config["livepix_plan_id"] = livepix_plan_id_var.get().strip()
+        config["livepix_plan_slug"] = livepix_plan_slug_var.get().strip() or "vip-live"
+        config["livepix_plan_name"] = livepix_plan_name_var.get().strip() or "VIP da live"
+        config["livepix_plan_description"] = livepix_plan_description_var.get().strip()
+        config["livepix_subscription_recurrence"] = livepix_subscription_recurrence_var.get().strip() or "monthly"
+        config["livepix_subscriber_email"] = livepix_subscriber_email_var.get().strip()
+        config["livepix_announce_in_chat"] = bool(livepix_announce_in_chat_var.get())
+        config["livepix_public_page_file"] = livepix_public_page_file_var.get().strip() or "livepix_public.html"
+        return config
+
+    def save_livepix_config_silent() -> dict[str, Any]:
+        livepix_config = update_livepix_config_from_vars()
+        save_config_compact(config_path, livepix_config)
+        return livepix_config
+
     def start_livepix_webhook() -> None:
         nonlocal livepix_webhook_server
         try:
-            save_config(config_path, update_config_from_form())
+            save_livepix_config_silent()
             stop_livepix_webhook(silent=True)
             server = LocalLivepixWebhookServer(
                 livepix_webhook_host_var.get().strip() or "127.0.0.1",
@@ -16073,7 +16103,7 @@ def run_gui(config_path: Path) -> int:
                 log("Livepix sincronizacao ja esta em andamento; aguarde finalizar.")
             return
         try:
-            save_config(config_path, update_config_from_form())
+            save_livepix_config_silent()
             client = livepix_client()
         except Exception as exc:
             detail = str(exc)
@@ -16288,7 +16318,7 @@ def run_gui(config_path: Path) -> int:
 
     def create_livepix_checkout(kind: str) -> None:
         try:
-            save_config(config_path, update_config_from_form())
+            save_livepix_config_silent()
             client = livepix_client()
             amount = livepix_checkout_amount_cents()
             currency = livepix_currency_var.get().strip().upper() or "BRL"
@@ -16318,7 +16348,7 @@ def run_gui(config_path: Path) -> int:
 
     def create_livepix_plan() -> None:
         try:
-            save_config(config_path, update_config_from_form())
+            save_livepix_config_silent()
             client = livepix_client()
             amount = livepix_checkout_amount_cents()
             slug = livepix_plan_slug_var.get().strip() or "vip-live"
@@ -16340,7 +16370,7 @@ def run_gui(config_path: Path) -> int:
 
     def create_livepix_subscription_checkout() -> None:
         try:
-            save_config(config_path, update_config_from_form())
+            save_livepix_config_silent()
             client = livepix_client()
             plan_id = livepix_plan_id_var.get().strip()
             if not plan_id:
@@ -16371,7 +16401,7 @@ def run_gui(config_path: Path) -> int:
 
     def register_livepix_webhook() -> None:
         try:
-            save_config(config_path, update_config_from_form())
+            save_livepix_config_silent()
             client = livepix_client()
             url = livepix_endpoint_url(include_token=True)
         except Exception as exc:
@@ -16686,7 +16716,7 @@ def run_gui(config_path: Path) -> int:
                 if plan_id:
                     livepix_plan_id_var.set(plan_id)
                     livepix_status_var.set("Plano criado")
-                    save_config(config_path, update_config_from_form())
+                    save_livepix_config_silent()
                 else:
                     livepix_status_var.set("Plano criado")
             elif kind == "status":

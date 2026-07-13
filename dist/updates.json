@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.159",
-    "notes":  "Otimiza o Salvar do Kills FF tentando primeiro o endpoint em lote do Jarvis, reduzindo tentativas lentas em /action.",
+    "version":  "2.6.160",
+    "notes":  "Deixa o Livepix mais leve ao sincronizar/salvar usando um salvamento parcial dos campos Livepix em vez de recalcular toda a configuração do app.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.159/AizenStreamControl.exe",
-                    "sha256":  "7a2fd9fc27fa21e8508712fa715314b26d1625eb643aa3db73aa7a3aaaddedd6"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.160/AizenStreamControl.exe",
+                    "sha256":  "0edc57b04d0195f0be56a45fc8a9bea7aab0db180f0a12247e7283925d1be811"
                 }
 }
