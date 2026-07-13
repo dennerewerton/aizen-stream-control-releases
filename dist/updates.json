@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.163",
-    "notes":  "Corrige o Salvar do Kills FF: o app agora confirma no Jarvis que o rank diario e o rank geral foram persistidos antes de mostrar sucesso, envia campos mais compativeis para diario/geral e deixa a checagem inicial de atualizacao mais leve.",
+    "version":  "2.6.164",
+    "notes":  "Deixa a abertura mais leve ao nao criar abas e frames ocultos de Fila FF, Overlay FF e Chat Ao Vivo; mantem os backends necessarios ativos quando comandos/timers usam chat.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.163/AizenStreamControl.exe",
-                    "sha256":  "d54951871bc4a5f5e01d27086efee97c87e61ff57c56095719a285d38ae33cb4"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.164/AizenStreamControl.exe",
+                    "sha256":  "28838f05b43fefb9553077fafa371e2374706d515276bdec607a6e2ecfc2085e"
                 }
 }

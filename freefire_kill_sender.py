@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.163"
+APP_VERSION = "2.6.164"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -7859,23 +7859,28 @@ def run_gui(config_path: Path) -> int:
         border_color=border,
     )
     tabview.grid(row=1, column=0, sticky="nsew")
-    tabview.add("Geral")
-    tabview.add("Kills FF")
-    tabview.add("Fila FF")
-    tabview.add("Overlay FF")
-    tabview.add("Livepix")
-    tabview.add("Chat Ao Vivo")
-    tabview.add("Comandos")
-    tabview.add("Temporizador")
-    tabview.add("Sorteio Chat")
-    tabview.add("Logs")
-    tabview.add("Aparência")
+    visible_tab_names = [
+        "Geral",
+        "Kills FF",
+        "Fila FF",
+        "Overlay FF",
+        "Livepix",
+        "Chat Ao Vivo",
+        "Comandos",
+        "Temporizador",
+        "Sorteio Chat",
+        "Logs",
+        "Aparência",
+    ]
+    for tab_name in visible_tab_names:
+        if tab_name not in hidden_main_tabs:
+            tabview.add(tab_name)
     general_tab_root = tabview.tab("Geral")
     kills_tab_root = tabview.tab("Kills FF")
-    ff_queue_tab_root = tabview.tab("Fila FF")
-    ff_overlay_tab_root = tabview.tab("Overlay FF")
+    ff_queue_tab_root = None if ff_queue_site_sync_hidden else tabview.tab("Fila FF")
+    ff_overlay_tab_root = None if ff_overlay_site_sync_hidden else tabview.tab("Overlay FF")
     livepix_tab_root = tabview.tab("Livepix")
-    live_chat_tab_root = tabview.tab("Chat Ao Vivo")
+    live_chat_tab_root = None if chat_tab_hidden else tabview.tab("Chat Ao Vivo")
     commands_tab_root = tabview.tab("Comandos")
     timers_tab_root = tabview.tab("Temporizador")
     raffle_tab = tabview.tab("Sorteio Chat")
@@ -7883,10 +7888,13 @@ def run_gui(config_path: Path) -> int:
     appearance_tab = tabview.tab("Aparência")
     general_tab_root.configure(fg_color=bg)
     kills_tab_root.configure(fg_color=bg)
-    ff_queue_tab_root.configure(fg_color=bg)
-    ff_overlay_tab_root.configure(fg_color=bg)
+    if ff_queue_tab_root is not None:
+        ff_queue_tab_root.configure(fg_color=bg)
+    if ff_overlay_tab_root is not None:
+        ff_overlay_tab_root.configure(fg_color=bg)
     livepix_tab_root.configure(fg_color=bg)
-    live_chat_tab_root.configure(fg_color=bg)
+    if live_chat_tab_root is not None:
+        live_chat_tab_root.configure(fg_color=bg)
     commands_tab_root.configure(fg_color=bg)
     timers_tab_root.configure(fg_color=bg)
     raffle_tab.configure(fg_color=bg)
@@ -7904,13 +7912,10 @@ def run_gui(config_path: Path) -> int:
         timers_tab_root,
         events_tab_root,
     ):
+        if tab_root is None:
+            continue
         tab_root.columnconfigure(0, weight=1)
         tab_root.rowconfigure(0, weight=1)
-    for hidden_tab_name in hidden_main_tabs:
-        try:
-            tabview._segmented_button.delete(hidden_tab_name)
-        except (AttributeError, ValueError, tk.TclError):
-            pass
 
     general_tab = ctk.CTkScrollableFrame(
         general_tab_root,
@@ -7926,32 +7931,35 @@ def run_gui(config_path: Path) -> int:
         corner_radius=0,
     )
     kills_tab.grid(row=0, column=0, sticky="nsew")
-    ff_queue_tab = ctk.CTkFrame(
-        ff_queue_tab_root,
-        fg_color=bg,
-        corner_radius=0,
-    )
-    ff_queue_tab.grid(row=0, column=0, sticky="nsew")
-    ff_overlay_tab = ctk.CTkFrame(
-        ff_overlay_tab_root,
-        fg_color=bg,
-        corner_radius=0,
-    )
-    ff_overlay_tab.grid(row=0, column=0, sticky="nsew")
+    if ff_queue_tab_root is not None:
+        ff_queue_tab = ctk.CTkFrame(
+            ff_queue_tab_root,
+            fg_color=bg,
+            corner_radius=0,
+        )
+        ff_queue_tab.grid(row=0, column=0, sticky="nsew")
+    if ff_overlay_tab_root is not None:
+        ff_overlay_tab = ctk.CTkFrame(
+            ff_overlay_tab_root,
+            fg_color=bg,
+            corner_radius=0,
+        )
+        ff_overlay_tab.grid(row=0, column=0, sticky="nsew")
     livepix_tab = ctk.CTkFrame(
         livepix_tab_root,
         fg_color=bg,
         corner_radius=0,
     )
     livepix_tab.grid(row=0, column=0, sticky="nsew")
-    live_chat_tab = ctk.CTkScrollableFrame(
-        live_chat_tab_root,
-        fg_color=bg,
-        corner_radius=0,
-        scrollbar_button_color=chip_bg,
-        scrollbar_button_hover_color=accent,
-    )
-    live_chat_tab.grid(row=0, column=0, sticky="nsew")
+    if live_chat_tab_root is not None:
+        live_chat_tab = ctk.CTkScrollableFrame(
+            live_chat_tab_root,
+            fg_color=bg,
+            corner_radius=0,
+            scrollbar_button_color=chip_bg,
+            scrollbar_button_hover_color=accent,
+        )
+        live_chat_tab.grid(row=0, column=0, sticky="nsew")
     commands_tab = ctk.CTkFrame(
         commands_tab_root,
         fg_color=bg,
@@ -7978,20 +7986,23 @@ def run_gui(config_path: Path) -> int:
     kills_tab.columnconfigure(0, weight=3, minsize=360)
     kills_tab.columnconfigure(1, weight=2, minsize=320)
     kills_tab.rowconfigure(0, weight=1)
-    ff_queue_tab.columnconfigure(0, weight=3, minsize=560)
-    ff_queue_tab.columnconfigure(1, weight=1, minsize=340)
-    ff_queue_tab.rowconfigure(0, weight=1)
-    ff_overlay_tab.columnconfigure(0, weight=1, minsize=360)
-    ff_overlay_tab.columnconfigure(1, weight=2, minsize=520)
-    ff_overlay_tab.rowconfigure(0, weight=1)
+    if ff_queue_tab_root is not None:
+        ff_queue_tab.columnconfigure(0, weight=3, minsize=560)
+        ff_queue_tab.columnconfigure(1, weight=1, minsize=340)
+        ff_queue_tab.rowconfigure(0, weight=1)
+    if ff_overlay_tab_root is not None:
+        ff_overlay_tab.columnconfigure(0, weight=1, minsize=360)
+        ff_overlay_tab.columnconfigure(1, weight=2, minsize=520)
+        ff_overlay_tab.rowconfigure(0, weight=1)
     livepix_tab.columnconfigure(0, weight=1, minsize=320)
     livepix_tab.columnconfigure(1, weight=2, minsize=420)
     livepix_tab.rowconfigure(0, weight=1)
-    live_chat_tab.columnconfigure(0, weight=1)
-    live_chat_tab.rowconfigure(0, weight=0)
-    live_chat_tab.rowconfigure(1, weight=0)
-    live_chat_tab.rowconfigure(2, weight=0)
-    live_chat_tab.rowconfigure(3, weight=1)
+    if live_chat_tab_root is not None:
+        live_chat_tab.columnconfigure(0, weight=1)
+        live_chat_tab.rowconfigure(0, weight=0)
+        live_chat_tab.rowconfigure(1, weight=0)
+        live_chat_tab.rowconfigure(2, weight=0)
+        live_chat_tab.rowconfigure(3, weight=1)
     commands_tab.columnconfigure(0, weight=1, minsize=320)
     commands_tab.columnconfigure(1, weight=2, minsize=420)
     commands_tab.rowconfigure(0, weight=1)
