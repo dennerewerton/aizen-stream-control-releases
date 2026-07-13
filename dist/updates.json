@@ -1,6 +1,6 @@
 {
     "version":  "2.6.163",
-    "notes":  "Corrige o Salvar do Kills FF: o app agora confirma o rank diario/geral no Jarvis antes de dizer que salvou, usa payload mais compativel para diario/geral e acelera a checagem inicial de atualizacao.",
+    "notes":  "Corrige o Salvar do Kills FF: o app agora confirma no Jarvis que o rank diario e o rank geral foram persistidos antes de mostrar sucesso, envia campos mais compativeis para diario/geral e deixa a checagem inicial de atualizacao mais leve.",
     "windows":  {
                     "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.163/AizenStreamControl.exe",
                     "sha256":  "d54951871bc4a5f5e01d27086efee97c87e61ff57c56095719a285d38ae33cb4"
