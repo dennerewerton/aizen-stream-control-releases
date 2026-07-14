@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.255"
+APP_VERSION = "2.6.256"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -116,6 +116,7 @@ AVATAR_RESULT_QUEUE_LIMIT = 180
 AVATAR_IMAGE_CACHE_LIMIT = 240
 AVATAR_PENDING_LIMIT = 120
 AVATAR_DOWNLOAD_WORKERS = 3
+AVATAR_RESULT_BATCH_LIMIT = 8
 RAFFLE_SEEN_MESSAGES_LIMIT = 2500
 RAFFLE_PARTICIPANT_RENDER_THRESHOLD = 60
 RAFFLE_PARTICIPANT_RENDER_CHUNK_SIZE = 20
@@ -3865,9 +3866,10 @@ def manual_kills_scopes_to_save(
     for scope in (clean_active, "daily", "general"):
         if scope in scopes:
             continue
-        if scope != clean_active and scope not in dirty:
+        has_players = bool(players_by_scope.get(scope))
+        if scope != clean_active and scope not in dirty and not has_players:
             continue
-        if scope != clean_active and not players_by_scope.get(scope):
+        if scope != clean_active and not has_players:
             continue
         scopes.append(scope)
     return scopes or [clean_active]
@@ -5656,8 +5658,7 @@ def send_kills_snapshot_update(
                     state = parse_realtime_state(response.text)
                     response_acknowledged = response_acknowledges_kills_snapshot(response.text)
                     if response_confirms_persisted_kills_snapshot(response.text, state, daily_players, general_players):
-                        remember_persisted_snapshot_url(snapshot_url)
-                        return state
+                        response_acknowledged = True
                     confirmation_checked = False
                     if kills_snapshot_matches_state(state, daily_players, general_players):
                         confirmation_checked = True
@@ -6091,7 +6092,19 @@ def sync_kills_snapshot_after_scope_save(
                 session=session,
             )
             if posted_state is not None:
-                return posted_state
+                snapshot_state = fetch_confirmed_kills_snapshot_endpoint_state(
+                    endpoint_url,
+                    daily_players,
+                    general_players,
+                    device_id=device_id,
+                    device_name=device_name,
+                    room=room,
+                    token=token,
+                    session=session,
+                    delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
+                )
+                if snapshot_state is not None:
+                    return snapshot_state
         except Exception as exc:
             post_error_message = str(exc)
         snapshot_state = fetch_confirmed_kills_snapshot_endpoint_state(
@@ -20488,14 +20501,14 @@ def run_gui(config_path: Path) -> int:
                 wheel_canvas.create_rectangle(x, y, x + 5, y + 9, fill=color, outline="")
 
     def pump_avatar_results() -> None:
-        nonlocal avatar_result_after_id
+        nonlocal avatar_result_after_id, raffle_participant_render_pending, raffle_participant_pending_items
         avatar_result_after_id = None
         if app_closing:
             return
         updated = False
         updated_avatar_keys: set[tuple[str, int]] = set()
         processed_count = 0
-        batch_limit = 20
+        batch_limit = AVATAR_RESULT_BATCH_LIMIT
         while processed_count < batch_limit:
             try:
                 url, size, image = avatar_result_queue.get_nowait()
@@ -20514,9 +20527,14 @@ def run_gui(config_path: Path) -> int:
             try:
                 prune_avatar_image_cache()
                 update_chat_avatar_widget_keys(updated_avatar_keys)
-                if hasattr(refresh_participant_list, "_items"):
-                    delattr(refresh_participant_list, "_items")
-                refresh_participant_list(raffle_worker.participant_items() if raffle_worker else [])
+                if raffle_worker is not None:
+                    if is_raffle_tab_active():
+                        if hasattr(refresh_participant_list, "_items"):
+                            delattr(refresh_participant_list, "_items")
+                        refresh_participant_list(raffle_worker.participant_items(), force=True)
+                    else:
+                        raffle_participant_pending_items = raffle_worker.participant_items()
+                        raffle_participant_render_pending = True
                 current_url, current_name = winner_avatar_current
                 if current_url or current_name != "-":
                     image = avatar_image_cache.get((current_url, 92))

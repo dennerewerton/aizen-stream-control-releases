@@ -1527,10 +1527,10 @@ def verify(
         persisted_response_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
         if persisted_response_daily != {"persistidodiretodia": 12} or persisted_response_global != {"persistidodiretogeral": 14}:
             raise RuntimeError(f"Snapshot persistido direto divergente: {persisted_response_snapshot!r}")
-        if persisted_response_rank_gets != 0:
-            raise RuntimeError(f"Snapshot persistido direto fez GET redundante no /rank: {persisted_response_rank_gets}")
-        if persisted_response_actions:
-            raise RuntimeError(f"Snapshot persistido direto caiu em fallback sem precisar: {persisted_response_actions!r}")
+        if persisted_response_rank_gets <= 0:
+            raise RuntimeError("Snapshot persistido direto nao confirmou o /rank publico.")
+        if not persisted_response_actions:
+            raise RuntimeError("Snapshot persistido direto nao corrigiu o /rank publico vazio.")
         MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["kills_rank"] = {}
         MockJarvisHandler.state["debug"] = {"kills_actions": [], "weak_first_snapshot_ack": True, "rank_gets": 0}
