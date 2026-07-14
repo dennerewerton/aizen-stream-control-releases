@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.201",
-    "notes":  "Deixa o Salvar das Kills FF mais leve: depois de confirmar o rank, sincroniza o painel principal com um snapshot rapido e evita jogadores falsos vindos de ACKs do Jarvis.",
+    "version":  "2.6.202",
+    "notes":  "Otimiza a inicializacao: temporizadores do chat rodam direto do cache salvo e os widgets da aba Temporizador so sao renderizados quando a aba for aberta.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.201/AizenStreamControl.exe",
-                    "sha256":  "7f25e4a9e7fb9fe7ee2a22c724cc98980699ec581557e08ad8ea1e7083456757"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.202/AizenStreamControl.exe",
+                    "sha256":  "589397e9713b66296b726cf2de3546b0ef78b2b3b8dbefd7856385f0f353647c"
                 }
 }

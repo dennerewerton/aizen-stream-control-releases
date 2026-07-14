@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.201"
+APP_VERSION = "2.6.202"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -15906,7 +15906,7 @@ def run_gui(config_path: Path) -> int:
         timers = list(timers or default_chat_timers())
         chat_timer_cache = timers
         if render is None:
-            render = bool(chat_timers_enabled_var.get())
+            render = False
         if not render:
             chat_timer_rows_loaded = False
             return
@@ -15934,28 +15934,78 @@ def run_gui(config_path: Path) -> int:
             return
         set_chat_timers(chat_timer_cache or default_chat_timers(), render=True)
 
-    def queue_chat_timer_row(row: dict[str, Any], test: bool = False) -> bool:
-        name = re.sub(r"\s+", " ", row["name"].get().strip())[:80] or "Timer"
-        template = row["message"].get().strip()
+    def chat_timer_cache_id(timer: ChatTimer) -> str:
+        source = (
+            f"{timer.name.casefold()}\0{timer.message}\0"
+            f"{int(timer.interval_seconds)}\0{int(timer.min_chat_messages)}"
+        )
+        return f"cache:{hashlib.sha1(source.encode('utf-8', errors='ignore')).hexdigest()[:16]}"
+
+    def queue_chat_timer_payload(timer_id: str, name: str, template: str, test: bool = False) -> bool:
+        clean_name = re.sub(r"\s+", " ", str(name or "").strip())[:80] or "Timer"
+        template = str(template or "").strip()
         if not template:
             return False
         message = LiveChatMessage(
             username="AizenTimer",
-            comment=name,
+            comment=clean_name,
             platform="Timer",
             received_at=datetime.now().strftime("%H:%M:%S"),
-            message_id=f"timer-{row.get('id', uuid.uuid4().hex)}-{time.time()}",
+            message_id=f"timer-{timer_id or uuid.uuid4().hex}-{time.time()}",
             source="timer",
         )
-        response = render_chat_command_response(template, message, f"timer:{name}", "")
-        queue_bot_reply(response, message, f"timer:{name}", "", test=test)
+        response = render_chat_command_response(template, message, f"timer:{clean_name}", "")
+        queue_bot_reply(response, message, f"timer:{clean_name}", "", test=test)
         return True
+
+    def queue_chat_timer_row(row: dict[str, Any], test: bool = False) -> bool:
+        return queue_chat_timer_payload(
+            str(row.get("id") or ""),
+            row["name"].get(),
+            row["message"].get(),
+            test=test,
+        )
 
     def test_chat_timer_row(row: dict[str, Any]) -> None:
         if queue_chat_timer_row(row, test=True):
             timer_status_var.set("Teste na fila")
         else:
             timer_status_var.set("Timer vazio")
+
+    def active_chat_timer_entries() -> list[dict[str, Any]]:
+        if chat_timer_rows_loaded:
+            entries: list[dict[str, Any]] = []
+            for row in chat_timer_rows:
+                name = re.sub(r"\s+", " ", row["name"].get().strip())[:80]
+                message = row["message"].get().strip()
+                if not bool(row["enabled"].get()) or not message:
+                    continue
+                entries.append(
+                    {
+                        "id": str(row.get("id") or ""),
+                        "name": name or "Timer",
+                        "message": message,
+                        "interval": timer_row_interval_seconds(row),
+                        "min_messages": timer_row_min_messages(row),
+                    }
+                )
+            return entries
+        entries = []
+        for timer in chat_timer_cache:
+            name = re.sub(r"\s+", " ", str(timer.name or "").strip())[:80]
+            message = str(timer.message or "").strip()
+            if not bool(timer.enabled) or not message:
+                continue
+            entries.append(
+                {
+                    "id": chat_timer_cache_id(timer),
+                    "name": name or "Timer",
+                    "message": message,
+                    "interval": max(60, int(timer.interval_seconds or bot_default_timer_interval_seconds())),
+                    "min_messages": max(0, int(timer.min_chat_messages or bot_default_timer_min_messages())),
+                }
+            )
+        return entries
 
     def schedule_chat_timer_pump(delay_ms: int = 0) -> None:
         nonlocal chat_timer_after_id
@@ -15974,16 +16024,12 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         now = time.time()
-        current_ids = {row["id"] for row in chat_timer_rows}
+        active_rows = active_chat_timer_entries()
+        current_ids = {str(row["id"]) for row in active_rows}
         for timer_id in list(chat_timer_runtime):
             if timer_id not in current_ids:
                 chat_timer_runtime.pop(timer_id, None)
 
-        active_rows = [
-            row
-            for row in chat_timer_rows
-            if bool(row["enabled"].get()) and bool(row["message"].get().strip())
-        ]
         timer_active_count_var.set(str(len(active_rows)))
 
         if not chat_timers_enabled_var.get():
@@ -16004,9 +16050,9 @@ def run_gui(config_path: Path) -> int:
         queued = 0
         waiting_for_chat = False
         for row in active_rows:
-            timer_id = row["id"]
-            interval = timer_row_interval_seconds(row)
-            min_messages = timer_row_min_messages(row)
+            timer_id = str(row["id"])
+            interval = max(60, normalize_kill_value(row.get("interval")))
+            min_messages = max(0, normalize_kill_value(row.get("min_messages")))
             runtime = chat_timer_runtime.setdefault(
                 timer_id,
                 {
@@ -16025,7 +16071,11 @@ def run_gui(config_path: Path) -> int:
             if now >= float(runtime.get("next_at", now + interval)):
                 new_messages = len(chat_messages) - int(runtime.get("last_chat_count", len(chat_messages)))
                 if new_messages >= min_messages:
-                    if queue_chat_timer_row(row):
+                    if queue_chat_timer_payload(
+                        timer_id,
+                        str(row.get("name") or "Timer"),
+                        str(row.get("message") or ""),
+                    ):
                         queued += 1
                     runtime["last_chat_count"] = len(chat_messages)
                     runtime["next_at"] = now + interval
