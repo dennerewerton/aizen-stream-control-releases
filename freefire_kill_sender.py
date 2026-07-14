@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.250"
+APP_VERSION = "2.6.251"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -125,6 +125,10 @@ LIVEPIX_HISTORY_RENDER_LIMIT = 30
 LIVEPIX_HISTORY_RENDER_CHUNK_SIZE = 8
 LIVEPIX_STARTUP_SYNC_DELAY_MS = 3500
 LIVEPIX_DASHBOARD_REFRESH_DELAY_MS = 180
+LIVEPIX_LIGHT_COLLECTION_LIMIT = 30
+LIVEPIX_LIGHT_COLLECTION_MAX_PAGES = 1
+LIVEPIX_FULL_COLLECTION_LIMIT = 100
+LIVEPIX_FULL_COLLECTION_MAX_PAGES = 12
 KILLS_VISUAL_REFRESH_DELAY_MS = 220
 KILLS_RANK_RENDER_LIMIT = 100
 KILLS_OVERLAY_RENDER_LIMIT = 50
@@ -8100,6 +8104,7 @@ def run_gui(config_path: Path) -> int:
     livepix_history_load_generation = 0
     livepix_dashboard_state: dict[str, Any] = {}
     livepix_sync_running = False
+    livepix_full_sync_pending = False
     livepix_overlay_window: Any | None = None
     livepix_overlay_frame: Any | None = None
     livepix_widgets: list[Any] = []
@@ -17945,9 +17950,11 @@ def run_gui(config_path: Path) -> int:
             livepix_status_var.set("Desligado")
             log("Webhook Livepix parado.")
 
-    def sync_livepix_from_api(show_error_dialog: bool = True) -> None:
-        nonlocal livepix_sync_running
+    def sync_livepix_from_api(show_error_dialog: bool = True, full_sync: bool = True) -> None:
+        nonlocal livepix_sync_running, livepix_full_sync_pending
         if livepix_sync_running:
+            if full_sync:
+                livepix_full_sync_pending = True
             livepix_status_var.set("Sincronizando")
             if show_error_dialog:
                 log("Livepix sincronizacao ja esta em andamento; aguarde finalizar.")
@@ -17964,12 +17971,17 @@ def run_gui(config_path: Path) -> int:
             if show_error_dialog:
                 messagebox.showerror("Livepix", detail)
             return
+        is_full_sync = bool(full_sync)
+        if is_full_sync:
+            livepix_full_sync_pending = False
         livepix_sync_running = True
-        livepix_status_var.set("Sincronizando")
+        livepix_status_var.set("Sincronizando" if is_full_sync else "Sync leve")
 
         def run() -> None:
             try:
                 sync_errors: list[str] = []
+                collection_limit = LIVEPIX_FULL_COLLECTION_LIMIT if is_full_sync else LIVEPIX_LIGHT_COLLECTION_LIMIT
+                collection_pages = LIVEPIX_FULL_COLLECTION_MAX_PAGES if is_full_sync else LIVEPIX_LIGHT_COLLECTION_MAX_PAGES
 
                 def try_livepix(label: str, getter: callable, fallback: Any) -> Any:
                     try:
@@ -18039,13 +18051,23 @@ def run_gui(config_path: Path) -> int:
                 account_payload = try_livepix("conta", lambda: client.request("GET", "/account"), {})
                 account_data = account_payload.get("data", {}) if isinstance(account_payload, dict) else {}
                 account = account_data if isinstance(account_data, dict) else {}
-                payments_payload, payment_items = fetch_livepix_collection("pagamentos", "/payments")
+                payments_payload, payment_items = fetch_livepix_collection(
+                    "pagamentos",
+                    "/payments",
+                    limit=collection_limit,
+                    max_pages=collection_pages,
+                )
                 payments = [
                     event
                     for item in payment_items
                     if (event := parse_livepix_event(item, "payment", "api"))
                 ]
-                messages_payload, message_items = fetch_livepix_collection("mensagens", "/messages")
+                messages_payload, message_items = fetch_livepix_collection(
+                    "mensagens",
+                    "/messages",
+                    limit=collection_limit,
+                    max_pages=collection_pages,
+                )
                 messages = [
                     event
                     for item in message_items
@@ -18060,34 +18082,42 @@ def run_gui(config_path: Path) -> int:
                     "messages": messages_payload if isinstance(messages_payload, dict) else {},
                     "wallet": wallet_payload if isinstance(wallet_payload, dict) else {},
                 }
-                for name, getter in (
-                    ("currencies", client.currencies),
-                    ("plans", client.plans),
-                    ("subscriptions", client.subscriptions),
-                    ("rewards", client.rewards),
-                    ("webhooks", client.webhooks),
-                ):
-                    try:
-                        result = getter()
-                        extras[name] = result
-                    except Exception as exc:
-                        detail = livepix_error_detail(exc)
-                        extras[name] = f"erro: {detail}"
-                        sync_errors.append(f"{name}: {detail}")
-                transactions_payload, transaction_items = fetch_livepix_collection(
-                    "transacoes",
-                    f"/wallet/{selected_currency}/transactions",
-                )
-                receivables_payload, receivable_items = fetch_livepix_collection(
-                    "recebiveis",
-                    f"/wallet/{selected_currency}/receivables",
-                )
-                raw_payloads["transactions"] = transactions_payload
-                raw_payloads["receivables"] = receivables_payload
-                extras["transactions"] = transaction_items
-                extras["receivables"] = receivable_items
+                extras["sync_mode"] = "full" if is_full_sync else "light"
+                transaction_items: list[dict[str, Any]] = []
+                receivable_items: list[dict[str, Any]] = []
+                if is_full_sync:
+                    for name, getter in (
+                        ("currencies", client.currencies),
+                        ("plans", client.plans),
+                        ("subscriptions", client.subscriptions),
+                        ("rewards", client.rewards),
+                        ("webhooks", client.webhooks),
+                    ):
+                        try:
+                            result = getter()
+                            extras[name] = result
+                        except Exception as exc:
+                            detail = livepix_error_detail(exc)
+                            extras[name] = f"erro: {detail}"
+                            sync_errors.append(f"{name}: {detail}")
+                    transactions_payload, transaction_items = fetch_livepix_collection(
+                        "transacoes",
+                        f"/wallet/{selected_currency}/transactions",
+                        limit=collection_limit,
+                        max_pages=collection_pages,
+                    )
+                    receivables_payload, receivable_items = fetch_livepix_collection(
+                        "recebiveis",
+                        f"/wallet/{selected_currency}/receivables",
+                        limit=collection_limit,
+                        max_pages=collection_pages,
+                    )
+                    raw_payloads["transactions"] = transactions_payload
+                    raw_payloads["receivables"] = receivables_payload
+                    extras["transactions"] = transaction_items
+                    extras["receivables"] = receivable_items
                 reward_grants: list[dict[str, Any]] = []
-                if isinstance(extras.get("rewards"), list):
+                if is_full_sync and isinstance(extras.get("rewards"), list):
                     for reward in extras["rewards"]:
                         reward_id = str(reward.get("id", "")).strip() if isinstance(reward, dict) else ""
                         if not reward_id:
@@ -18127,6 +18157,7 @@ def run_gui(config_path: Path) -> int:
                         "extras": extras,
                         "raw": raw_payloads,
                         "errors": sync_errors,
+                        "full_sync": is_full_sync,
                     },
                 )
             except Exception as exc:
@@ -18135,7 +18166,7 @@ def run_gui(config_path: Path) -> int:
         start_livepix_worker(run, name="AizenLivepixSync")
 
     def test_livepix_account() -> None:
-        sync_livepix_from_api(show_error_dialog=True)
+        sync_livepix_from_api(show_error_dialog=True, full_sync=True)
 
     def auto_sync_livepix_on_start() -> None:
         if not livepix_enabled_var.get():
@@ -18143,8 +18174,26 @@ def run_gui(config_path: Path) -> int:
         if not livepix_client_id_var.get().strip() or not livepix_client_secret_var.get().strip():
             livepix_status_var.set("Configure a API")
             return
-        log("Sincronizando Livepix automaticamente ao abrir o app.")
-        sync_livepix_from_api(show_error_dialog=False)
+        startup_full_sync = is_livepix_tab_active() or livepix_overlay_frame is not None
+        if startup_full_sync:
+            log("Sincronizando Livepix automaticamente ao abrir o app.")
+        else:
+            log("Sincronizando Livepix automaticamente em modo leve; sync completa fica para a aba Livepix.")
+        sync_livepix_from_api(show_error_dialog=False, full_sync=startup_full_sync)
+
+    def maybe_start_livepix_full_sync_when_visible() -> None:
+        nonlocal livepix_full_sync_pending
+        if not livepix_full_sync_pending or livepix_sync_running:
+            return
+        if not is_livepix_tab_active():
+            return
+        if not livepix_enabled_var.get():
+            livepix_full_sync_pending = False
+            return
+        if not livepix_client_id_var.get().strip() or not livepix_client_secret_var.get().strip():
+            return
+        log("Livepix: completando sincronizacao completa agora que a aba foi aberta.")
+        sync_livepix_from_api(show_error_dialog=False, full_sync=True)
 
     def livepix_startup_work_needed() -> bool:
         if livepix_enabled_var.get():
@@ -18414,6 +18463,7 @@ def run_gui(config_path: Path) -> int:
     def pump_livepix_queue() -> None:
         nonlocal livepix_dashboard_state, livepix_sync_running, livepix_events_loaded, livepix_events_loading
         nonlocal livepix_history_render_pending, livepix_pump_after_id, livepix_workers_active
+        nonlocal livepix_full_sync_pending
         livepix_pump_after_id = None
         if app_closing:
             return
@@ -18487,6 +18537,8 @@ def run_gui(config_path: Path) -> int:
                 extras = payload.get("extras", {}) if isinstance(payload, dict) else {}
                 raw = payload.get("raw", {}) if isinstance(payload, dict) else {}
                 errors = payload.get("errors", []) if isinstance(payload, dict) else []
+                full_sync = bool(payload.get("full_sync")) if isinstance(payload, dict) else True
+                livepix_full_sync_pending = not full_sync
                 livepix_dashboard_state = {
                     "account": account if isinstance(account, dict) else {},
                     "wallet": wallet if isinstance(wallet, list) else [],
@@ -18564,10 +18616,13 @@ def run_gui(config_path: Path) -> int:
                     livepix_status_var.set(f"Parcial: {', '.join(failed_parts[:2])}"[:34] if failed_parts else "Parcial")
                     log(f"Livepix sincronizado parcialmente: {'; '.join(critical_errors[:6])}")
                 else:
-                    livepix_status_var.set(f"Sincronizado (+{added})")
+                    status_prefix = "Sincronizado" if full_sync else "Sync leve"
+                    livepix_status_var.set(f"{status_prefix} (+{added})")
                     if isinstance(errors, list) and errors:
                         log(f"Livepix sincronizado com avisos opcionais: {'; '.join(str(item) for item in errors[:6])}")
                 schedule_livepix_dashboard_refresh()
+                if livepix_full_sync_pending:
+                    maybe_start_livepix_full_sync_when_visible()
             elif kind == "checkout":
                 url = _first_text(payload.get("redirectUrl"), payload.get("url")) if isinstance(payload, dict) else ""
                 if url:
@@ -21503,6 +21558,7 @@ def run_gui(config_path: Path) -> int:
             )
         if livepix_active:
             start_livepix_history_load(force=True)
+            maybe_start_livepix_full_sync_when_visible()
         if livepix_active and (livepix_history_render_pending or not livepix_widgets):
             render_livepix_events(force=True)
         if raffle_active and raffle_participant_render_pending:

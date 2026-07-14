@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.250",
-    "notes":  "Corrige o Salvar do Kills FF quando a URL configurada vem de /rank ou /obs: o app agora deriva corretamente /api/freefire-kills/action para confirmar e persistir o rank diario no Jarvis. Tambem preserva eventos internos de finalizacao de workers para evitar travamentos apos picos de sincronizacao.",
+    "version":  "2.6.251",
+    "notes":  "Otimiza a abertura quando Livepix esta ativo: a sincronizacao automatica inicial agora roda em modo leve, buscando conta, carteira e eventos recentes sem carregar todas as colecoes pesadas. Ao abrir a aba Livepix ou clicar em Sincronizar/Testar, o app completa a sincronizacao completa. Isso reduz carga de rede/CPU no startup e deixa o fluxo de Kills FF mais livre.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.250/AizenStreamControl.exe",
-                    "sha256":  "ac0f1989c0ec52ff021938ae320e48f22c0fdec97a2f6e9ed382c4e3c19c1a3c"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.251/AizenStreamControl.exe",
+                    "sha256":  "bcf78a578f22bd74e3b6d545cb560af2b1c73ae422be7a7a827dc15ae4768d90"
                 }
 }
