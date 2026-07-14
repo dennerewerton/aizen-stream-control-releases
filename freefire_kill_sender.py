@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.207"
+APP_VERSION = "2.6.208"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -15359,24 +15359,31 @@ def run_gui(config_path: Path) -> int:
             except tk.TclError:
                 pass
 
-    def update_chat_avatar_widgets(url: str, size: int) -> None:
-        clean_url = (url or "").strip()
-        if not clean_url:
+    def update_chat_avatar_widget_keys(keys: set[tuple[str, int]]) -> None:
+        clean_keys = {(url.strip(), size) for url, size in keys if str(url or "").strip()}
+        if not clean_keys:
             return
-        image = avatar_image_cache.get((clean_url, size))
         for widget_store in (chat_widgets, chat_monitor_widgets, chat_overlay_widgets):
             for widget in widget_store:
                 label = getattr(widget, "_chat_avatar_label", None)
                 if label is None:
                     continue
-                if getattr(label, "_avatar_url", "") != clean_url or getattr(label, "_avatar_size", 0) != size:
+                label_key = (
+                    str(getattr(label, "_avatar_url", "")).strip(),
+                    int(getattr(label, "_avatar_size", 0) or 0),
+                )
+                if label_key not in clean_keys:
                     continue
                 name = str(getattr(label, "_avatar_name", ""))
+                image = avatar_image_cache.get(label_key)
                 try:
                     label.configure(image=image, text="" if image else avatar_initials(name))
                     label._avatar_image = image  # type: ignore[attr-defined]
                 except tk.TclError:
                     pass
+
+    def update_chat_avatar_widgets(url: str, size: int) -> None:
+        update_chat_avatar_widget_keys({((url or "").strip(), size)})
 
     def render_chat_messages(
         target_frame: Any,
@@ -19583,6 +19590,7 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         updated = False
+        updated_avatar_keys: set[tuple[str, int]] = set()
         processed_count = 0
         batch_limit = 20
         while processed_count < batch_limit:
@@ -19597,11 +19605,12 @@ def run_gui(config_path: Path) -> int:
                 avatar_image_cache[key] = ctk.CTkImage(light_image=image, dark_image=image, size=(size, size))
             else:
                 avatar_image_cache[key] = None
-            prune_avatar_image_cache()
-            update_chat_avatar_widgets(url, size)
+            updated_avatar_keys.add(key)
             updated = True
         if updated:
             try:
+                prune_avatar_image_cache()
+                update_chat_avatar_widget_keys(updated_avatar_keys)
                 if hasattr(refresh_participant_list, "_items"):
                     delattr(refresh_participant_list, "_items")
                 refresh_participant_list(raffle_worker.participant_items() if raffle_worker else [])

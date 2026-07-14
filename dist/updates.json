@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.207",
-    "notes":  "Otimiza a renderizacao do chat: janelas e overlay com historico grande passam a carregar mensagens em blocos, evitando travadas ao abrir ou atualizar o chat.",
+    "version":  "2.6.208",
+    "notes":  "Otimiza avatars do chat: resultados de imagem sao aplicados em lote, reduzindo varreduras repetidas da interface em lives movimentadas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.207/AizenStreamControl.exe",
-                    "sha256":  "e9851abb25c77630682959b7dcf7ec197c23baad227517b9b77736f72d007fe9"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.208/AizenStreamControl.exe",
+                    "sha256":  "d02e71a3722b4adee0d8fb56f420323e23f2802957693865019a83af583ad4d4"
                 }
 }
