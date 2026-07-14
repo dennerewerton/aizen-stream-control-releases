@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.234"
+APP_VERSION = "2.6.235"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5528,6 +5528,7 @@ def send_kills_snapshot_update(
 
         final_state: RealtimeState | None = None
         latest_rank_state: RealtimeState | None = None
+        weak_snapshot_ack_seen = False
         for snapshot_url in snapshot_urls:
             for payload in payload_candidates:
                 try:
@@ -5589,7 +5590,8 @@ def send_kills_snapshot_update(
                         except Exception:
                             pass
                     if response_acknowledged:
-                        continue
+                        weak_snapshot_ack_seen = True
+                        break
                 except requests.HTTPError as exc:
                     status_code = exc.response.status_code if exc.response is not None else 0
                     if status_code in {400, 404, 405, 409, 422}:
@@ -5600,10 +5602,34 @@ def send_kills_snapshot_update(
                     raise
                 except Exception:
                     continue
+            if weak_snapshot_ack_seen:
+                break
 
         persisted_state = confirmed_persisted_snapshot_state()
         if persisted_state is not None:
-            return persisted_state
+            rank_ready = latest_rank_state is not None and kills_snapshot_matches_state(
+                latest_rank_state,
+                daily_players,
+                general_players,
+            )
+            if not rank_ready:
+                try:
+                    confirmed_rank_state, latest_rank_state = fetch_kills_rank_confirmation(
+                        endpoint_url,
+                        daily_players,
+                        general_players,
+                        device_id=device_id,
+                        device_name=device_name,
+                        room=room,
+                        token=token,
+                        session=session,
+                        delays=(0.0,),
+                    )
+                    rank_ready = confirmed_rank_state is not None
+                except Exception:
+                    rank_ready = False
+            if rank_ready:
+                return persisted_state
 
         try:
             current_state = latest_rank_state

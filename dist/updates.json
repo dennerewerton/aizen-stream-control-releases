@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.234",
-    "notes":  "Otimiza a renderizacao do ranking Kills FF: evita assinaturas completas e ordenacoes repetidas quando apenas o top visivel precisa atualizar, deixando a tela mais leve com muitos jogadores.",
+    "version":  "2.6.235",
+    "notes":  "Reduz tentativas repetidas ao salvar Kills FF: ao receber ACK fraco do Jarvis, confirma uma vez e cai para o replace em lote somente se o /rank ainda nao estiver alinhado, acelerando o lançamento das kills.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.234/AizenStreamControl.exe",
-                    "sha256":  "d38907f2fb3f54355e89e1f1c5e935d131e195021e72e4287c5c6de267c45fda"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.235/AizenStreamControl.exe",
+                    "sha256":  "77c9abaaaa2760591b90a13b23ec512ab8bc4bd938cb3a78d3c213fa8a87c911"
                 }
 }
