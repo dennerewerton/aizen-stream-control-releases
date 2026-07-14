@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.197"
+APP_VERSION = "2.6.198"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -16512,14 +16512,25 @@ def run_gui(config_path: Path) -> int:
             )
         return total
 
-    def livepix_complete_total(local_total: int) -> int:
+    def livepix_complete_total(local_total: int, selected_wallet: dict[str, Any] | None = None) -> int:
+        selected_currency = livepix_currency_var.get().strip().upper() or "BRL"
+        cache_key = (
+            id(livepix_dashboard_state),
+            str(livepix_dashboard_state.get("synced_at") or ""),
+            selected_currency,
+            int(local_total),
+        )
+        cache = getattr(livepix_complete_total, "_cache", None)
+        if cache and cache[0] == cache_key:
+            return int(cache[1])
         candidates = [local_total]
         account = livepix_dashboard_state.get("account", {})
         extras = livepix_dashboard_state.get("extras", {})
         raw = livepix_dashboard_state.get("raw", {})
         if isinstance(account, dict):
             candidates.append(livepix_total_amount_from_payload(account))
-        selected_wallet = livepix_selected_wallet()
+        if selected_wallet is None:
+            selected_wallet = livepix_selected_wallet()
         if selected_wallet:
             candidates.append(livepix_total_amount_from_payload(selected_wallet))
             candidates.append(livepix_wallet_current_total(selected_wallet))
@@ -16529,54 +16540,78 @@ def run_gui(config_path: Path) -> int:
         if isinstance(raw, dict):
             for key in ("account", "payments", "messages", "wallet", "transactions", "receivables"):
                 candidates.append(livepix_total_amount_from_payload(raw.get(key)))
-        return max(candidates) if candidates else local_total
+        total = max(candidates) if candidates else local_total
+        livepix_complete_total._cache = (cache_key, total)  # type: ignore[attr-defined]
+        return total
 
     def refresh_livepix_dashboard() -> None:
         events = livepix_period_events()
-        local_total = sum(event.amount for event in events if event.kind in {"payment", "message", "subscription"})
-        total = livepix_complete_total(local_total)
-        goal = livepix_goal_amount_cents()
-        livepix_total_var.set(format_livepix_amount(total, livepix_currency_var.get()))
-        livepix_count_var.set(str(len(events)))
-        livepix_goal_var.set(f"{min(999, int((total / goal) * 100)) if goal else 0}%")
+        currency = livepix_currency_var.get().strip().upper() or "BRL"
+        local_total = 0
+        by_user: dict[str, int] = {}
+        for event in events:
+            if event.kind in {"payment", "message", "subscription"}:
+                local_total += event.amount
+            name = event.username.strip() or event.reference or "Apoiador"
+            by_user[name] = by_user.get(name, 0) + event.amount
         selected_wallet = livepix_selected_wallet()
+        total = livepix_complete_total(local_total, selected_wallet=selected_wallet)
+        goal = livepix_goal_amount_cents()
+        set_text_var(livepix_total_var, format_livepix_amount(total, currency))
+        set_text_var(livepix_count_var, len(events))
+        set_text_var(livepix_goal_var, f"{min(999, int((total / goal) * 100)) if goal else 0}%")
         if selected_wallet:
             selected_currency = str(selected_wallet.get("currency") or livepix_currency_var.get()).upper()
             balance = livepix_mapping_amount(selected_wallet, (("balance",), ("balanceAvailable",), ("available",)))
             pending = livepix_mapping_amount(selected_wallet, (("balancePending",), ("pending",), ("pendingBalance",)))
             held = livepix_mapping_amount(selected_wallet, (("balanceHeld",), ("held",), ("heldBalance",)))
-            livepix_balance_var.set(format_livepix_amount(balance, selected_currency))
-            livepix_pending_var.set(format_livepix_amount(pending + held, selected_currency))
-            livepix_wallet_var.set(
+            set_text_var(livepix_balance_var, format_livepix_amount(balance, selected_currency))
+            set_text_var(livepix_pending_var, format_livepix_amount(pending + held, selected_currency))
+            set_text_var(
+                livepix_wallet_var,
                 f"Disponível {format_livepix_amount(balance, selected_currency)} | "
                 f"pendente {format_livepix_amount(pending, selected_currency)} | "
-                f"retido {format_livepix_amount(held, selected_currency)}"
+                f"retido {format_livepix_amount(held, selected_currency)}",
             )
         else:
-            livepix_balance_var.set("-")
-            livepix_pending_var.set("-")
-        by_user: dict[str, int] = {}
-        for event in events:
-            name = event.username.strip() or event.reference or "Apoiador"
-            by_user[name] = by_user.get(name, 0) + event.amount
+            set_text_var(livepix_balance_var, "-")
+            set_text_var(livepix_pending_var, "-")
         if by_user:
             top_name, top_amount = max(by_user.items(), key=lambda item: item[1])
-            livepix_top_var.set(f"{top_name} - {format_livepix_amount(top_amount, livepix_currency_var.get())}")
+            set_text_var(livepix_top_var, f"{top_name} - {format_livepix_amount(top_amount, currency)}")
             ranking_lines = [
-                f"{index}. {name} - {format_livepix_amount(amount, livepix_currency_var.get())}"
+                f"{index}. {name} - {format_livepix_amount(amount, currency)}"
                 for index, (name, amount) in enumerate(
                     sorted(by_user.items(), key=lambda item: item[1], reverse=True)[:10],
                     start=1,
                 )
             ]
-            livepix_ranking_var.set("\n".join(ranking_lines))
+            set_text_var(livepix_ranking_var, "\n".join(ranking_lines))
         else:
-            livepix_top_var.set("-")
-            livepix_ranking_var.set("-")
+            set_text_var(livepix_top_var, "-")
+            set_text_var(livepix_ranking_var, "-")
         refresh_livepix_metric_visibility()
         render_livepix_events()
         if livepix_overlay_frame is not None:
-            render_livepix_overlay()
+            overlay_signature = (
+                livepix_total_var.get(),
+                livepix_goal_var.get(),
+                tuple(
+                    (
+                        event.kind,
+                        event.event_id,
+                        event.reference,
+                        event.username,
+                        event.message,
+                        event.amount,
+                        event.currency,
+                    )
+                    for event in events[:5]
+                ),
+            )
+            if getattr(refresh_livepix_dashboard, "_overlay_signature", None) != overlay_signature:
+                refresh_livepix_dashboard._overlay_signature = overlay_signature  # type: ignore[attr-defined]
+                render_livepix_overlay()
 
     def run_scheduled_livepix_dashboard_refresh() -> None:
         nonlocal livepix_dashboard_after_id
