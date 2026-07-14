@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.180",
-    "notes":  "Otimizacao Kills FF: quando o Jarvis ja responde com o snapshot salvo completo, o app evita o GET /rank extra e conclui o Salvar mais rapido; respostas fracas continuam confirmando como antes.",
+    "version":  "2.6.181",
+    "notes":  "Otimizacao Kills FF: o cache do ranking agora e salvo em segundo plano e em formato compacto, evitando travadinhas da interface logo apos ler ou salvar kills.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.180/AizenStreamControl.exe",
-                    "sha256":  "5c11990b085192e1286676d980557e3840319e1b79e2b3494804583f03942e97"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.181/AizenStreamControl.exe",
+                    "sha256":  "79159a5043ddd25252eea2fd4d0dbe89b8699ad12297996964bb526185237c55"
                 }
 }
