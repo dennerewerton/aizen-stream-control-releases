@@ -24,6 +24,7 @@ import unicodedata
 import uuid
 import webbrowser
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -78,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.198"
+APP_VERSION = "2.6.199"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -135,6 +136,9 @@ BACKGROUND_DISABLED_PUMP_MS = 8000
 DEFERRED_RENDER_IDLE_PUMP_MS = 8000
 DEFERRED_RENDER_ACTIVE_IDLE_PUMP_MS = 1500
 UI_PUMP_TIME_BUDGET_SECONDS = 0.035
+SYNC_WORKER_MAX_THREADS = 3
+FF_QUEUE_WORKER_MAX_THREADS = 2
+LIVEPIX_WORKER_MAX_THREADS = 3
 STALE_MEI_MIN_AGE_SECONDS = 24 * 60 * 60
 STALE_MEI_CLEANUP_LIMIT = 8
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
@@ -7513,6 +7517,9 @@ def run_gui(config_path: Path) -> int:
     sync_workers_active = 0
     ff_queue_workers_active = 0
     livepix_workers_active = 0
+    sync_executor = ThreadPoolExecutor(max_workers=SYNC_WORKER_MAX_THREADS, thread_name_prefix="AizenSync")
+    ff_queue_executor = ThreadPoolExecutor(max_workers=FF_QUEUE_WORKER_MAX_THREADS, thread_name_prefix="AizenFFQueue")
+    livepix_executor = ThreadPoolExecutor(max_workers=LIVEPIX_WORKER_MAX_THREADS, thread_name_prefix="AizenLivepix")
     sync_pump_after_id: str | None = None
     ff_queue_pump_after_id: str | None = None
     chat_event_pump_after_id: str | None = None
@@ -7635,6 +7642,8 @@ def run_gui(config_path: Path) -> int:
 
     def start_sync_worker(target: callable, name: str = "AizenSyncWorker") -> None:
         nonlocal sync_workers_active
+        if app_closing:
+            return
         sync_workers_active += 1
         schedule_sync_queue_pump(0)
 
@@ -7644,10 +7653,17 @@ def run_gui(config_path: Path) -> int:
             finally:
                 enqueue_limited_queue(sync_queue, ("__worker_done", None), "sync", "Fila Jarvis cheia")
 
-        threading.Thread(target=wrapped, name=name, daemon=True).start()
+        try:
+            sync_executor.submit(wrapped)
+        except RuntimeError:
+            sync_workers_active = max(0, sync_workers_active - 1)
+            if not app_closing:
+                log(f"Nao consegui iniciar worker {name}; app esta encerrando.")
 
     def start_ff_queue_worker(target: callable, name: str = "AizenFFQueueWorker") -> None:
         nonlocal ff_queue_workers_active
+        if app_closing:
+            return
         ff_queue_workers_active += 1
         schedule_ff_queue_sync_pump(0)
 
@@ -7657,10 +7673,17 @@ def run_gui(config_path: Path) -> int:
             finally:
                 enqueue_limited_queue(ff_queue_sync_queue, ("__worker_done", None), "ff_queue", "Fila FF cheia")
 
-        threading.Thread(target=wrapped, name=name, daemon=True).start()
+        try:
+            ff_queue_executor.submit(wrapped)
+        except RuntimeError:
+            ff_queue_workers_active = max(0, ff_queue_workers_active - 1)
+            if not app_closing:
+                log(f"Nao consegui iniciar worker {name}; app esta encerrando.")
 
     def start_livepix_worker(target: callable, name: str = "AizenLivepixWorker") -> None:
         nonlocal livepix_workers_active
+        if app_closing:
+            return
         livepix_workers_active += 1
         schedule_livepix_queue_pump(0)
 
@@ -7670,7 +7693,12 @@ def run_gui(config_path: Path) -> int:
             finally:
                 enqueue_limited_queue(livepix_queue, ("__worker_done", None), "livepix", "Fila Livepix cheia")
 
-        threading.Thread(target=wrapped, name=name, daemon=True).start()
+        try:
+            livepix_executor.submit(wrapped)
+        except RuntimeError:
+            livepix_workers_active = max(0, livepix_workers_active - 1)
+            if not app_closing:
+                log(f"Nao consegui iniciar worker {name}; app esta encerrando.")
 
     def enqueue_avatar_result(url: str, size: int, image: Image.Image | None) -> bool:
         return enqueue_limited_queue(
@@ -19430,6 +19458,11 @@ def run_gui(config_path: Path) -> int:
             close_chat_monitor_window()
             close_chat_overlay()
             close_livepix_overlay()
+            for executor in (sync_executor, ff_queue_executor, livepix_executor):
+                try:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
         finally:
             try:
                 root.quit()

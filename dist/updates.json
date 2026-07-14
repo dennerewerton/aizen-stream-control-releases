@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.198",
-    "notes":  "Otimizacao: dashboard Livepix recalcula menos dados repetidos, reutiliza total completo enquanto a conta nao muda e evita redesenhar overlay sem alteracao.",
+    "version":  "2.6.199",
+    "notes":  "Otimizacao: tarefas de Jarvis/Fila/Livepix agora usam pools limitados de workers, evitando rajadas de threads e reduzindo travamentos em cliques repetidos ou rede instavel.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.198/AizenStreamControl.exe",
-                    "sha256":  "c7d46c47faca2287dda599b154f891b3cb2d3436e36286124d1e9540097c494d"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.199/AizenStreamControl.exe",
+                    "sha256":  "1e6869002a64e743d445e7075729a1c26ce622758aef5a2ac71dab28001b608d"
                 }
 }
