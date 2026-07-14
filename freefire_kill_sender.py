@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.240"
+APP_VERSION = "2.6.241"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3863,6 +3863,15 @@ def manual_kills_scopes_to_save(
             continue
         scopes.append(scope)
     return scopes or [clean_active]
+
+
+def manual_kills_should_send_snapshot(scopes_to_save: Iterable[Any]) -> bool:
+    clean_scopes = {
+        clean_scope
+        for scope in scopes_to_save
+        if (clean_scope := normalize_kills_scope_value(scope)) in {"daily", "general"}
+    }
+    return clean_scopes == {"daily", "general"}
 
 
 FF_QUEUE_STATUSES = ["Na fila", "Chamado", "Jogando", "Concluido"]
@@ -18951,28 +18960,43 @@ def run_gui(config_path: Path) -> int:
                     "general": snapshot_general_players,
                 }
                 final_state: RealtimeState | None = None
-                for index, scope_to_save in enumerate(scopes_to_save):
-                    other_scope = "general" if scope_to_save == "daily" else "daily"
-                    remaining_scopes = set(scopes_to_save[index + 1 :])
-                    preserve_players: list[PlayerKill] | None = None
-                    if other_scope in remaining_scopes or players_by_scope.get(other_scope):
-                        preserve_players = clone_player_list(players_by_scope.get(other_scope, []))
-                    final_state = send_kills_scope_replace_update(
+                if manual_kills_should_send_snapshot(scopes_to_save):
+                    final_state = send_kills_snapshot_update(
                         endpoint_url,
-                        scope_to_save,
-                        players_by_scope[scope_to_save],
-                        preserve_players=preserve_players,
+                        players_by_scope["daily"],
+                        players_by_scope["general"],
                         device_id=str(local_config.get("device_id", "")),
                         device_name=str(local_config.get("device_name", "")),
                         room=str(local_config.get("kills_sync_room", "principal")),
                         token=str(local_config.get("jarvis_api_token", "")),
                     )
-                    saved_scope_players = kills_scope_players_from_state(final_state, scope_to_save)
-                    if saved_scope_players:
-                        players_by_scope[scope_to_save] = clone_player_list(saved_scope_players)
-                    other_scope_players = kills_scope_players_from_state(final_state, other_scope)
-                    if other_scope not in remaining_scopes and other_scope_players:
-                        players_by_scope[other_scope] = clone_player_list(other_scope_players)
+                    for scope_key in ("daily", "general"):
+                        saved_scope_players = kills_scope_players_from_state(final_state, scope_key)
+                        if saved_scope_players:
+                            players_by_scope[scope_key] = clone_player_list(saved_scope_players)
+                else:
+                    for index, scope_to_save in enumerate(scopes_to_save):
+                        other_scope = "general" if scope_to_save == "daily" else "daily"
+                        remaining_scopes = set(scopes_to_save[index + 1 :])
+                        preserve_players: list[PlayerKill] | None = None
+                        if other_scope in remaining_scopes or players_by_scope.get(other_scope):
+                            preserve_players = clone_player_list(players_by_scope.get(other_scope, []))
+                        final_state = send_kills_scope_replace_update(
+                            endpoint_url,
+                            scope_to_save,
+                            players_by_scope[scope_to_save],
+                            preserve_players=preserve_players,
+                            device_id=str(local_config.get("device_id", "")),
+                            device_name=str(local_config.get("device_name", "")),
+                            room=str(local_config.get("kills_sync_room", "principal")),
+                            token=str(local_config.get("jarvis_api_token", "")),
+                        )
+                        saved_scope_players = kills_scope_players_from_state(final_state, scope_to_save)
+                        if saved_scope_players:
+                            players_by_scope[scope_to_save] = clone_player_list(saved_scope_players)
+                        other_scope_players = kills_scope_players_from_state(final_state, other_scope)
+                        if other_scope not in remaining_scopes and other_scope_players:
+                            players_by_scope[other_scope] = clone_player_list(other_scope_players)
                 if final_state is None:
                     final_state = local_kills_snapshot_state(
                         players_by_scope["daily"],

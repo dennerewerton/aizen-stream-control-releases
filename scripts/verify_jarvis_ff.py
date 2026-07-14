@@ -41,6 +41,7 @@ from freefire_kill_sender import (  # noqa: E402
     is_live_chat_event_payload,
     kills_snapshot_url_candidates,
     manual_kills_scopes_to_save,
+    manual_kills_should_send_snapshot,
     kills_scope_label,
     merge_ff_queue_entries,
     normalize_live_chat_payload,
@@ -736,6 +737,10 @@ def verify_contracts() -> None:
     )
     if active_only_scopes != ["daily"]:
         raise RuntimeError(f"Salvar Kills FF deveria enviar somente o ativo: {active_only_scopes!r}")
+    if not manual_kills_should_send_snapshot(both_dirty_scopes):
+        raise RuntimeError("Salvar Kills FF deveria usar snapshot unico para diario e geral.")
+    if manual_kills_should_send_snapshot(active_only_scopes):
+        raise RuntimeError("Salvar Kills FF nao deveria usar snapshot unico para apenas um escopo.")
 
     kills_state = parse_realtime_state(
         {

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.240",
-    "notes":  "Corrige o botao Salvar do Kills FF para enviar explicitamente os ranks Diario e Geral alterados ao Jarvis, evitando que o rank diario fique sem gravar quando ambos foram modificados.",
+    "version":  "2.6.241",
+    "notes":  "Otimiza o Salvar do Kills FF: quando Diario e Geral precisam ser enviados, o app usa um snapshot unico confirmado em vez de duas sincronizacoes separadas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.240/AizenStreamControl.exe",
-                    "sha256":  "9810dc25f8ce97ec728df44b369ede54a7efa8253920b01b5b8fe9dea2c07e83"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.241/AizenStreamControl.exe",
+                    "sha256":  "b79c8ca99ad7de7d14dc0560391fb9ca6867a6baaabf7b9d347f4ad1be862cd4"
                 }
 }
