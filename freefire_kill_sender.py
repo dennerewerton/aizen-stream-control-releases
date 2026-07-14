@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.230"
+APP_VERSION = "2.6.231"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11260,6 +11260,8 @@ def run_gui(config_path: Path) -> int:
             clean_scope = "daily"
         buffered_players = manual_scope_buffers.get(clean_scope, [])
         if not buffered_players:
+            return False
+        if not manual_players_need_name_completion(buffered_players):
             return False
         completed_players = complete_manual_player_names(buffered_players, clean_scope, references=references)
         if len(completed_players) == len(buffered_players) and all(

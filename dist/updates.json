@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.230",
-    "notes":  "Adia a montagem da tabela manual de Kills FF ate a aba ser aberta, reduzindo processamento e widgets criados na inicializacao.",
+    "version":  "2.6.231",
+    "notes":  "Evita reparo/clonagem repetida de nomes nas Kills FF quando todos os jogadores ja possuem nick, reduzindo trabalho em atualizacoes e salvamentos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.230/AizenStreamControl.exe",
-                    "sha256":  "c01f7c98ced9815f0a5b11a99c3e52d73a7e9f6a338efa74144fa597b1ee831d"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.231/AizenStreamControl.exe",
+                    "sha256":  "66f27c9e827ad55a8116e709ae97c645361517bb6e0c571d69fb96e3788d6d5a"
                 }
 }
