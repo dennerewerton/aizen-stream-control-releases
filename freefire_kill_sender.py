@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.214"
+APP_VERSION = "2.6.215"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11892,7 +11892,7 @@ def run_gui(config_path: Path) -> int:
         current_scope = current_manual_scope()
         if current_scope not in manual_scope_dirty:
             display_players = manual_scope_display_players(current_scope, prefer_remote=True)
-            current_players = collect_manual_players(fill_missing_names=False, scope=current_scope)
+            current_players = read_manual_players_light(fill_missing_names=False, scope=current_scope)
             if manual_signature(display_players, current_scope) != manual_signature(current_players, current_scope):
                 set_manual_players(display_players, scope=current_scope)
                 sync_kills_rank_tab_with_manual_scope(current_scope)
@@ -12005,6 +12005,19 @@ def run_gui(config_path: Path) -> int:
                 complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope)
             )
         return collect_manual_widget_players(fill_missing_names=fill_missing_names, scope=clean_scope)
+
+    def read_manual_players_light(fill_missing_names: bool = False, scope: str | None = None) -> list[PlayerKill]:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        if (
+            clean_scope == current_manual_scope()
+            and manual_visual_after_id is None
+            and not manual_table_render_pending
+            and manual_scope_buffers.get(clean_scope)
+        ):
+            return clone_player_list(manual_scope_buffers.get(clean_scope, []))
+        return collect_manual_players(fill_missing_names=fill_missing_names, scope=clean_scope)
 
     def manual_scope_buffer_snapshot(scope: str | None = None) -> list[PlayerKill]:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
@@ -12279,7 +12292,7 @@ def run_gui(config_path: Path) -> int:
             repair_manual_scope_buffer_names(scope_key)
         repair_manual_scope_buffer_names(clean_scope)
         if clean_scope == current_manual_scope() and not manual_table_render_pending:
-            manual_scope_buffers[clean_scope] = clone_player_list(collect_manual_players(fill_missing_names=False, scope=clean_scope))
+            manual_scope_buffers[clean_scope] = clone_player_list(read_manual_players_light(fill_missing_names=False, scope=clean_scope))
             repair_manual_scope_buffer_names(clean_scope)
         endpoint_url = normalize_endpoint_url(sync_url_var.get())
         jarvis_base_url = normalize_endpoint_url(jarvis_base_url_var.get()).rstrip("/")
@@ -14323,7 +14336,7 @@ def run_gui(config_path: Path) -> int:
         start_sync_worker(run, name="AizenJarvisTest")
 
     def ff_overlay_snapshot() -> tuple[list[PlayerKill], list[dict[str, Any]], int, int]:
-        players = overlay_rank_players(kills_daily_ranking, kills_global_ranking, collect_manual_players(scope=current_manual_scope()))
+        players = overlay_rank_players(kills_daily_ranking, kills_global_ranking, read_manual_players_light(scope=current_manual_scope()))
         queue_items = queue_summary_items(collect_ff_queue_entries())
         total_kills = sum(player.kills for player in players)
         active_rooms = sum(int(item["rooms"]) for item in queue_items)
@@ -14584,6 +14597,9 @@ def run_gui(config_path: Path) -> int:
             return
         if ff_overlay_sending:
             return
+        overlay_players_snapshot = read_manual_players_light(scope=current_manual_scope())
+        overlay_queue_snapshot = collect_ff_queue_entries()
+        overlay_options_snapshot = ff_overlay_options_payload()
         ff_overlay_sending = True
         ff_overlay_status_var.set("Enviando")
 
@@ -14591,9 +14607,9 @@ def run_gui(config_path: Path) -> int:
             try:
                 response_text = send_ff_overlay_realtime_update(
                     endpoint_url,
-                    collect_manual_players(scope=current_manual_scope()),
-                    collect_ff_queue_entries(),
-                    options=ff_overlay_options_payload(),
+                    overlay_players_snapshot,
+                    overlay_queue_snapshot,
+                    options=overlay_options_snapshot,
                     device_id=str(local_config.get("device_id", "")),
                     device_name=str(local_config.get("device_name", "")),
                     room=str(local_config.get("kills_sync_room", "principal")),
@@ -19055,7 +19071,7 @@ def run_gui(config_path: Path) -> int:
             if force:
                 set_text_var(kills_overlay_status_var, "Jarvis respondeu sem rank do dia/geral")
             signature = manual_signature(players)
-            current_signature = manual_signature(collect_manual_players(scope=current_manual_scope()))
+            current_signature = manual_signature(read_manual_players_light(scope=current_manual_scope()))
             if signature != current_signature:
                 if time.monotonic() - manual_last_local_edit_at < 1.2 and not force:
                     manual_poll_quiet_cycles = min(manual_poll_quiet_cycles + 1, 8)
@@ -19175,7 +19191,7 @@ def run_gui(config_path: Path) -> int:
             kills_has_rankings = bool(kills_state.daily_ranking or kills_state.global_ranking)
             remote_kills_signature = manual_signature([] if kills_has_rankings else kills_state.players)
             remote_queue_signature = ff_queue_signature(queue_state.entries)
-            current_kills_signature = manual_signature([] if kills_has_rankings else collect_manual_players(scope=current_manual_scope()))
+            current_kills_signature = manual_signature([] if kills_has_rankings else read_manual_players_light(scope=current_manual_scope()))
             current_queue_signature = ff_queue_signature(collect_ff_queue_entries())
             if kills_has_rankings:
                 rank_signature = kills_rank_signature_for_state(kills_state)

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.214",
-    "notes":  "Deixa a edicao das Kills FF mais leve ao aplicar debounce nas sugestoes de nick, evitando recriar a busca a cada tecla.",
+    "version":  "2.6.215",
+    "notes":  "Reduz recalculos repetidos na tabela Kills FF usando buffer leve e evita acesso a widgets Tk fora da thread principal no envio de overlay.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.214/AizenStreamControl.exe",
-                    "sha256":  "e39eede93258df86c0a06a499ac5213da7724394cf7fc28d5e22340a2e0d2120"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.215/AizenStreamControl.exe",
+                    "sha256":  "23a1f63d6a2e1e4ea89e1cccb71c11b6adfd60b3e0e091f8bae2a90e5bf4d57a"
                 }
 }
