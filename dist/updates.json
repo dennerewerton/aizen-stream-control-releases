@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.254",
-    "notes":  "Otimiza o Salvar das Kills FF: leituras internas de preservacao/confirmacao agora usam timeout curto para nao deixar o app preso quando o Jarvis ou a rede oscilam, e o autosave manual evita enfileirar config sem mudancas.",
+    "version":  "2.6.255",
+    "notes":  "Reduz carga na abertura: adia carregamento do historico Livepix, posterga a limpeza de pastas temporarias PyInstaller para 30s apos abrir e limita a limpeza por lote, evitando disputa de disco nos primeiros segundos do app.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.254/AizenStreamControl.exe",
-                    "sha256":  "f5d279ea5624d34480bcbb81b29baff296c6edfe39aaf295c4ee9cad6b70d0c9"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.255/AizenStreamControl.exe",
+                    "sha256":  "8336a4a2eb95089eb68dbf746ff3f70f315ff57997309774cd2f6c478ab60738"
                 }
 }
