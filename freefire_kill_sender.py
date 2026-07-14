@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.193"
+APP_VERSION = "2.6.194"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -10420,6 +10420,9 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         return kills_global_ranking if clean_scope == "general" else kills_daily_ranking
 
+    def manual_players_need_name_completion(players: list[PlayerKill]) -> bool:
+        return any(not str(player.name or "").strip() and normalize_kill_value(player.kills) > 0 for player in players)
+
     def manual_name_reference_players(scope: str | None = None) -> list[PlayerKill]:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
@@ -10448,7 +10451,7 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
-        if all(str(player.name or "").strip() or normalize_kill_value(player.kills) <= 0 for player in players):
+        if not manual_players_need_name_completion(players):
             return complete_player_names_from_references(players, None)
         source_players = references if references is not None else manual_name_reference_players(clean_scope)
         return complete_player_names_from_references(players, source_players)
@@ -10473,13 +10476,9 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
-        rank_players = merge_manual_player_kills(
-            complete_manual_player_names(
-                manual_scope_rank_players(clean_scope),
-                clean_scope,
-                references=manual_name_reference_players(clean_scope),
-            )
-        )
+        rank_source = manual_scope_rank_players(clean_scope)
+        rank_references = manual_name_reference_players(clean_scope) if manual_players_need_name_completion(rank_source) else None
+        rank_players = merge_manual_player_kills(complete_manual_player_names(rank_source, clean_scope, references=rank_references))
         if rank_players:
             repair_manual_scope_buffer_names(clean_scope, references=rank_players)
         if prefer_remote and rank_players and clean_scope not in manual_scope_dirty:
@@ -10487,8 +10486,9 @@ def run_gui(config_path: Path) -> int:
             return clone_player_list(rank_players)
         buffered_players = manual_scope_buffers.get(clean_scope) or []
         if buffered_players:
+            buffer_references = rank_players if manual_players_need_name_completion(buffered_players) else None
             completed_players = merge_manual_player_kills(
-                complete_manual_player_names(buffered_players, clean_scope, references=rank_players or None)
+                complete_manual_player_names(buffered_players, clean_scope, references=buffer_references)
             )
             manual_scope_buffers[clean_scope] = clone_player_list(completed_players)
             return clone_player_list(completed_players)
@@ -11320,6 +11320,12 @@ def run_gui(config_path: Path) -> int:
         nonlocal manual_applying_remote
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"} or clean_scope != current_manual_scope():
+            return False
+        needs_fill = any(
+            not row["name_var"].get().strip() and normalize_kill_value(row["kills_var"].get()) > 0
+            for row in manual_rows
+        )
+        if not needs_fill:
             return False
         references = manual_name_reference_players(clean_scope)
         if not references:
