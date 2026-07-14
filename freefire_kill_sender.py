@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.237"
+APP_VERSION = "2.6.238"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -7916,6 +7916,7 @@ def run_gui(config_path: Path) -> int:
     manual_suggestion_after_ids: dict[int, str] = {}
     manual_scope_buffers: dict[str, list[PlayerKill]] = {"daily": [], "general": []}
     manual_scope_dirty: set[str] = set()
+    manual_reference_cache: dict[str, tuple[str, list[PlayerKill]]] = {}
     manual_table_render_pending = False
     manual_table_render_scope = ""
     manual_table_render_after_id: str | None = None
@@ -11313,10 +11314,44 @@ def run_gui(config_path: Path) -> int:
     def manual_players_need_name_completion(players: list[PlayerKill]) -> bool:
         return any(not str(player.name or "").strip() and normalize_kill_value(player.kills) > 0 for player in players)
 
+    def clear_manual_reference_cache() -> None:
+        manual_reference_cache.clear()
+
+    def visible_manual_rows_signature() -> str:
+        digest = hashlib.sha1()
+        for row in manual_rows:
+            try:
+                update_digest_part(digest, row["name_var"].get())
+                update_digest_part(digest, normalize_kill_value(row["kills_var"].get()))
+            except (KeyError, tk.TclError):
+                continue
+        update_digest_part(digest, len(manual_rows))
+        return digest.hexdigest()
+
+    def manual_reference_cache_key(scope: str) -> str:
+        clean_scope = normalize_kills_scope_value(scope)
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        other_scope = "daily" if clean_scope == "general" else "general"
+        return "|".join(
+            (
+                clean_scope,
+                visible_manual_rows_signature(),
+                player_rank_light_signature(manual_scope_rank_players(clean_scope)),
+                player_rank_light_signature(manual_scope_buffers.get(clean_scope, [])),
+                player_rank_light_signature(manual_scope_rank_players(other_scope)),
+                player_rank_light_signature(manual_scope_buffers.get(other_scope, [])),
+            )
+        )
+
     def manual_name_reference_players(scope: str | None = None) -> list[PlayerKill]:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
+        cache_key = manual_reference_cache_key(clean_scope)
+        cached = manual_reference_cache.get(clean_scope)
+        if cached and cached[0] == cache_key:
+            return clone_player_list(cached[1])
         other_scope = "daily" if clean_scope == "general" else "general"
         references: list[PlayerKill] = []
         for row in manual_rows:
@@ -11331,7 +11366,9 @@ def run_gui(config_path: Path) -> int:
         references.extend(manual_scope_buffers.get(clean_scope, []))
         references.extend(manual_scope_rank_players(other_scope))
         references.extend(manual_scope_buffers.get(other_scope, []))
-        return sorted_rank_players(references)
+        players = sorted_rank_players(references)
+        manual_reference_cache[clean_scope] = (cache_key, clone_player_list(players))
+        return players
 
     def complete_manual_player_names(
         players: list[PlayerKill],
@@ -11362,6 +11399,7 @@ def run_gui(config_path: Path) -> int:
         ):
             return False
         manual_scope_buffers[clean_scope] = clone_player_list(completed_players)
+        clear_manual_reference_cache()
         return True
 
     def manual_scope_display_players(scope: str | None = None, prefer_remote: bool = True) -> list[PlayerKill]:
@@ -11375,6 +11413,7 @@ def run_gui(config_path: Path) -> int:
             repair_manual_scope_buffer_names(clean_scope, references=rank_players)
         if prefer_remote and rank_players and clean_scope not in manual_scope_dirty:
             manual_scope_buffers[clean_scope] = clone_player_list(rank_players)
+            clear_manual_reference_cache()
             return clone_player_list(rank_players)
         buffered_players = manual_scope_buffers.get(clean_scope) or []
         if buffered_players:
@@ -11383,9 +11422,11 @@ def run_gui(config_path: Path) -> int:
                 complete_manual_player_names(buffered_players, clean_scope, references=buffer_references)
             )
             manual_scope_buffers[clean_scope] = clone_player_list(completed_players)
+            clear_manual_reference_cache()
             return clone_player_list(completed_players)
         if rank_players:
             manual_scope_buffers[clean_scope] = clone_player_list(rank_players)
+            clear_manual_reference_cache()
             return clone_player_list(rank_players)
         return []
 
@@ -11425,6 +11466,7 @@ def run_gui(config_path: Path) -> int:
             manual_scope_var.set("Diario")
         if previous_scope in {"daily", "general"}:
             manual_scope_buffers[previous_scope] = clone_player_list(collect_manual_players(scope=previous_scope))
+            clear_manual_reference_cache()
         manual_active_scope = new_scope
         config["kills_manual_scope"] = new_scope
         refresh_manual_table_for_scope(new_scope, prefer_remote=True)
@@ -12077,6 +12119,7 @@ def run_gui(config_path: Path) -> int:
         else:
             kills_global_ranking = []
         kills_ignored_players = list(state.ignored_players or [])
+        clear_manual_reference_cache()
         repair_manual_scope_buffer_names("daily", references=kills_daily_ranking)
         repair_manual_scope_buffer_names("general", references=kills_global_ranking)
         refresh_kills_ignored_list()
@@ -12227,6 +12270,7 @@ def run_gui(config_path: Path) -> int:
             buffered_players = complete_manual_player_names(buffered_players, clean_scope, references=references)
         players = merge_manual_player_kills(buffered_players)
         manual_scope_buffers[clean_scope] = clone_player_list(players)
+        clear_manual_reference_cache()
         return players
 
     def update_manual_metrics(players: list[PlayerKill] | None = None) -> None:
@@ -12282,6 +12326,7 @@ def run_gui(config_path: Path) -> int:
         if clean_scope not in {"daily", "general"}:
             return
         manual_scope_buffers[clean_scope] = clone_player_list(players)
+        clear_manual_reference_cache()
         if clean_scope == "general":
             kills_global_ranking = clone_player_list(players)
         else:
@@ -12367,6 +12412,7 @@ def run_gui(config_path: Path) -> int:
 
         if changed:
             manual_scope_buffers[clean_scope] = clone_player_list(collect_manual_players(fill_missing_names=False, scope=clean_scope))
+            clear_manual_reference_cache()
             refresh_local_rank_from_manual_scope(clean_scope)
         return changed
 
@@ -12432,6 +12478,7 @@ def run_gui(config_path: Path) -> int:
                 if key:
                     merged[key] = player
             manual_scope_buffers[clean_scope] = sorted_rank_players(list(merged.values()))
+            clear_manual_reference_cache()
             cancel_manual_table_incremental_render()
             if render_pending_table:
                 manual_table_render_pending = False
@@ -12449,6 +12496,7 @@ def run_gui(config_path: Path) -> int:
             manual_table_render_pending = False
             manual_table_render_scope = ""
             manual_scope_buffers[clean_scope] = clone_player_list(visible_players)
+            clear_manual_reference_cache()
         repair_manual_scope_buffer_names(clean_scope)
 
     def run_kills_visual_refresh() -> None:
