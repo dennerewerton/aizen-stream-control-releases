@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.210"
+APP_VERSION = "2.6.211"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4727,6 +4727,45 @@ def fetch_kills_rank_realtime(
     return parse_realtime_state(response.text)
 
 
+def fetch_kills_snapshot_realtime(
+    endpoint_url: str,
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+    session: requests.Session | None = None,
+) -> RealtimeState:
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-App-Version": APP_VERSION,
+    }
+    if room:
+        headers["X-Aizen-Room"] = room
+    if token:
+        headers["X-Aizen-Token"] = token
+    params = {
+        "client_id": device_id,
+        "client_name": device_name,
+        "app_version": APP_VERSION,
+    }
+    if room:
+        params["room"] = room
+    http_client = session or requests
+    response = http_client.get(
+        derive_kills_snapshot_endpoint(endpoint_url),
+        params=params,
+        headers=headers,
+        timeout=KILLS_GET_TIMEOUT_SECONDS,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    return parse_realtime_state(response.text)
+
+
 def derive_kills_rank_endpoint(endpoint_url: str) -> str:
     clean = normalize_endpoint_url(endpoint_url)
     parsed = urlparse(clean)
@@ -5089,6 +5128,36 @@ def fetch_confirmed_kills_scope_state(
         except Exception:
             continue
         if kills_scope_matches_state(state, clean_scope, players):
+            return state
+    return None
+
+
+def fetch_confirmed_kills_snapshot_endpoint_state(
+    endpoint_url: str,
+    daily_players: list[PlayerKill],
+    general_players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+    session: requests.Session | None = None,
+    delays: tuple[float, ...] = KILLS_RANK_CONFIRM_DELAYS_SECONDS,
+) -> RealtimeState | None:
+    for delay_seconds in delays:
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+        try:
+            state = fetch_kills_snapshot_realtime(
+                endpoint_url,
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+                session=session,
+            )
+        except Exception:
+            continue
+        if kills_snapshot_matches_state(state, daily_players, general_players):
             return state
     return None
 
@@ -5716,6 +5785,19 @@ def sync_kills_snapshot_after_scope_save(
         general_players = sorted_player_kills(players)
     if not (daily_players or general_players):
         return confirmed_state
+    existing_snapshot_state = fetch_confirmed_kills_snapshot_endpoint_state(
+        endpoint_url,
+        daily_players,
+        general_players,
+        device_id=device_id,
+        device_name=device_name,
+        room=room,
+        token=token,
+        delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
+    )
+    if existing_snapshot_state is not None:
+        return existing_snapshot_state
+    post_error_message = ""
     try:
         post_kills_snapshot_once(
             endpoint_url,
@@ -5726,12 +5808,29 @@ def sync_kills_snapshot_after_scope_save(
             room=room,
             token=token,
         )
-    except Exception:
-        return confirmed_state
-    snapshot_state = local_kills_snapshot_state(daily_players, general_players, updated_by=device_name)
-    if kills_scope_matches_state(snapshot_state, clean_scope, players):
+    except Exception as exc:
+        post_error_message = str(exc)
+    snapshot_state = fetch_confirmed_kills_snapshot_endpoint_state(
+        endpoint_url,
+        daily_players,
+        general_players,
+        device_id=device_id,
+        device_name=device_name,
+        room=room,
+        token=token,
+        delays=KILLS_RANK_CONFIRM_DELAYS_SECONDS,
+    )
+    if snapshot_state is not None:
         return snapshot_state
-    return confirmed_state
+    if post_error_message:
+        raise RuntimeError(
+            "Jarvis confirmou o /rank, mas nao consegui atualizar o painel principal: "
+            f"{post_error_message}"
+        )
+    raise RuntimeError(
+        "Jarvis confirmou o /rank, mas o painel principal ainda nao retornou o ranking salvo. "
+        "Aguarde alguns segundos, clique em Atualizar rank e tente Salvar novamente."
+    )
 
 
 def send_kills_scope_replace_update(

@@ -36,6 +36,7 @@ from freefire_kill_sender import (  # noqa: E402
     fetch_kills_style,
     fetch_kills_rank_realtime,
     fetch_kills_realtime,
+    fetch_kills_snapshot_realtime,
     fetch_tikfinity_ff_gifts,
     is_live_chat_event_payload,
     kills_snapshot_url_candidates,
@@ -1234,6 +1235,43 @@ def verify(
             )
         if base_site_global != {"geralsitemantido": 13}:
             raise RuntimeError(f"Salvar diario no painel principal alterou o geral: {base_after_scope!r}")
+        MockJarvisHandler.state["kills"] = {
+            "daily_ranking": [{"name": "DiaNaoGravou", "kills": 1}],
+            "ranking": [{"name": "GeralNaoGravou", "kills": 11}],
+            "ignored": {},
+        }
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {
+            "kills_actions": [],
+            "action_rank_only": True,
+            "rank_independent": True,
+            "weak_snapshot_ack": True,
+        }
+        try:
+            send_kills_scope_replace_update(
+                kills_url,
+                "daily",
+                [PlayerKill("DiarioSemPersistir", 15)],
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+            )
+        except RuntimeError as exc:
+            if "painel principal" not in str(exc):
+                raise RuntimeError(f"Salvar diario retornou erro inesperado quando o site nao persistiu: {exc}") from exc
+        else:
+            raise RuntimeError("Salvar diario confirmou sucesso sem persistir no painel principal.")
+        weak_persisted = fetch_kills_snapshot_realtime(
+            kills_url,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        weak_persisted_daily = {item.name.casefold(): item.kills for item in weak_persisted.daily_ranking or []}
+        if weak_persisted_daily != {"dianaogravou": 1}:
+            raise RuntimeError(f"Cenario de painel principal nao persistido ficou invalido: {weak_persisted!r}")
         MockJarvisHandler.state["kills"] = {
             "daily_ranking": [{"name": "DiaFallback", "kills": 2}],
             "ranking": [{"name": "GeralFallback", "kills": 18}],

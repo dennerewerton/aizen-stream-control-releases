@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.210",
-    "notes":  "Otimiza o Sorteio Chat: listas grandes de participantes agora renderizam em blocos para evitar travadas durante lives movimentadas.",
+    "version":  "2.6.211",
+    "notes":  "Corrige o Salvar das Kills FF para confirmar o rank diario no painel principal do Jarvis antes de mostrar sincronizado.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.210/AizenStreamControl.exe",
-                    "sha256":  "dc34e6ff41cc8205c37034b9409b138a2cd787acd5e0c15dd976f76403dae18d"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.211/AizenStreamControl.exe",
+                    "sha256":  "f4667f11f88a0a3f188e845898b17967f8265b33ef99040a52e180b96684d6e0"
                 }
 }
