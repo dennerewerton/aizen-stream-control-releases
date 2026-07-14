@@ -45,6 +45,7 @@ from freefire_kill_sender import (  # noqa: E402
     normalize_live_chat_payload,
     normalize_chat_command,
     normalize_kills_scope_value,
+    normalize_player_key,
     overlay_rank_players,
     parse_ff_queue_state,
     parse_realtime_state,
@@ -704,6 +705,8 @@ def verify_contracts() -> None:
         raise RuntimeError("Derivacao da action Fila FF falhou.")
     if derive_tikfinity_ff_gifts_endpoint(expected_endpoints["queue"]) != "https://jarvis.squareweb.app/api/tikfinity/ff-gifts":
         raise RuntimeError("Derivacao TikFinity FF falhou.")
+    if normalize_player_key("  AIZEN   OFC  ") != "aizen ofc":
+        raise RuntimeError("Normalizacao de nick Kills FF divergente.")
     scope_checks = {
         "Ambos": ("both", "Ambos"),
         "Diario": ("daily", "Diario"),

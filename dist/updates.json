@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.221",
-    "notes":  "Corrige o Salvar das Kills FF para confirmar o ranking diario no painel Jarvis antes de marcar como sincronizado.",
+    "version":  "2.6.222",
+    "notes":  "Otimiza Kills FF com cache limitado para normalizacao de nicks, reduzindo CPU ao ordenar, comparar e salvar rankings.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.221/AizenStreamControl.exe",
-                    "sha256":  "1cc8947b1ccc76e8a3f50e25284b6397abca9f5fd9df7c6ae24b5c923cddce1a"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.222/AizenStreamControl.exe",
+                    "sha256":  "0de9bd7be39f02d0ccc4438bee12536f9b5c70aca21c3aa2a536a224bd28a351"
                 }
 }

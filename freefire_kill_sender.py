@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
@@ -79,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.221"
+APP_VERSION = "2.6.222"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3119,9 +3120,14 @@ def clean_name(text: str, corrections: dict[str, str]) -> str:
     return text
 
 
-def normalize_player_key(name: str) -> str:
+@lru_cache(maxsize=8192)
+def _normalize_player_key_cached(name: str) -> str:
     name = re.sub(r"\s+", " ", name).strip().casefold()
     return name
+
+
+def normalize_player_key(name: str) -> str:
+    return _normalize_player_key_cached(name)
 
 
 def parse_player_list(value: Any) -> list[str]:
