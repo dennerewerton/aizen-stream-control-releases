@@ -591,6 +591,9 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
             self.headers_seen["kills_style"] = {key: value for key, value in self.headers.items()}
             self._send_json({"ok": True, **self.state["kills_style"]})
         else:
+            if "freefire-kills" in self.path:
+                debug = self.state.setdefault("debug", {})
+                debug["snapshot_gets"] = int(debug.get("snapshot_gets") or 0) + 1
             self._send_json(self.state["kills"])
 
 
@@ -1214,6 +1217,37 @@ def verify(
             raise RuntimeError(f"Salvar diario com preservacao local fez GET extra no /rank: {known_preserve_rank_gets}")
         if known_preserve_actions != ["replace"]:
             raise RuntimeError(f"Salvar diario com preservacao local nao ficou no replace rapido: {known_preserve_actions!r}")
+        MockJarvisHandler.state["kills"] = {
+            "daily_ranking": [{"name": "DiaForteAntigo", "kills": 1}],
+            "ranking": [{"name": "GeralForteLocal", "kills": 24}],
+            "ignored": {},
+        }
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {
+            "kills_actions": [],
+            "rank_gets": 0,
+            "snapshot_gets": 0,
+            "action_rank_only": True,
+            "rank_independent": True,
+            "strong_snapshot_response": True,
+        }
+        scoped_daily_strong = send_kills_scope_replace_update(
+            kills_url,
+            "daily",
+            [PlayerKill("DailyStrong", 6)],
+            preserve_players=[PlayerKill("GeralForteLocal", 24)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        strong_scope_daily = {item.name.casefold(): item.kills for item in scoped_daily_strong.daily_ranking or []}
+        strong_scope_global = {item.name.casefold(): item.kills for item in scoped_daily_strong.global_ranking or []}
+        strong_scope_snapshot_gets = int(MockJarvisHandler.state.get("debug", {}).get("snapshot_gets") or 0)
+        if strong_scope_daily != {"dailystrong": 6} or strong_scope_global != {"geralfortelocal": 24}:
+            raise RuntimeError(f"Salvar diario com resposta forte divergente: {scoped_daily_strong!r}")
+        if strong_scope_snapshot_gets != 0:
+            raise RuntimeError(f"Salvar diario com resposta forte fez GET extra no painel principal: {strong_scope_snapshot_gets}")
         MockJarvisHandler.state["kills"] = {
             "daily_ranking": [{"name": "DiaSiteAntigo", "kills": 1}],
             "ranking": [{"name": "GeralSiteMantido", "kills": 13}],

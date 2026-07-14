@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.218",
-    "notes":  "Renderiza o ranking do overlay Kills FF em partes menores para reduzir travadas apos salvar ou atualizar muitos jogadores.",
+    "version":  "2.6.219",
+    "notes":  "Acelera o Salvar das Kills FF quando o Jarvis ja devolve o snapshot confirmado, evitando uma leitura extra do painel principal.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.218/AizenStreamControl.exe",
-                    "sha256":  "32bb3df9eae6cd2a91605c76a8cc5a17c1b37c6b86ec6ee8a40aaaefb984c1a0"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.219/AizenStreamControl.exe",
+                    "sha256":  "1c5d79c66b3386a2a6e6d97f9a809a780deb6459ad0c7eafb63ddfcd483d68f8"
                 }
 }

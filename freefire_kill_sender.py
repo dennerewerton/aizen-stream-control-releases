@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.218"
+APP_VERSION = "2.6.219"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5684,7 +5684,7 @@ def post_kills_snapshot_once(
     device_name: str = "",
     room: str = "principal",
     token: str = "",
-) -> None:
+) -> RealtimeState | None:
     daily_players = sorted_player_kills(daily_players)
     general_players = sorted_player_kills(general_players)
     daily_payload = player_wire_payload(daily_players)
@@ -5767,8 +5767,12 @@ def post_kills_snapshot_once(
         location = response.headers.get("Location", "")
         raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
     response.raise_for_status()
+    response_state = parse_realtime_state(response.text)
+    if response_confirms_persisted_kills_snapshot(response.text, response_state, daily_players, general_players):
+        return response_state
     if not response_acknowledges_kills_snapshot(response.text):
         raise RuntimeError("Jarvis nao confirmou o snapshot leve.")
+    return None
 
 
 def sync_kills_snapshot_after_scope_save(
@@ -5805,7 +5809,7 @@ def sync_kills_snapshot_after_scope_save(
         return confirmed_state
     post_error_message = ""
     try:
-        post_kills_snapshot_once(
+        posted_state = post_kills_snapshot_once(
             endpoint_url,
             daily_players,
             general_players,
@@ -5814,6 +5818,8 @@ def sync_kills_snapshot_after_scope_save(
             room=room,
             token=token,
         )
+        if posted_state is not None:
+            return posted_state
     except Exception as exc:
         post_error_message = str(exc)
     snapshot_state = fetch_confirmed_kills_snapshot_endpoint_state(
