@@ -569,6 +569,9 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
             self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
             if mode == "kills_snapshot" and self.state.get("debug", {}).get("strong_snapshot_response"):
                 response_payload = {"ok": True, **payload}
+                if self.state.get("debug", {}).get("strong_snapshot_persisted"):
+                    response_payload["persisted"] = True
+                    response_payload["panel_confirmed"] = True
                 if not self.state.get("debug", {}).get("strong_snapshot_without_accepted"):
                     response_payload["accepted"] = len(payload.get("players") or []) + len(payload.get("daily_ranking") or [])
                 self._send_json(response_payload)
@@ -1468,6 +1471,34 @@ def verify(
         persisted_replaced_global = {item.name.casefold(): item.kills for item in persisted_replaced.global_ranking or []}
         if persisted_replaced_daily != {"pedro": 1} or persisted_replaced_global:
             raise RuntimeError(f"Snapshot Kills FF nao substituiu o diario persistido: {persisted_replaced!r}")
+        MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {
+            "kills_actions": [],
+            "strong_snapshot_response": True,
+            "strong_snapshot_persisted": True,
+            "rank_gets": 0,
+            "rank_independent": True,
+        }
+        persisted_response_snapshot = send_kills_snapshot_update(
+            kills_url,
+            [PlayerKill("PersistidoDiretoDia", 12)],
+            [PlayerKill("PersistidoDiretoGeral", 14)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        persisted_response_daily = {item.name.casefold(): item.kills for item in persisted_response_snapshot.daily_ranking or []}
+        persisted_response_global = {item.name.casefold(): item.kills for item in persisted_response_snapshot.global_ranking or []}
+        persisted_response_rank_gets = int(MockJarvisHandler.state.get("debug", {}).get("rank_gets") or 0)
+        persisted_response_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
+        if persisted_response_daily != {"persistidodiretodia": 12} or persisted_response_global != {"persistidodiretogeral": 14}:
+            raise RuntimeError(f"Snapshot persistido direto divergente: {persisted_response_snapshot!r}")
+        if persisted_response_rank_gets != 0:
+            raise RuntimeError(f"Snapshot persistido direto fez GET redundante no /rank: {persisted_response_rank_gets}")
+        if persisted_response_actions:
+            raise RuntimeError(f"Snapshot persistido direto caiu em fallback sem precisar: {persisted_response_actions!r}")
         MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["kills_rank"] = {}
         MockJarvisHandler.state["debug"] = {

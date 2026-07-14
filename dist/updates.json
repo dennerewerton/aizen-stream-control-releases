@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.247",
-    "notes":  "Reduz redraw desnecessario nas Kills FF ao reativar a aba: o app so forca recriacao das tabelas quando faltam widgets na tela; pendencias comuns agora reutilizam assinaturas e pulam trabalho visual repetido.",
+    "version":  "2.6.248",
+    "notes":  "Acelera o Salvar das Kills FF quando o Jarvis retorna confirmacao forte de painel persistido: o app agora pede retorno persistido e pula GETs extras de confirmacao somente quando recebe marcador explicito de persistencia. Fallbacks antigos continuam ativos para respostas fracas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.247/AizenStreamControl.exe",
-                    "sha256":  "a94d2e7ab037cf21177ff7d98988ed5291a22d8aa16d50c32e8794f4b3172470"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.248/AizenStreamControl.exe",
+                    "sha256":  "06257a5e279f575b5b923a1baf27b9b6a2d67d90db6141fbf16d86f5951e5f21"
                 }
 }

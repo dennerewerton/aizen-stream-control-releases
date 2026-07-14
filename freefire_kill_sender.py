@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.247"
+APP_VERSION = "2.6.248"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5486,6 +5486,9 @@ def send_kills_snapshot_update(
         "action": "replace",
         "scope": "both",
         "replace": True,
+        "return_state": True,
+        "return_persisted": True,
+        "confirm_persisted": True,
         "players": general_payload,
         "ranking": general_payload,
         "daily_ranking": daily_payload,
@@ -5585,6 +5588,9 @@ def send_kills_snapshot_update(
                     response.raise_for_status()
                     state = parse_realtime_state(response.text)
                     response_acknowledged = response_acknowledges_kills_snapshot(response.text)
+                    if response_confirms_persisted_kills_snapshot(response.text, state, daily_players, general_players):
+                        remember_persisted_snapshot_url(snapshot_url)
+                        return state
                     confirmation_checked = False
                     if kills_snapshot_matches_state(state, daily_players, general_players):
                         confirmation_checked = True
