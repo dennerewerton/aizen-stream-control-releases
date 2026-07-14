@@ -12813,9 +12813,23 @@ def run_gui(config_path: Path) -> int:
             except NameError:
                 pass
 
+    def ff_overlay_visual_target_active() -> bool:
+        if ff_overlay_content_frame is not None:
+            return True
+        if ff_overlay_preview_frame is None:
+            return False
+        try:
+            return bool(ff_overlay_preview_frame.winfo_ismapped())
+        except tk.TclError:
+            return False
+
     def schedule_kills_visual_refresh(delay_ms: int = KILLS_VISUAL_REFRESH_DELAY_MS) -> None:
-        nonlocal kills_visual_after_id
+        nonlocal kills_visual_after_id, kills_rank_render_pending, kills_ignored_render_pending
         if app_closing:
+            return
+        if not is_kills_ff_tab_active() and not ff_overlay_visual_target_active():
+            kills_rank_render_pending = True
+            kills_ignored_render_pending = True
             return
         if kills_visual_after_id is not None:
             try:
