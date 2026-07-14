@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.225",
-    "notes":  "Evita autosave duplicado apos Salvar Kills FF: grava o snapshot ja calculado em background e cancela recalculo pendente da UI.",
+    "version":  "2.6.226",
+    "notes":  "Reaproveita a mesma sessao HTTP nas confirmacoes do Salvar Kills FF, reduzindo overhead de conexao sem remover checagem de persistencia.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.225/AizenStreamControl.exe",
-                    "sha256":  "dec7a3c2ca81cc18c327a62595a6a45fb5ddd2b18c1489c4384547fb65d8743c"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.226/AizenStreamControl.exe",
+                    "sha256":  "1c9b6d37841077b8a098e4469b990dd37cdd9b8809557c3f924195e5a4f2e5fc"
                 }
 }

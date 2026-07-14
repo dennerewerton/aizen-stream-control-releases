@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.225"
+APP_VERSION = "2.6.226"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4638,6 +4638,7 @@ def fetch_kills_realtime(
     device_name: str = "",
     room: str = "principal",
     token: str = "",
+    session: requests.Session | None = None,
 ) -> RealtimeState:
     headers = {
         "X-Aizen-Client-Id": device_id,
@@ -4656,7 +4657,8 @@ def fetch_kills_realtime(
     if room:
         params["room"] = room
     base_url = normalize_endpoint_url(endpoint_url)
-    response = requests.get(
+    http_session = session or requests
+    response = http_session.get(
         base_url,
         params=params,
         headers=headers,
@@ -4673,7 +4675,7 @@ def fetch_kills_realtime(
     rank_params = dict(params)
     rank_params["limit"] = 200
     try:
-        rank_response = requests.get(
+        rank_response = http_session.get(
             rank_url,
             params=rank_params,
             headers=headers,
@@ -5691,6 +5693,7 @@ def post_kills_snapshot_once(
     device_name: str = "",
     room: str = "principal",
     token: str = "",
+    session: requests.Session | None = None,
 ) -> RealtimeState | None:
     daily_players = sorted_player_kills(daily_players)
     general_players = sorted_player_kills(general_players)
@@ -5763,7 +5766,8 @@ def post_kills_snapshot_once(
     }
     if token:
         headers["X-Aizen-Token"] = token
-    response = requests.post(
+    http_session = session or requests
+    response = http_session.post(
         derive_kills_snapshot_endpoint(endpoint_url),
         json=payload,
         headers=headers,
@@ -5815,8 +5819,21 @@ def sync_kills_snapshot_after_scope_save(
     if not (daily_players or general_players):
         return confirmed_state
     post_error_message = ""
-    try:
-        post_kills_snapshot_once(
+    with requests.Session() as session:
+        try:
+            post_kills_snapshot_once(
+                endpoint_url,
+                daily_players,
+                general_players,
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+                session=session,
+            )
+        except Exception as exc:
+            post_error_message = str(exc)
+        snapshot_state = fetch_confirmed_kills_snapshot_endpoint_state(
             endpoint_url,
             daily_players,
             general_players,
@@ -5824,19 +5841,9 @@ def sync_kills_snapshot_after_scope_save(
             device_name=device_name,
             room=room,
             token=token,
+            session=session,
+            delays=KILLS_RANK_CONFIRM_DELAYS_SECONDS,
         )
-    except Exception as exc:
-        post_error_message = str(exc)
-    snapshot_state = fetch_confirmed_kills_snapshot_endpoint_state(
-        endpoint_url,
-        daily_players,
-        general_players,
-        device_id=device_id,
-        device_name=device_name,
-        room=room,
-        token=token,
-        delays=KILLS_RANK_CONFIRM_DELAYS_SECONDS,
-    )
     if snapshot_state is not None:
         return snapshot_state
     if post_error_message:
@@ -6009,6 +6016,7 @@ def send_kills_scope_bulk_action_update(
                         device_name=device_name,
                         room=room,
                         token=token,
+                        session=session,
                     )
                     if base_previous_state.daily_ranking or base_previous_state.global_ranking or base_previous_state.players:
                         previous_state = base_previous_state
