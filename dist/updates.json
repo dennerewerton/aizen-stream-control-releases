@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.216",
-    "notes":  "Corrige o Salvar das Kills FF para confirmar o rank diario no painel principal do Jarvis e preserva o outro ranking ao salvar apenas Diario ou Geral.",
+    "version":  "2.6.217",
+    "notes":  "Deixa o painel de logs mais leve em rajadas, limitando o trabalho por ciclo de interface para reduzir travadinhas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.216/AizenStreamControl.exe",
-                    "sha256":  "49af74b03fea420fd0561c51ad621c0fe7057827928e25d6f1223fecc5a342e2"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.217/AizenStreamControl.exe",
+                    "sha256":  "bde62d7989b176b52f0d564c01322cc41592ea9bb24f9a4f0cee800a631b348a"
                 }
 }

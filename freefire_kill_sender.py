@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.216"
+APP_VERSION = "2.6.217"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -93,7 +93,7 @@ LOG_QUEUE_SOFT_LIMIT = 1500
 LOG_QUEUE_HARD_LIMIT = 2200
 LOG_TEXT_MAX_LINES = 1200
 LOG_PUMP_BATCH_LIMIT = 60
-LOG_FULL_RENDER_CHUNK_LINES = 240
+LOG_FULL_RENDER_CHUNK_LINES = 160
 LOG_INACTIVE_IDLE_PUMP_MS = 8000
 CHAT_USER_CACHE_LIMIT = 600
 CHAT_EVENT_QUEUE_LIMIT = 800
@@ -20701,7 +20701,10 @@ def run_gui(config_path: Path) -> int:
         messages: list[str] = []
         processed_count = 0
         batch_limit = LOG_PUMP_BATCH_LIMIT
+        deadline = time.monotonic() + UI_PUMP_TIME_BUDGET_SECONDS
         while processed_count < batch_limit:
+            if processed_count and time.monotonic() >= deadline:
+                break
             try:
                 message = log_queue.get_nowait()
             except queue.Empty:
