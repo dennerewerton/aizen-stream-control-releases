@@ -252,6 +252,27 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
                 save_kills_state(action=action)
                 self._send_json({"ok": True, **self.state["kills"]})
                 return
+            if action == "replace":
+                incoming_state = parse_realtime_state(payload)
+                if scope in {"daily", "both"}:
+                    daily_rows[:] = [
+                        player_row(player)
+                        for player in sorted(
+                            incoming_state.daily_ranking or incoming_state.players or [],
+                            key=lambda item: (-int(item.kills), clean_key(item.name)),
+                        )
+                    ]
+                if scope in {"general", "both"}:
+                    ranking_rows[:] = [
+                        player_row(player)
+                        for player in sorted(
+                            incoming_state.global_ranking or incoming_state.players or [],
+                            key=lambda item: (-int(item.kills), clean_key(item.name)),
+                        )
+                    ]
+                save_kills_state(action=action)
+                self._send_json({"ok": True, **self.state["kills"]})
+                return
 
             player_name = str(payload.get("name") or payload.get("display_name") or payload.get("key") or "AizenVerify").strip()
             player_key = clean_key(payload.get("key") or player_name)
@@ -1151,8 +1172,31 @@ def verify(
             raise RuntimeError(f"Salvar Kills FF diario nao substituiu o diario: {scoped_daily!r}")
         if scoped_global_map != {"geralmantido": 12}:
             raise RuntimeError(f"Salvar Kills FF diario alterou o geral: {scoped_daily!r}")
-        if "reset_general" in scoped_actions:
-            raise RuntimeError(f"Salvar diario resetou o geral indevidamente: {scoped_actions!r}")
+        if scoped_actions != ["replace"]:
+            raise RuntimeError(f"Salvar diario nao usou o caminho rapido de replace unico: {scoped_actions!r}")
+        MockJarvisHandler.state["kills"] = {
+            "daily_ranking": [{"name": "DiaFallback", "kills": 2}],
+            "ranking": [{"name": "GeralFallback", "kills": 18}],
+            "ignored": {},
+        }
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {"kills_actions": [], "reject_snapshot": True}
+        fallback_daily = send_kills_scope_replace_update(
+            kills_url,
+            "daily",
+            [PlayerKill("DailyFallback", 6)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        fallback_daily_map = {item.name.casefold(): item.kills for item in fallback_daily.daily_ranking or []}
+        fallback_global_map = {item.name.casefold(): item.kills for item in fallback_daily.global_ranking or []}
+        fallback_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
+        if fallback_daily_map != {"dailyfallback": 6} or fallback_global_map != {"geralfallback": 18}:
+            raise RuntimeError(f"Fallback do Salvar diario Kills FF divergente: {fallback_daily!r}")
+        if "reset_daily" not in fallback_actions or "set" not in fallback_actions or "reset_general" in fallback_actions:
+            raise RuntimeError(f"Fallback do Salvar diario fez acoes erradas: {fallback_actions!r}")
         snapshot_state = send_kills_snapshot_update(
             kills_url,
             [PlayerKill("Pedro", 2), PlayerKill("pedro", 3), PlayerKill("Ana", 1)],

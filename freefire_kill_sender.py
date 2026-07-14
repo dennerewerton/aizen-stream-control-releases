@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.196"
+APP_VERSION = "2.6.197"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4878,6 +4878,13 @@ def kills_scope_matches_state(state: RealtimeState, scope: str, players: list[Pl
     return player_kill_map(actual_players) == expected
 
 
+def kills_scope_players_from_state(state: RealtimeState, scope: str) -> list[PlayerKill]:
+    clean_scope = normalize_kills_scope_value(scope)
+    if clean_scope == "general":
+        return sorted_player_kills(state.global_ranking or ([] if state.daily_ranking else state.players or []))
+    return sorted_player_kills(state.daily_ranking or [])
+
+
 def fetch_kills_rank_confirmation(
     endpoint_url: str,
     daily_players: list[PlayerKill],
@@ -5494,9 +5501,222 @@ def send_kills_scope_replace_update(
     clean_scope = normalize_kills_scope_value(scope)
     if clean_scope not in {"daily", "general"}:
         clean_scope = "daily"
+    try:
+        return send_kills_scope_bulk_action_update(
+            endpoint_url,
+            clean_scope,
+            players,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+    except Exception:
+        return send_kills_scope_action_replace_update(
+            endpoint_url,
+            clean_scope,
+            players,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+
+
+def send_kills_scope_bulk_action_update(
+    endpoint_url: str,
+    scope: str,
+    players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> RealtimeState:
+    clean_scope = normalize_kills_scope_value(scope)
+    if clean_scope not in {"daily", "general"}:
+        clean_scope = "daily"
+    players = sorted_player_kills(players)
+    payload_players = player_wire_payload(players)
+    scope_slug = "diario" if clean_scope == "daily" else "geral"
+    preserve_scope = "general" if clean_scope == "daily" else "daily"
+    payload: dict[str, Any] = {
+        "source": "aizen-stream-control",
+        "mode": "kills_action",
+        "app_version": APP_VERSION,
+        "sync_version": 4,
+        "room": room,
+        "client_id": device_id,
+        "client_name": device_name,
+        "updated_by": device_name,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "revision": int(time.time() * 1000),
+        "action": "replace",
+        "scope": clean_scope,
+        "scope_label": kills_scope_label(clean_scope),
+        "scopeLabel": kills_scope_label(clean_scope),
+        "scope_slug": scope_slug,
+        "scopeSlug": scope_slug,
+        "scope_pt": scope_slug,
+        "scopePt": scope_slug,
+        "rank_scope": clean_scope,
+        "rankScope": clean_scope,
+        "ranking_scope": clean_scope,
+        "rankingScope": clean_scope,
+        "target_scope": clean_scope,
+        "targetScope": clean_scope,
+        "period": clean_scope,
+        "period_slug": scope_slug,
+        "periodSlug": scope_slug,
+        "periodo": scope_slug,
+        "replace": True,
+        "replace_scope": clean_scope,
+        "replaceScope": clean_scope,
+        "replace_daily": clean_scope == "daily",
+        "replaceDaily": clean_scope == "daily",
+        "replace_general": clean_scope == "general",
+        "replaceGeneral": clean_scope == "general",
+        "scopes": [clean_scope],
+        "items": payload_players,
+        "data": payload_players,
+        "total_players": len(players),
+        "total_kills": sum(player.kills for player in players),
+        "totals": {
+            "total_players": len(players),
+            "total_kills": sum(player.kills for player in players),
+        },
+    }
+    if clean_scope == "daily":
+        payload.update(
+            {
+                "daily_ranking": payload_players,
+                "dailyRanking": payload_players,
+                "daily_rank": payload_players,
+                "dailyRank": payload_players,
+                "dia_ranking": payload_players,
+                "diaRanking": payload_players,
+                "daily": payload_players,
+                "dia": payload_players,
+                "daily_players": payload_players,
+                "dailyPlayers": payload_players,
+                "daily_player_count": len(players),
+                "dailyPlayerCount": len(players),
+                "daily_total_players": len(players),
+                "dailyTotalPlayers": len(players),
+                "daily_total_kills": sum(player.kills for player in players),
+                "dailyTotalKills": sum(player.kills for player in players),
+                "daily_kills": sum(player.kills for player in players),
+                "dailyKills": sum(player.kills for player in players),
+            }
+        )
+    else:
+        payload.update(
+            {
+                "players": payload_players,
+                "ranking": payload_players,
+                "global_ranking": payload_players,
+                "globalRanking": payload_players,
+                "general_ranking": payload_players,
+                "generalRanking": payload_players,
+                "geral_ranking": payload_players,
+                "geralRanking": payload_players,
+                "general": payload_players,
+                "geral": payload_players,
+            }
+        )
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-Room": room,
+        "X-Aizen-App-Version": APP_VERSION,
+        "X-Aizen-Mode": "kills_action",
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    with requests.Session() as session:
+        previous_state = fetch_kills_rank_realtime(
+            endpoint_url,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+            session=session,
+        )
+        preserve_players = kills_scope_players_from_state(previous_state, preserve_scope)
+        response = session.post(
+            derive_kills_action_endpoint(endpoint_url),
+            json=payload,
+            headers=headers,
+            timeout=KILLS_POST_TIMEOUT_SECONDS,
+            allow_redirects=False,
+        )
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("Location", "")
+            raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+        response.raise_for_status()
+        response_state = parse_realtime_state(response.text)
+        if not response_acknowledges_kills_snapshot(response.text) and not kills_scope_matches_state(response_state, clean_scope, players):
+            raise RuntimeError("Jarvis nao confirmou o replace em lote.")
+        confirmed_state = fetch_confirmed_kills_scope_state(
+            endpoint_url,
+            clean_scope,
+            players,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+            session=session,
+            delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
+        )
+        if confirmed_state is None:
+            raise RuntimeError("Jarvis nao confirmou o ranking no /rank apos replace em lote.")
+        if not kills_scope_matches_state(confirmed_state, preserve_scope, preserve_players):
+            restored_state = send_kills_scope_action_replace_update(
+                endpoint_url,
+                preserve_scope,
+                preserve_players,
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+                session=session,
+            )
+            if not kills_scope_matches_state(restored_state, clean_scope, players):
+                confirmed_state = fetch_confirmed_kills_scope_state(
+                    endpoint_url,
+                    clean_scope,
+                    players,
+                    device_id=device_id,
+                    device_name=device_name,
+                    room=room,
+                    token=token,
+                    session=session,
+                    delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
+                )
+                if confirmed_state is None:
+                    raise RuntimeError("Jarvis alterou outro ranking durante o replace em lote.")
+            else:
+                confirmed_state = restored_state
+        return confirmed_state
+
+
+def send_kills_scope_action_replace_update(
+    endpoint_url: str,
+    scope: str,
+    players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+    session: requests.Session | None = None,
+) -> RealtimeState:
+    clean_scope = normalize_kills_scope_value(scope)
+    if clean_scope not in {"daily", "general"}:
+        clean_scope = "daily"
     players = sorted_player_kills(players)
     reset_action = "reset_general" if clean_scope == "general" else "reset_daily"
-    with requests.Session() as session:
+    http_session = session or requests.Session()
+    close_session = session is None
+    try:
         send_kills_action_update(
             endpoint_url,
             reset_action,
@@ -5505,7 +5725,7 @@ def send_kills_scope_replace_update(
             device_name=device_name,
             room=room,
             token=token,
-            session=session,
+            session=http_session,
             parse_response=False,
         )
         for player in players:
@@ -5519,7 +5739,7 @@ def send_kills_scope_replace_update(
                 device_name=device_name,
                 room=room,
                 token=token,
-                session=session,
+                session=http_session,
                 parse_response=False,
             )
         confirmed_state = fetch_confirmed_kills_scope_state(
@@ -5530,10 +5750,13 @@ def send_kills_scope_replace_update(
             device_name=device_name,
             room=room,
             token=token,
-            session=session,
+            session=http_session,
         )
         if confirmed_state is not None:
             return confirmed_state
+    finally:
+        if close_session:
+            http_session.close()
     raise RuntimeError(
         f"Jarvis respondeu, mas o endpoint /rank nao confirmou o ranking {kills_scope_label(clean_scope).lower()} enviado. "
         "Clique em Atualizar rank e tente Salvar de novo."
