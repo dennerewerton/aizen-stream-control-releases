@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.211"
+APP_VERSION = "2.6.212"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11528,6 +11528,14 @@ def run_gui(config_path: Path) -> int:
         except (AttributeError, tk.TclError):
             return False
 
+    def request_deferred_render_pump(delay_ms: int = 0) -> None:
+        if app_closing:
+            return
+        try:
+            schedule_deferred_render_pump(delay_ms)
+        except NameError:
+            pass
+
     def update_digest_part(digest: Any, value: Any) -> None:
         digest.update(str(value if value is not None else "").encode("utf-8", "replace"))
         digest.update(b"\0")
@@ -11564,6 +11572,7 @@ def run_gui(config_path: Path) -> int:
             if getattr(refresh_kills_ignored_list, "_deferred_signature", None) != ignored_signature:
                 refresh_kills_ignored_list._deferred_signature = ignored_signature  # type: ignore[attr-defined]
                 kills_ignored_render_pending = True
+                request_deferred_render_pump()
             return
         if (
             getattr(refresh_kills_ignored_list, "_signature", None) == ignored_signature
@@ -11638,6 +11647,7 @@ def run_gui(config_path: Path) -> int:
             if getattr(refresh_kills_rank_table, "_deferred_signature", None) != table_signature:
                 refresh_kills_rank_table._deferred_signature = table_signature  # type: ignore[attr-defined]
                 kills_rank_render_pending = True
+                request_deferred_render_pump()
             return
         if not force and getattr(refresh_kills_rank_table, "_signature", None) == table_signature and not kills_rank_render_pending:
             return
@@ -12888,6 +12898,7 @@ def run_gui(config_path: Path) -> int:
                 manual_rows.clear()
                 manual_table_render_pending = True
                 manual_table_render_scope = clean_scope
+                request_deferred_render_pump()
                 return
             target_rows = max(len(players), minimum_rows)
             widget_delta = abs(len(manual_rows) - target_rows)
@@ -13635,6 +13646,7 @@ def run_gui(config_path: Path) -> int:
             )
             set_text_var(ff_queue_count_var, summary_count)
             set_text_var(ff_queue_playing_var, sum(1 for entry in summary_entries if entry.status == "Jogando"))
+            request_deferred_render_pump()
             return
         ff_queue_applying_remote = True
         try:
@@ -17318,6 +17330,7 @@ def run_gui(config_path: Path) -> int:
             if getattr(render_livepix_events, "_deferred_signature", None) != render_signature:
                 render_livepix_events._deferred_signature = render_signature  # type: ignore[attr-defined]
                 livepix_history_render_pending = True
+                request_deferred_render_pump()
             return
         if (
             getattr(render_livepix_events, "_signature", None) == render_signature
@@ -18016,6 +18029,7 @@ def run_gui(config_path: Path) -> int:
                     render_livepix_overlay()
                 else:
                     livepix_history_render_pending = True
+                    request_deferred_render_pump()
                 schedule_livepix_dashboard_refresh()
             elif kind == "history_load_error":
                 livepix_events_loading = False
@@ -19627,6 +19641,7 @@ def run_gui(config_path: Path) -> int:
             cancel_raffle_participant_render()
             raffle_participant_pending_items = list(items)
             raffle_participant_render_pending = True
+            request_deferred_render_pump()
             return
         participants = normalize_participant_items(items)
         desired = [
@@ -20941,25 +20956,15 @@ def run_gui(config_path: Path) -> int:
             refresh_participant_list(raffle_participant_pending_items, force=True)
         if appearance_active and appearance_preview_pending:
             refresh_appearance_preview_if_needed(force=True)
-        active_tab_open = (
-            kills_active
-            or ff_queue_active
-            or commands_active
-            or timers_active
-            or livepix_active
-            or raffle_active
-            or appearance_active
+        active_tab_pending = (
+            (kills_active and has_kills_pending)
+            or (ff_queue_active and has_ff_queue_pending)
+            or (livepix_active and has_livepix_pending)
+            or (raffle_active and has_raffle_pending)
+            or (appearance_active and has_appearance_pending)
         )
-        active_tab_pending = has_kills_pending or has_ff_queue_pending or has_livepix_pending or has_raffle_pending or has_appearance_pending
-        if active_tab_open and active_tab_pending:
-            delay_ms = 350
-        elif active_tab_open:
-            delay_ms = DEFERRED_RENDER_ACTIVE_IDLE_PUMP_MS
-        elif active_tab_pending:
-            delay_ms = 900
-        else:
-            delay_ms = DEFERRED_RENDER_IDLE_PUMP_MS
-        schedule_deferred_render_pump(delay_ms)
+        if active_tab_pending:
+            schedule_deferred_render_pump(350)
 
     tabview.configure(command=lambda: schedule_deferred_render_pump(0))
 

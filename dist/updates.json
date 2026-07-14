@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.211",
-    "notes":  "Corrige o Salvar das Kills FF para confirmar o rank diario no painel principal do Jarvis antes de mostrar sincronizado.",
+    "version":  "2.6.212",
+    "notes":  "Otimiza o renderizador diferido para parar quando nao ha pendencias e acordar apenas quando uma aba pesada precisar renderizar.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.211/AizenStreamControl.exe",
-                    "sha256":  "f4667f11f88a0a3f188e845898b17967f8265b33ef99040a52e180b96684d6e0"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.212/AizenStreamControl.exe",
+                    "sha256":  "84d7a07aee43ab3a5086a639a6bf0f77feec646fe15722495a2903784080dab5"
                 }
 }
