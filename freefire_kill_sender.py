@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.209"
+APP_VERSION = "2.6.210"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -116,6 +116,9 @@ AVATAR_IMAGE_CACHE_LIMIT = 240
 AVATAR_PENDING_LIMIT = 120
 AVATAR_DOWNLOAD_WORKERS = 3
 RAFFLE_SEEN_MESSAGES_LIMIT = 2500
+RAFFLE_PARTICIPANT_RENDER_THRESHOLD = 60
+RAFFLE_PARTICIPANT_RENDER_CHUNK_SIZE = 20
+RAFFLE_PARTICIPANT_RENDER_CHUNK_DELAY_MS = 18
 LIVEPIX_EVENT_STORAGE_LIMIT = 1000
 LIVEPIX_HISTORY_RENDER_LIMIT = 30
 LIVEPIX_HISTORY_RENDER_CHUNK_SIZE = 8
@@ -7643,6 +7646,8 @@ def run_gui(config_path: Path) -> int:
     raffle_started_at: datetime | None = None
     raffle_participant_render_pending = False
     raffle_participant_pending_items: list[Any] = []
+    raffle_participant_render_after_id: str | None = None
+    raffle_participant_render_generation = 0
     participant_widgets: list[Any] = []
     chat_widgets: list[Any] = []
     chat_monitor_widgets: list[Any] = []
@@ -19467,9 +19472,60 @@ def run_gui(config_path: Path) -> int:
     def supporter_tier_label(tier: str) -> str:
         return {"fan": "Fã", "super_fan": "Super fã", "gift": "Gift", "sub": "Sub"}.get(str(tier or "normal"), "Seguidor")
 
+    def cancel_raffle_participant_render() -> None:
+        nonlocal raffle_participant_render_after_id, raffle_participant_render_generation
+        raffle_participant_render_generation += 1
+        if raffle_participant_render_after_id is None:
+            return
+        try:
+            root.after_cancel(raffle_participant_render_after_id)
+        except tk.TclError:
+            pass
+        raffle_participant_render_after_id = None
+
+    def clear_participant_widgets() -> None:
+        cancel_raffle_participant_render()
+        for widget in participant_widgets:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        participant_widgets.clear()
+
+    def build_participant_widget(row_index: int, participant: RaffleParticipant) -> Any:
+        item_frame = ctk.CTkFrame(
+            participants_frame,
+            fg_color="#171014" if row_index % 2 == 0 else "#0f0b0e",
+            corner_radius=12,
+        )
+        item_frame.grid(row=row_index, column=0, sticky="ew", padx=8, pady=4)
+        item_frame.columnconfigure(1, weight=1)
+        avatar_label = make_avatar_label(item_frame, participant.name, participant.avatar_url, size=42)
+        avatar_label.grid(row=0, column=0, sticky="w", padx=(10, 8), pady=8)
+        text_stack = ctk.CTkFrame(item_frame, fg_color="transparent", corner_radius=0)
+        text_stack.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=7)
+        text_stack.columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            text_stack,
+            text=f"{row_index + 1:02d}  {participant.name}",
+            text_color=fg,
+            font=("Segoe UI Semibold", layout_value(raffle_font_size_var, 10, 20)),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew")
+        platform_suffix = f" · {participant.platform}" if participant.platform else ""
+        ctk.CTkLabel(
+            text_stack,
+            text=f"{participant.entries} entrada(s) · {supporter_tier_label(participant.supporter_tier)}{platform_suffix}",
+            text_color=muted,
+            font=("Segoe UI", max(9, layout_value(raffle_font_size_var, 10, 20) - 2)),
+            anchor="w",
+        ).grid(row=1, column=0, sticky="ew")
+        return item_frame
+
     def refresh_participant_list(items: list[Any], force: bool = False) -> None:
-        nonlocal raffle_participant_render_pending, raffle_participant_pending_items
+        nonlocal raffle_participant_render_pending, raffle_participant_pending_items, raffle_participant_render_after_id
         if not force and not is_raffle_tab_active():
+            cancel_raffle_participant_render()
             raffle_participant_pending_items = list(items)
             raffle_participant_render_pending = True
             return
@@ -19493,9 +19549,7 @@ def run_gui(config_path: Path) -> int:
         raffle_participant_render_pending = False
         raffle_participant_pending_items = []
 
-        for widget in participant_widgets:
-            widget.destroy()
-        participant_widgets.clear()
+        clear_participant_widgets()
 
         if not desired:
             empty = ctk.CTkLabel(
@@ -19508,39 +19562,32 @@ def run_gui(config_path: Path) -> int:
             participant_widgets.append(empty)
             return
 
+        if len(participants) >= RAFFLE_PARTICIPANT_RENDER_THRESHOLD:
+            snapshot = list(participants)
+            render_generation = raffle_participant_render_generation
+
+            def render_chunk(start_index: int = 0) -> None:
+                nonlocal raffle_participant_render_after_id
+                raffle_participant_render_after_id = None
+                if app_closing or render_generation != raffle_participant_render_generation:
+                    return
+                end_index = min(len(snapshot), start_index + RAFFLE_PARTICIPANT_RENDER_CHUNK_SIZE)
+                for row_index in range(start_index, end_index):
+                    try:
+                        participant_widgets.append(build_participant_widget(row_index, snapshot[row_index]))
+                    except tk.TclError:
+                        return
+                if end_index < len(snapshot):
+                    raffle_participant_render_after_id = root.after(
+                        RAFFLE_PARTICIPANT_RENDER_CHUNK_DELAY_MS,
+                        lambda next_index=end_index: render_chunk(next_index),
+                    )
+
+            raffle_participant_render_after_id = root.after(0, render_chunk)
+            return
+
         for row_index, participant in enumerate(participants):
-            item_frame = ctk.CTkFrame(
-                participants_frame,
-                fg_color="#171014" if row_index % 2 == 0 else "#0f0b0e",
-                corner_radius=12,
-            )
-            item_frame.grid(row=row_index, column=0, sticky="ew", padx=8, pady=4)
-            item_frame.columnconfigure(1, weight=1)
-            avatar_label = make_avatar_label(item_frame, participant.name, participant.avatar_url, size=42)
-            avatar_label.grid(row=0, column=0, sticky="w", padx=(10, 8), pady=8)
-            text_stack = ctk.CTkFrame(item_frame, fg_color="transparent", corner_radius=0)
-            text_stack.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=7)
-            text_stack.columnconfigure(0, weight=1)
-            label = ctk.CTkLabel(
-                text_stack,
-                text=f"{row_index + 1:02d}  {participant.name}",
-                text_color=fg,
-                font=("Segoe UI Semibold", layout_value(raffle_font_size_var, 10, 20)),
-                anchor="w",
-            )
-            label.grid(row=0, column=0, sticky="ew")
-            if participant.platform:
-                platform_suffix = f" · {participant.platform}"
-            else:
-                platform_suffix = ""
-            ctk.CTkLabel(
-                text_stack,
-                text=f"{participant.entries} entrada(s) · {supporter_tier_label(participant.supporter_tier)}{platform_suffix}",
-                text_color=muted,
-                font=("Segoe UI", max(9, layout_value(raffle_font_size_var, 10, 20) - 2)),
-                anchor="w",
-            ).grid(row=1, column=0, sticky="ew")
-            participant_widgets.append(item_frame)
+            participant_widgets.append(build_participant_widget(row_index, participant))
 
     def update_winner_avatar(winner: RaffleWinner | None) -> None:
         nonlocal winner_avatar_current

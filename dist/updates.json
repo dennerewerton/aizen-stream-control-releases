@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.209",
-    "notes":  "Otimiza o Salvar das Kills FF: quando o outro ranking ja esta no snapshot local, o app evita uma leitura extra do /rank antes de enviar ao Jarvis.",
+    "version":  "2.6.210",
+    "notes":  "Otimiza o Sorteio Chat: listas grandes de participantes agora renderizam em blocos para evitar travadas durante lives movimentadas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.209/AizenStreamControl.exe",
-                    "sha256":  "34c8c4ba3753e57e4fc8cb6f113551f8e06d70328a3cdfd5e5a5b79a69b818cf"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.210/AizenStreamControl.exe",
+                    "sha256":  "dc34e6ff41cc8205c37034b9409b138a2cd787acd5e0c15dd976f76403dae18d"
                 }
 }
