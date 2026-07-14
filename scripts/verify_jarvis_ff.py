@@ -554,6 +554,12 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
                 if not isinstance(rankings_payload, dict) or not rankings_payload.get("daily"):
                     self._send_json({"ok": False, "error": "nested rankings required in mock"}, status=422)
                     return
+            if mode == "kills_snapshot" and self.state.get("debug", {}).get("weak_first_snapshot_ack"):
+                rankings_payload = payload.get("rankings")
+                if not isinstance(rankings_payload, dict) or not rankings_payload.get("daily"):
+                    self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
+                    self._send_json({"ok": True, "status": "accepted"})
+                    return
             if mode == "kills_snapshot" and self.state.get("debug", {}).get("weak_snapshot_ack"):
                 self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
                 self._send_json({"ok": True, "status": "saved"})
@@ -1525,6 +1531,25 @@ def verify(
             raise RuntimeError(f"Snapshot persistido direto fez GET redundante no /rank: {persisted_response_rank_gets}")
         if persisted_response_actions:
             raise RuntimeError(f"Snapshot persistido direto caiu em fallback sem precisar: {persisted_response_actions!r}")
+        MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {"kills_actions": [], "weak_first_snapshot_ack": True, "rank_gets": 0}
+        weak_then_legacy = send_kills_snapshot_update(
+            kills_url,
+            [PlayerKill("DiarioLegado", 12)],
+            [PlayerKill("GeralLegado", 14)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        weak_then_legacy_daily = {item.name.casefold(): item.kills for item in weak_then_legacy.daily_ranking or []}
+        weak_then_legacy_global = {item.name.casefold(): item.kills for item in weak_then_legacy.global_ranking or []}
+        weak_then_legacy_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
+        if weak_then_legacy_daily != {"diariolegado": 12} or weak_then_legacy_global != {"gerallegado": 14}:
+            raise RuntimeError(f"Snapshot Kills FF nao tentou payload legado apos ack fraco: {weak_then_legacy!r}")
+        if weak_then_legacy_actions:
+            raise RuntimeError(f"Snapshot Kills FF caiu para action antes de tentar payload legado: {weak_then_legacy_actions!r}")
         MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["kills_rank"] = {}
         MockJarvisHandler.state["debug"] = {

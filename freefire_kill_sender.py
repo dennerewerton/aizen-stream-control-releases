@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.252"
+APP_VERSION = "2.6.253"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5511,6 +5511,25 @@ def send_kills_snapshot_update(
         "players": general_payload,
         "ranking": general_payload,
         "daily_ranking": daily_payload,
+        "dailyRanking": daily_payload,
+        "daily_rank": daily_payload,
+        "dailyRank": daily_payload,
+        "day_ranking": daily_payload,
+        "dayRanking": daily_payload,
+        "dia_ranking": daily_payload,
+        "diaRanking": daily_payload,
+        "rank_daily": daily_payload,
+        "rankDaily": daily_payload,
+        "rank_dia": daily_payload,
+        "rankDia": daily_payload,
+        "ranking_daily": daily_payload,
+        "rankingDaily": daily_payload,
+        "global_ranking": general_payload,
+        "globalRanking": general_payload,
+        "general_ranking": general_payload,
+        "generalRanking": general_payload,
+        "geral_ranking": general_payload,
+        "geralRanking": general_payload,
         "scopes": ["daily", "general"],
         "replace_daily": True,
         "replace_general": True,
@@ -5546,10 +5565,36 @@ def send_kills_snapshot_update(
         "replaceGeneral": True,
         "rankings": {
             "daily": daily_payload,
+            "daily_ranking": daily_payload,
+            "dailyRanking": daily_payload,
             "dia": daily_payload,
+            "dia_ranking": daily_payload,
+            "diaRanking": daily_payload,
+            "rank_daily": daily_payload,
+            "rankDaily": daily_payload,
             "global": general_payload,
             "general": general_payload,
+            "general_ranking": general_payload,
+            "generalRanking": general_payload,
             "geral": general_payload,
+            "geral_ranking": general_payload,
+            "geralRanking": general_payload,
+        },
+        "ranking_by_scope": {
+            "daily": daily_payload,
+            "diario": daily_payload,
+            "dia": daily_payload,
+            "general": general_payload,
+            "geral": general_payload,
+            "global": general_payload,
+        },
+        "rankingByScope": {
+            "daily": daily_payload,
+            "diario": daily_payload,
+            "dia": daily_payload,
+            "general": general_payload,
+            "geral": general_payload,
+            "global": general_payload,
         },
     }
     payload_candidates: tuple[dict[str, Any], ...] = (base_payload, legacy_payload)
@@ -5656,7 +5701,7 @@ def send_kills_snapshot_update(
                             pass
                     if response_acknowledged:
                         weak_snapshot_ack_seen = True
-                        break
+                        continue
                 except requests.HTTPError as exc:
                     status_code = exc.response.status_code if exc.response is not None else 0
                     if status_code in {400, 404, 405, 409, 422}:
@@ -5668,7 +5713,26 @@ def send_kills_snapshot_update(
                 except Exception:
                     continue
             if weak_snapshot_ack_seen:
-                break
+                persisted_state = confirmed_persisted_snapshot_state()
+                if persisted_state is not None:
+                    try:
+                        confirmed_rank_state, latest_rank_state = fetch_kills_rank_confirmation(
+                            endpoint_url,
+                            daily_players,
+                            general_players,
+                            device_id=device_id,
+                            device_name=device_name,
+                            room=room,
+                            token=token,
+                            session=session,
+                            delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
+                        )
+                    except Exception:
+                        confirmed_rank_state = None
+                    if confirmed_rank_state is not None:
+                        remember_persisted_snapshot_url(snapshot_url)
+                        return persisted_state
+                continue
 
         persisted_state = confirmed_persisted_snapshot_state()
         if persisted_state is not None:
@@ -5889,8 +5953,16 @@ def post_kills_snapshot_once(
         "dailyRanking": daily_payload,
         "daily_rank": daily_payload,
         "dailyRank": daily_payload,
+        "day_ranking": daily_payload,
+        "dayRanking": daily_payload,
         "dia_ranking": daily_payload,
         "diaRanking": daily_payload,
+        "rank_daily": daily_payload,
+        "rankDaily": daily_payload,
+        "rank_dia": daily_payload,
+        "rankDia": daily_payload,
+        "ranking_daily": daily_payload,
+        "rankingDaily": daily_payload,
         "daily": daily_payload,
         "day": daily_payload,
         "dia": daily_payload,
@@ -5898,11 +5970,37 @@ def post_kills_snapshot_once(
         "geral": general_payload,
         "rankings": {
             "daily": daily_payload,
+            "daily_ranking": daily_payload,
+            "dailyRanking": daily_payload,
             "day": daily_payload,
             "dia": daily_payload,
+            "dia_ranking": daily_payload,
+            "diaRanking": daily_payload,
+            "rank_daily": daily_payload,
+            "rankDaily": daily_payload,
             "global": general_payload,
             "general": general_payload,
+            "general_ranking": general_payload,
+            "generalRanking": general_payload,
             "geral": general_payload,
+            "geral_ranking": general_payload,
+            "geralRanking": general_payload,
+        },
+        "ranking_by_scope": {
+            "daily": daily_payload,
+            "diario": daily_payload,
+            "dia": daily_payload,
+            "general": general_payload,
+            "geral": general_payload,
+            "global": general_payload,
+        },
+        "rankingByScope": {
+            "daily": daily_payload,
+            "diario": daily_payload,
+            "dia": daily_payload,
+            "general": general_payload,
+            "geral": general_payload,
+            "global": general_payload,
         },
         "total_players": general_count,
         "total_kills": general_kills_total,
