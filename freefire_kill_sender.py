@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.206"
+APP_VERSION = "2.6.207"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -102,6 +102,9 @@ CHAT_EVENT_BUSY_PUMP_MS = 20
 CHAT_EVENT_IDLE_PUMP_MS = 180
 CHAT_EVENT_QUIET_PUMP_MS = 500
 CHAT_EVENT_BACKGROUND_QUIET_PUMP_MS = 900
+CHAT_RENDER_INCREMENTAL_THRESHOLD = 48
+CHAT_RENDER_CHUNK_SIZE = 18
+CHAT_RENDER_CHUNK_DELAY_MS = 16
 SYNC_QUEUE_LIMIT = 240
 FF_QUEUE_SYNC_QUEUE_LIMIT = 180
 LIVEPIX_QUEUE_LIMIT = 600
@@ -7638,6 +7641,8 @@ def run_gui(config_path: Path) -> int:
     participant_widgets: list[Any] = []
     chat_widgets: list[Any] = []
     chat_monitor_widgets: list[Any] = []
+    chat_render_after_ids: dict[int, str] = {}
+    chat_render_generations: dict[int, int] = {}
     chat_monitor_window: Any | None = None
     chat_monitor_messages_frame: Any | None = None
     chat_monitor_always_on_top_var: tk.BooleanVar | None = None
@@ -15200,7 +15205,19 @@ def run_gui(config_path: Path) -> int:
     def chat_widget_key(widget: Any) -> str:
         return str(getattr(widget, "_chat_key", ""))
 
+    def cancel_chat_incremental_render(widget_store: list[Any]) -> None:
+        store_key = id(widget_store)
+        chat_render_generations[store_key] = chat_render_generations.get(store_key, 0) + 1
+        after_id = chat_render_after_ids.pop(store_key, None)
+        if after_id is None:
+            return
+        try:
+            root.after_cancel(after_id)
+        except tk.TclError:
+            pass
+
     def destroy_chat_widgets(widget_store: list[Any]) -> None:
+        cancel_chat_incremental_render(widget_store)
         for widget in widget_store:
             try:
                 widget.destroy()
@@ -15369,6 +15386,43 @@ def run_gui(config_path: Path) -> int:
         force: bool = False,
         overlay: bool = False,
     ) -> None:
+        def start_incremental_full_render() -> None:
+            snapshot = list(visible)
+            destroy_chat_widgets(widget_store)
+            store_key = id(widget_store)
+            generation = chat_render_generations.get(store_key, 0)
+
+            def render_chunk(start_index: int = 0) -> None:
+                chat_render_after_ids.pop(store_key, None)
+                if app_closing or chat_render_generations.get(store_key, 0) != generation:
+                    return
+                try:
+                    if not target_frame.winfo_exists():
+                        return
+                except tk.TclError:
+                    return
+                end_index = min(len(snapshot), start_index + CHAT_RENDER_CHUNK_SIZE)
+                for row_index in range(start_index, end_index):
+                    try:
+                        widget_store.append(build_chat_message_widget(target_frame, snapshot[row_index], row_index, large, overlay))
+                    except tk.TclError:
+                        return
+                if end_index < len(snapshot):
+                    try:
+                        chat_render_after_ids[store_key] = root.after(
+                            CHAT_RENDER_CHUNK_DELAY_MS,
+                            lambda next_index=end_index: render_chunk(next_index),
+                        )
+                    except tk.TclError:
+                        pass
+                    return
+                scroll_chat_to_bottom(target_frame)
+
+            try:
+                chat_render_after_ids[store_key] = root.after(0, render_chunk)
+            except tk.TclError:
+                pass
+
         if force:
             destroy_chat_widgets(widget_store)
 
@@ -15386,6 +15440,9 @@ def run_gui(config_path: Path) -> int:
             return
 
         if not widget_store:
+            if len(visible) >= CHAT_RENDER_INCREMENTAL_THRESHOLD:
+                start_incremental_full_render()
+                return
             for row_index, message in enumerate(visible):
                 widget_store.append(build_chat_message_widget(target_frame, message, row_index, large, overlay))
             scroll_chat_to_bottom(target_frame)
@@ -15412,6 +15469,9 @@ def run_gui(config_path: Path) -> int:
                 scroll_chat_to_bottom(target_frame)
                 return
 
+        if len(visible) >= CHAT_RENDER_INCREMENTAL_THRESHOLD:
+            start_incremental_full_render()
+            return
         destroy_chat_widgets(widget_store)
         if not visible:
             empty = ctk.CTkLabel(

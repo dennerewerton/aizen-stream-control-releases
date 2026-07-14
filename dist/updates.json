@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.206",
-    "notes":  "Otimiza a aba Logs: limita a fila interna e renderiza o historico em blocos para evitar travamentos quando muitos eventos de live/chat acumularem.",
+    "version":  "2.6.207",
+    "notes":  "Otimiza a renderizacao do chat: janelas e overlay com historico grande passam a carregar mensagens em blocos, evitando travadas ao abrir ou atualizar o chat.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.206/AizenStreamControl.exe",
-                    "sha256":  "e4d7a019a6a65cdf9bb1e559522d27906b002f251e62b5249aa004f93e69da39"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.207/AizenStreamControl.exe",
+                    "sha256":  "e9851abb25c77630682959b7dcf7ec197c23baad227517b9b77736f72d007fe9"
                 }
 }
