@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.222",
-    "notes":  "Otimiza Kills FF com cache limitado para normalizacao de nicks, reduzindo CPU ao ordenar, comparar e salvar rankings.",
+    "version":  "2.6.223",
+    "notes":  "Otimiza o clique em Salvar das Kills FF evitando recuperacao redundante de nomes quando todos os nicks ja estao preenchidos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.222/AizenStreamControl.exe",
-                    "sha256":  "0de9bd7be39f02d0ccc4438bee12536f9b5c70aca21c3aa2a536a224bd28a351"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.223/AizenStreamControl.exe",
+                    "sha256":  "eef025c7fbec8428c799a3a1d925e760fc58c9a42364ef7adc62bb2aef64ec77"
                 }
 }

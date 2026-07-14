@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.222"
+APP_VERSION = "2.6.223"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -12044,6 +12044,8 @@ def run_gui(config_path: Path) -> int:
         for row in manual_rows:
             name = row["name_var"].get().strip()
             players.append(PlayerKill(name=name, kills=normalize_kill_value(row["kills_var"].get())))
+        if not manual_players_need_name_completion(players):
+            return merge_manual_player_kills(players)
         players = complete_manual_player_names(players, clean_scope)
         if fill_missing_names and not manual_applying_remote:
             missing_name_updates = [
@@ -12088,9 +12090,10 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
-        players = merge_manual_player_kills(
-            complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope)
-        )
+        buffered_players = manual_scope_buffers.get(clean_scope, [])
+        if manual_players_need_name_completion(buffered_players):
+            buffered_players = complete_manual_player_names(buffered_players, clean_scope)
+        players = merge_manual_player_kills(buffered_players)
         manual_scope_buffers[clean_scope] = clone_player_list(players)
         return players
 
