@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.192",
-    "notes":  "Otimizacao: carregamento/aplicacao do rank Kills FF evita montar referencias quando os jogadores ja chegam com nick, reduzindo trabalho ao abrir e atualizar o painel.",
+    "version":  "2.6.193",
+    "notes":  "Otimizacao: filas de eventos de Chat, Livepix, Jarvis/Kills e Fila FF agora respeitam um orcamento curto por ciclo para reduzir travadas quando varios eventos chegam juntos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.192/AizenStreamControl.exe",
-                    "sha256":  "ad5e6f64718972b31d2ba90098e2da7252dcbf124152ac507e38644168aef498"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.193/AizenStreamControl.exe",
+                    "sha256":  "e845b93aa32a4d0a60b247688314edc878c66d3593895834613adad18f9a2ad7"
                 }
 }

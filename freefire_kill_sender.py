@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.192"
+APP_VERSION = "2.6.193"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -134,6 +134,7 @@ SYNC_QUEUE_PROCESSED_PUMP_MS = 140
 BACKGROUND_DISABLED_PUMP_MS = 8000
 DEFERRED_RENDER_IDLE_PUMP_MS = 8000
 DEFERRED_RENDER_ACTIVE_IDLE_PUMP_MS = 1500
+UI_PUMP_TIME_BUDGET_SECONDS = 0.035
 STALE_MEI_MIN_AGE_SECONDS = 24 * 60 * 60
 STALE_MEI_CLEANUP_LIMIT = 8
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
@@ -14760,7 +14761,10 @@ def run_gui(config_path: Path) -> int:
         processed = False
         processed_count = 0
         batch_limit = CHAT_EVENT_BATCH_LIMIT
+        deadline = time.monotonic() + UI_PUMP_TIME_BUDGET_SECONDS
         while processed_count < batch_limit:
+            if processed_count and time.monotonic() >= deadline:
+                break
             try:
                 kind, payload = chat_event_queue.get_nowait()
             except queue.Empty:
@@ -16954,7 +16958,10 @@ def run_gui(config_path: Path) -> int:
         processed = False
         processed_count = 0
         batch_limit = 12
+        deadline = time.monotonic() + UI_PUMP_TIME_BUDGET_SECONDS
         while processed_count < batch_limit:
+            if processed_count and time.monotonic() >= deadline:
+                break
             try:
                 kind, payload = livepix_queue.get_nowait()
             except queue.Empty:
@@ -18375,7 +18382,10 @@ def run_gui(config_path: Path) -> int:
         processed = False
         processed_count = 0
         batch_limit = 12
+        deadline = time.monotonic() + UI_PUMP_TIME_BUDGET_SECONDS
         while processed_count < batch_limit:
+            if processed_count and time.monotonic() >= deadline:
+                break
             try:
                 kind, payload = sync_queue.get_nowait()
             except queue.Empty:
@@ -18414,7 +18424,10 @@ def run_gui(config_path: Path) -> int:
         processed = False
         processed_count = 0
         batch_limit = 12
+        deadline = time.monotonic() + UI_PUMP_TIME_BUDGET_SECONDS
         while processed_count < batch_limit:
+            if processed_count and time.monotonic() >= deadline:
+                break
             try:
                 kind, payload = ff_queue_sync_queue.get_nowait()
             except queue.Empty:
