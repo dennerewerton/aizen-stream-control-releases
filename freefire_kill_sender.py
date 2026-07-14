@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.219"
+APP_VERSION = "2.6.220"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5329,14 +5329,15 @@ def response_confirms_persisted_kills_snapshot(
     if not isinstance(payload, dict):
         return False
     mode = str(payload.get("mode") or "").strip().casefold()
-    if mode not in {"kills_snapshot", "rank_snapshot", "snapshot", "replace"}:
+    if mode and mode not in {"kills_snapshot", "rank_snapshot", "snapshot", "replace"}:
         return False
-    try:
-        accepted = int(float(str(payload.get("accepted") or 0).replace(",", ".")))
-    except (TypeError, ValueError):
-        accepted = 0
-    if accepted < len(daily_players) + len(general_players):
-        return False
+    if "accepted" in payload:
+        try:
+            accepted = int(float(str(payload.get("accepted") or 0).replace(",", ".")))
+        except (TypeError, ValueError):
+            accepted = 0
+        if accepted < len(daily_players) + len(general_players):
+            return False
     has_daily_payload = any(key in payload for key in ("daily_ranking", "dailyRanking", "daily", "dia_ranking"))
     has_general_payload = any(
         key in payload
