@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.223"
+APP_VERSION = "2.6.224"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -12068,8 +12068,11 @@ def run_gui(config_path: Path) -> int:
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
         if manual_table_render_pending and manual_table_render_scope == clean_scope:
+            buffered_players = manual_scope_buffers.get(clean_scope, [])
+            if not manual_players_need_name_completion(buffered_players):
+                return merge_manual_player_kills(buffered_players)
             return merge_manual_player_kills(
-                complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope)
+                complete_manual_player_names(buffered_players, clean_scope)
             )
         return collect_manual_widget_players(fill_missing_names=fill_missing_names, scope=clean_scope)
 
@@ -12162,7 +12165,10 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             return
-        players = merge_manual_player_kills(complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope))
+        buffered_players = manual_scope_buffers.get(clean_scope, [])
+        if manual_players_need_name_completion(buffered_players):
+            buffered_players = complete_manual_player_names(buffered_players, clean_scope)
+        players = merge_manual_player_kills(buffered_players)
         apply_local_rank_players(clean_scope, players)
 
     def fill_visible_manual_missing_names_from_rank(scope: str | None = None) -> bool:
@@ -12356,12 +12362,10 @@ def run_gui(config_path: Path) -> int:
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
         fill_visible_manual_missing_names_from_rank(clean_scope)
-        for scope_key in ("daily", "general"):
-            repair_manual_scope_buffer_names(scope_key)
-        repair_manual_scope_buffer_names(clean_scope)
         if clean_scope == current_manual_scope() and not manual_table_render_pending:
             manual_scope_buffers[clean_scope] = clone_player_list(read_manual_players_light(fill_missing_names=False, scope=clean_scope))
-            repair_manual_scope_buffer_names(clean_scope)
+        for scope_key in ("daily", "general"):
+            repair_manual_scope_buffer_names(scope_key)
         endpoint_url = normalize_endpoint_url(sync_url_var.get())
         jarvis_base_url = normalize_endpoint_url(jarvis_base_url_var.get()).rstrip("/")
         config["kills_realtime_url"] = endpoint_url
