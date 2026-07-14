@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.172"
+APP_VERSION = "2.6.173"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5155,39 +5155,45 @@ def send_kills_snapshot_update(
                     raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
                 response.raise_for_status()
                 state = parse_realtime_state(response.text)
+                confirmation_checked = False
                 if kills_snapshot_matches_state(state, daily_players, general_players):
-                    confirmed_state = fetch_confirmed_kills_rank_state(
-                        endpoint_url,
-                        daily_players,
-                        general_players,
-                        device_id=device_id,
-                        device_name=device_name,
-                        room=room,
-                        token=token,
-                        session=session,
-                        delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
-                    )
+                    confirmation_checked = True
+                    try:
+                        confirmed_state = fetch_confirmed_kills_rank_state(
+                            endpoint_url,
+                            daily_players,
+                            general_players,
+                            device_id=device_id,
+                            device_name=device_name,
+                            room=room,
+                            token=token,
+                            session=session,
+                            delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
+                        )
+                    except Exception:
+                        confirmed_state = None
                     if confirmed_state is not None:
                         remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
                         return confirmed_state
                 response_acknowledged = response_acknowledges_kills_snapshot(response.text)
-                try:
-                    confirmed_state = fetch_confirmed_kills_rank_state(
-                        endpoint_url,
-                        daily_players,
-                        general_players,
-                        device_id=device_id,
-                        device_name=device_name,
-                        room=room,
-                        token=token,
-                        session=session,
-                        delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
-                    )
-                    if confirmed_state is not None:
-                        remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
-                        return confirmed_state
-                except Exception:
-                    pass
+                if not confirmation_checked:
+                    try:
+                        confirmed_state = fetch_confirmed_kills_rank_state(
+                            endpoint_url,
+                            daily_players,
+                            general_players,
+                            device_id=device_id,
+                            device_name=device_name,
+                            room=room,
+                            token=token,
+                            session=session,
+                            delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
+                        )
+                        if confirmed_state is not None:
+                            remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
+                            return confirmed_state
+                    except Exception:
+                        pass
                 if response_acknowledged:
                     continue
             except requests.HTTPError as exc:

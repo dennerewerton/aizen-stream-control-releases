@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.172",
-    "notes":  "Otimizacao: o Livepix agora reduz acordadas da UI quando esta habilitado mas totalmente inativo, mantendo resposta rapida com webhook, overlay, aba aberta ou sincronizacao em andamento.",
+    "version":  "2.6.173",
+    "notes":  "Otimizacao: o envio de Kills FF evita uma leitura duplicada de confirmacao para o mesmo snapshot, reduzindo espera ao salvar quando o Jarvis demora a refletir o rank.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.172/AizenStreamControl.exe",
-                    "sha256":  "9514e2fdecfcb5cf4daac5c34781307c66303cb94505a45747279badd00ee002"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.173/AizenStreamControl.exe",
+                    "sha256":  "bafd950ff6af31e805b36158667ca7a67f388a1981572aa1983d98432ebc18ff"
                 }
 }
