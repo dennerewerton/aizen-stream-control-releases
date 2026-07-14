@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.233"
+APP_VERSION = "2.6.234"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11757,9 +11757,12 @@ def run_gui(config_path: Path) -> int:
         set_text_var(kills_daily_rank_total_var, daily_total)
         set_text_var(kills_global_rank_count_var, len(kills_global_ranking))
         set_text_var(kills_global_rank_total_var, global_total)
+        rank_signature_limit = max(KILLS_RANK_RENDER_LIMIT, KILLS_OVERLAY_RENDER_LIMIT)
         table_signature = (
-            player_rank_light_signature(kills_daily_ranking),
-            player_rank_light_signature(kills_global_ranking),
+            player_rank_light_signature(kills_daily_ranking, limit=rank_signature_limit),
+            daily_total,
+            player_rank_light_signature(kills_global_ranking, limit=rank_signature_limit),
+            global_total,
             ignored_players_light_signature(kills_ignored_players),
         )
         if not force and getattr(refresh_kills_rank_table, "_signature", None) == table_signature and not kills_rank_render_pending:
@@ -11787,10 +11790,11 @@ def run_gui(config_path: Path) -> int:
             total_var: tk.StringVar,
             empty_text: str,
             scope_label: str,
+            total_kills: int | None = None,
         ) -> None:
             row_signature = rank_render_signature(players, KILLS_RANK_RENDER_LIMIT)
             set_text_var(count_var, len(players))
-            set_text_var(total_var, sum(player.kills for player in players))
+            set_text_var(total_var, total_kills if total_kills is not None else sum(player.kills for player in players))
             if table_render_unchanged(f"_rank_signature_{scope_label}", row_widgets, row_signature):
                 return
             setattr(refresh_kills_rank_table, f"_rank_signature_{scope_label}", row_signature)
@@ -12000,6 +12004,7 @@ def run_gui(config_path: Path) -> int:
                 kills_daily_rank_total_var,
                 "Busque o painel Jarvis para carregar as kills diárias.",
                 "Diario",
+                daily_total,
             )
             render_rank(
                 kills_global_rank_table_frame,
@@ -12009,6 +12014,7 @@ def run_gui(config_path: Path) -> int:
                 kills_global_rank_total_var,
                 "Busque o painel Jarvis para carregar as kills gerais.",
                 "Geral",
+                global_total,
             )
 
         try:
@@ -12019,7 +12025,7 @@ def run_gui(config_path: Path) -> int:
             render_overlay_rank(
                 kills_overlay_global_frame,
                 kills_overlay_global_rows,
-                sorted_rank_players(kills_global_ranking),
+                kills_global_ranking,
                 "Rank geral ainda não recebido do Jarvis.",
                 "_overlay_signature_global",
             )
@@ -12027,7 +12033,7 @@ def run_gui(config_path: Path) -> int:
             render_overlay_rank(
                 kills_overlay_daily_frame,
                 kills_overlay_daily_rows,
-                sorted_rank_players(kills_daily_ranking),
+                kills_daily_ranking,
                 "Rank diário ainda não recebido do Jarvis.",
                 "_overlay_signature_daily",
             )

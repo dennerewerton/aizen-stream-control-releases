@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.233",
-    "notes":  "Corrige Salvar das Kills FF para confirmar o ranking diario no painel principal do Jarvis, envia snapshot completo diario/geral preservando o outro rank e reduz leituras redundantes.",
+    "version":  "2.6.234",
+    "notes":  "Otimiza a renderizacao do ranking Kills FF: evita assinaturas completas e ordenacoes repetidas quando apenas o top visivel precisa atualizar, deixando a tela mais leve com muitos jogadores.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.233/AizenStreamControl.exe",
-                    "sha256":  "43079566492821c6797b7897b04d7a03303ee916bc039edd5d156402932fd190"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.234/AizenStreamControl.exe",
+                    "sha256":  "d38907f2fb3f54355e89e1f1c5e935d131e195021e72e4287c5c6de267c45fda"
                 }
 }
