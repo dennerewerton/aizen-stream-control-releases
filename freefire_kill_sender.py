@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.229"
+APP_VERSION = "2.6.230"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -20867,9 +20867,16 @@ def run_gui(config_path: Path) -> int:
         manual_scope_buffers["general"] = parse_players_payload(saved_manual_by_scope.get("general", []))
     if not (manual_scope_buffers["daily"] or manual_scope_buffers["general"]):
         manual_scope_buffers[manual_active_scope] = clone_player_list(saved_manual_players)
-    set_manual_players(manual_scope_display_players(manual_active_scope, prefer_remote=False), scope=manual_active_scope)
+    initial_manual_players = manual_scope_buffers.get(manual_active_scope, [])
+    if is_kills_ff_tab_active():
+        initial_manual_players = manual_scope_display_players(manual_active_scope, prefer_remote=False)
+        set_manual_players(initial_manual_players, scope=manual_active_scope)
+    else:
+        manual_table_render_pending = True
+        manual_table_render_scope = manual_active_scope
+        update_manual_metrics(initial_manual_players)
     sync_kills_rank_tab_with_manual_scope(manual_active_scope)
-    manual_last_signature = manual_signature(collect_manual_players(scope=manual_active_scope), manual_active_scope)
+    manual_last_signature = manual_signature(initial_manual_players, manual_active_scope)
     saved_ff_queue_entries = parse_ff_queue_payload(config.get("ff_queue_items", []))
     if ff_queue_site_sync_hidden:
         ff_queue_last_signature = ff_queue_signature(saved_ff_queue_entries)

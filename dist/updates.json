@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.229",
-    "notes":  "Prepara o Salvar Kills FF para aceitar confirmacao persistida explicita do Jarvis e pular confirmacao extra quando seguro, sem confiar em eco de payload.",
+    "version":  "2.6.230",
+    "notes":  "Adia a montagem da tabela manual de Kills FF ate a aba ser aberta, reduzindo processamento e widgets criados na inicializacao.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.229/AizenStreamControl.exe",
-                    "sha256":  "8e16cff68486f08a7d9516a541e3bc79c745d7ba5f0188e629012c2c24be5ea8"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.230/AizenStreamControl.exe",
+                    "sha256":  "c01f7c98ced9815f0a5b11a99c3e52d73a7e9f6a338efa74144fa597b1ee831d"
                 }
 }
