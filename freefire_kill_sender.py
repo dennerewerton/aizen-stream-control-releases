@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.212"
+APP_VERSION = "2.6.213"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5785,18 +5785,6 @@ def sync_kills_snapshot_after_scope_save(
         general_players = sorted_player_kills(players)
     if not (daily_players or general_players):
         return confirmed_state
-    existing_snapshot_state = fetch_confirmed_kills_snapshot_endpoint_state(
-        endpoint_url,
-        daily_players,
-        general_players,
-        device_id=device_id,
-        device_name=device_name,
-        room=room,
-        token=token,
-        delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
-    )
-    if existing_snapshot_state is not None:
-        return existing_snapshot_state
     post_error_message = ""
     try:
         post_kills_snapshot_once(

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.212",
-    "notes":  "Otimiza o renderizador diferido para parar quando nao ha pendencias e acordar apenas quando uma aba pesada precisar renderizar.",
+    "version":  "2.6.213",
+    "notes":  "Acelera o Salvar das Kills FF removendo uma leitura previa do painel antes de enviar o snapshot, mantendo a confirmacao apos gravar.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.212/AizenStreamControl.exe",
-                    "sha256":  "84d7a07aee43ab3a5086a639a6bf0f77feec646fe15722495a2903784080dab5"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.213/AizenStreamControl.exe",
+                    "sha256":  "42575304845b91cbdee2390339d7942dde6b66efbfa0d3fbcafbd2a6f246a339"
                 }
 }
