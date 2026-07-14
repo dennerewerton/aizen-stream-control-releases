@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.184",
-    "notes":  "Otimizacao: autosaves do config.json agora serializam o JSON em segundo plano, reduzindo travadinhas ao salvar Kills FF, cache de ranking e configuracoes automaticas.",
+    "version":  "2.6.185",
+    "notes":  "Otimizacao: autosaves em segundo plano agora usam um unico worker coalescido em vez de criar uma thread por salvamento, reduzindo travadas durante edicoes rapidas nas Kills FF e configuracoes.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.184/AizenStreamControl.exe",
-                    "sha256":  "89d0b564fa271974fcec22ec42a60def417fb8203da6566dca077612a78e054f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.185/AizenStreamControl.exe",
+                    "sha256":  "da0a2e5089f7bc67cc057cd945c093525c945bd566df4d9b3f7fb508a74f63d4"
                 }
 }

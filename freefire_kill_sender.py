@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.184"
+APP_VERSION = "2.6.185"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -7132,6 +7132,10 @@ def run_gui(config_path: Path) -> int:
     config_auto_save_after_id: str | None = None
     config_auto_save_running = False
     config_auto_save_write_generation = 0
+    config_auto_save_worker_started = False
+    config_auto_save_lock = threading.Lock()
+    config_auto_save_event = threading.Event()
+    config_auto_save_pending: tuple[int, Path, str | dict[str, Any], bool, str] | None = None
     livepix_events: list[LivepixEvent] = []
     livepix_events_loaded = False
     livepix_events_loading = False
@@ -17208,43 +17212,58 @@ def run_gui(config_path: Path) -> int:
         config["ui_theme"] = appearance_config_from_vars()
         return config
 
-    def save_config_text_in_background(path: Path, content: str) -> None:
-        nonlocal config_auto_save_write_generation
-        config_auto_save_write_generation += 1
-        generation = config_auto_save_write_generation
+    def ensure_config_autosave_worker() -> None:
+        nonlocal config_auto_save_worker_started, config_auto_save_pending
+        if config_auto_save_worker_started:
+            return
+        config_auto_save_worker_started = True
 
         def run() -> None:
-            if generation != config_auto_save_write_generation:
-                return
-            try:
-                write_text_if_changed(path, content)
-            except Exception as exc:
-                log(f"Auto-save em segundo plano falhou: {exc}")
+            nonlocal config_auto_save_pending
+            while True:
+                config_auto_save_event.wait()
+                while True:
+                    with config_auto_save_lock:
+                        pending = config_auto_save_pending
+                        config_auto_save_pending = None
+                        if pending is None:
+                            config_auto_save_event.clear()
+                            break
+                    generation, path, payload, compact, payload_kind = pending
+                    if generation != config_auto_save_write_generation:
+                        continue
+                    try:
+                        if payload_kind == "text":
+                            content = str(payload)
+                        else:
+                            snapshot = payload if isinstance(payload, dict) else {}
+                            content = (
+                                json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+                                if compact
+                                else json.dumps(snapshot, ensure_ascii=False, indent=2)
+                            )
+                        if generation != config_auto_save_write_generation:
+                            continue
+                        write_text_if_changed(path, content)
+                    except Exception as exc:
+                        log(f"Auto-save em segundo plano falhou: {exc}")
 
         threading.Thread(target=run, name="AizenConfigAutosave", daemon=True).start()
+
+    def queue_config_autosave(path: Path, payload: str | dict[str, Any], compact: bool, payload_kind: str) -> None:
+        nonlocal config_auto_save_write_generation, config_auto_save_pending
+        ensure_config_autosave_worker()
+        config_auto_save_write_generation += 1
+        generation = config_auto_save_write_generation
+        with config_auto_save_lock:
+            config_auto_save_pending = (generation, path, payload, compact, payload_kind)
+            config_auto_save_event.set()
+
+    def save_config_text_in_background(path: Path, content: str) -> None:
+        queue_config_autosave(path, content, compact=True, payload_kind="text")
 
     def save_config_dict_in_background(path: Path, config_snapshot: dict[str, Any], compact: bool = True) -> None:
-        nonlocal config_auto_save_write_generation
-        config_auto_save_write_generation += 1
-        generation = config_auto_save_write_generation
-        snapshot = dict(config_snapshot)
-
-        def run() -> None:
-            if generation != config_auto_save_write_generation:
-                return
-            try:
-                content = (
-                    json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
-                    if compact
-                    else json.dumps(snapshot, ensure_ascii=False, indent=2)
-                )
-                if generation != config_auto_save_write_generation:
-                    return
-                write_text_if_changed(path, content)
-            except Exception as exc:
-                log(f"Auto-save em segundo plano falhou: {exc}")
-
-        threading.Thread(target=run, name="AizenConfigAutosave", daemon=True).start()
+        queue_config_autosave(path, dict(config_snapshot), compact=compact, payload_kind="dict")
 
     def save_config_snapshot_in_background(config_snapshot: dict[str, Any], compact: bool = True) -> None:
         try:
