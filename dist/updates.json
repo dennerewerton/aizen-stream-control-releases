@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.246",
-    "notes":  "Otimiza a tabela manual das Kills FF: quando o ranking ja esta desenhado com os mesmos jogadores, o app pula a reconfiguracao linha por linha e apenas atualiza metricas. Isso reduz pequenas travadas apos salvar, atualizar rank ou receber o mesmo estado do Jarvis repetidas vezes.",
+    "version":  "2.6.247",
+    "notes":  "Reduz redraw desnecessario nas Kills FF ao reativar a aba: o app so forca recriacao das tabelas quando faltam widgets na tela; pendencias comuns agora reutilizam assinaturas e pulam trabalho visual repetido.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.246/AizenStreamControl.exe",
-                    "sha256":  "86ba18d3c46c1afa912fc6a5e2ef628b01c65aa2e5cb88ff5d42c9524aa02c46"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.247/AizenStreamControl.exe",
+                    "sha256":  "a94d2e7ab037cf21177ff7d98988ed5291a22d8aa16d50c32e8794f4b3172470"
                 }
 }

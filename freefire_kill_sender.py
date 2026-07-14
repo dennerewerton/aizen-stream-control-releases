@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.246"
+APP_VERSION = "2.6.247"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -21408,9 +21408,9 @@ def run_gui(config_path: Path) -> int:
                 else not kills_overlay_daily_rows
             )
             if kills_rank_render_pending or active_overlay_missing:
-                refresh_kills_rank_table(force=True)
+                refresh_kills_rank_table(force=active_overlay_missing)
             if kills_ignored_render_pending or not kills_ignored_rows:
-                refresh_kills_ignored_list(force=True)
+                refresh_kills_ignored_list(force=not kills_ignored_render_pending and not kills_ignored_rows)
         if ff_queue_active and ff_queue_render_pending:
             set_ff_queue_entries(
                 clone_ff_queue_entries(ff_queue_cached_entries),
