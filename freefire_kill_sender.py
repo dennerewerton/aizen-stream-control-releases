@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.191"
+APP_VERSION = "2.6.192"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -10447,6 +10447,8 @@ def run_gui(config_path: Path) -> int:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
+        if all(str(player.name or "").strip() or normalize_kill_value(player.kills) <= 0 for player in players):
+            return complete_player_names_from_references(players, None)
         source_players = references if references is not None else manual_name_reference_players(clean_scope)
         return complete_player_names_from_references(players, source_players)
 

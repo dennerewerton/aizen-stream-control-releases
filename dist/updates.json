@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.191",
-    "notes":  "Otimizacao: o fallback de salvamento Kills FF agora evita parsear respostas intermediarias de acoes em massa e confirma uma vez pelo /rank, deixando o lancamento de kills mais leve.",
+    "version":  "2.6.192",
+    "notes":  "Otimizacao: carregamento/aplicacao do rank Kills FF evita montar referencias quando os jogadores ja chegam com nick, reduzindo trabalho ao abrir e atualizar o painel.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.191/AizenStreamControl.exe",
-                    "sha256":  "7134ff3146ef626059c8f7bcf8009c698e6f202919f36d64e5f349477d5af973"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.192/AizenStreamControl.exe",
+                    "sha256":  "ad5e6f64718972b31d2ba90098e2da7252dcbf124152ac507e38644168aef498"
                 }
 }
