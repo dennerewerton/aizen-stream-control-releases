@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.177",
-    "notes":  "Otimizacao: reduz acordadas do leitor de eventos do chat quando o chat esta oculto e sem mensagens recentes, mantendo resposta rapida com chat visivel, sorteio ativo ou confirmacoes do bot.",
+    "version":  "2.6.178",
+    "notes":  "Otimizacao: reduz o ciclo de renderizacao das abas pesadas quando nao ha nada pendente, diminuindo carga de fundo no Kills FF, Livepix, sorteio, comandos e aparencia.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.177/AizenStreamControl.exe",
-                    "sha256":  "d27ca300353468f155d9e1837944f3b233f547a4b94a3e3b97d6a09144611c22"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.178/AizenStreamControl.exe",
+                    "sha256":  "e917ed61a8dfb53bf8b5676521a8b85d7f88e57f8865b7a6a1a705fece33d9ce"
                 }
 }

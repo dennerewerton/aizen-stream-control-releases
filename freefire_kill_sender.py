@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.177"
+APP_VERSION = "2.6.178"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -130,6 +130,7 @@ SYNC_QUEUE_IDLE_PUMP_MS = 1200
 SYNC_QUEUE_PROCESSED_PUMP_MS = 140
 BACKGROUND_DISABLED_PUMP_MS = 8000
 DEFERRED_RENDER_IDLE_PUMP_MS = 8000
+DEFERRED_RENDER_ACTIVE_IDLE_PUMP_MS = 1500
 STALE_MEI_MIN_AGE_SECONDS = 24 * 60 * 60
 STALE_MEI_CLEANUP_LIMIT = 8
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
@@ -19628,9 +19629,13 @@ def run_gui(config_path: Path) -> int:
             refresh_participant_list(raffle_participant_pending_items, force=True)
         if appearance_active and appearance_preview_pending:
             refresh_appearance_preview_if_needed(force=True)
-        if kills_active or commands_active or timers_active or livepix_active or raffle_active or appearance_active:
+        active_tab_open = kills_active or commands_active or timers_active or livepix_active or raffle_active or appearance_active
+        active_tab_pending = has_kills_pending or has_livepix_pending or has_raffle_pending or has_appearance_pending
+        if active_tab_open and active_tab_pending:
             delay_ms = 350
-        elif has_kills_pending or has_livepix_pending or has_raffle_pending or has_appearance_pending:
+        elif active_tab_open:
+            delay_ms = DEFERRED_RENDER_ACTIVE_IDLE_PUMP_MS
+        elif active_tab_pending:
             delay_ms = 900
         else:
             delay_ms = DEFERRED_RENDER_IDLE_PUMP_MS
