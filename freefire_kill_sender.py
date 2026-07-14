@@ -140,6 +140,8 @@ KILLS_RANK_RENDER_CHUNK_DELAY_MS = 12
 MANUAL_TABLE_INCREMENTAL_THRESHOLD = 18
 MANUAL_TABLE_RENDER_CHUNK_SIZE = 10
 MANUAL_TABLE_RENDER_CHUNK_DELAY_MS = 15
+MANUAL_NAME_EDIT_REFRESH_DELAY_MS = 320
+MANUAL_KILL_EDIT_REFRESH_DELAY_MS = 160
 KILLS_POST_TIMEOUT_SECONDS = 10
 KILLS_GET_TIMEOUT_SECONDS = 8
 KILLS_CONFIRM_GET_TIMEOUT_SECONDS = 3
@@ -12905,7 +12907,11 @@ def run_gui(config_path: Path) -> int:
         cancel_manual_config_autosave()
         manual_config_after_id = root.after(delay_ms, run_manual_config_autosave)
 
-    def on_manual_change(*_args: Any, sort_rows: bool = True) -> None:
+    def on_manual_change(
+        *_args: Any,
+        sort_rows: bool = True,
+        refresh_delay_ms: int = MANUAL_KILL_EDIT_REFRESH_DELAY_MS,
+    ) -> None:
         nonlocal manual_last_local_edit_at, manual_table_render_signature
         if manual_applying_remote:
             return
@@ -12920,7 +12926,7 @@ def run_gui(config_path: Path) -> int:
             schedule_manual_config_autosave()
         except NameError:
             pass
-        schedule_manual_visual_refresh(sort_rows=sort_rows)
+        schedule_manual_visual_refresh(delay_ms=refresh_delay_ms, sort_rows=sort_rows)
 
     def manual_autocomplete_key(value: str) -> str:
         normalized = unicodedata.normalize("NFKD", str(value or "").casefold())
@@ -13162,9 +13168,15 @@ def run_gui(config_path: Path) -> int:
         manual_rows.append(row)
         name_var.trace_add(
             "write",
-            lambda *_args, target_row=row: (on_manual_change(sort_rows=False), schedule_manual_name_suggestions(target_row)),
+            lambda *_args, target_row=row: (
+                on_manual_change(sort_rows=False, refresh_delay_ms=MANUAL_NAME_EDIT_REFRESH_DELAY_MS),
+                schedule_manual_name_suggestions(target_row),
+            ),
         )
-        kills_var.trace_add("write", lambda *_args: on_manual_change(sort_rows=True))
+        kills_var.trace_add(
+            "write",
+            lambda *_args: on_manual_change(sort_rows=True, refresh_delay_ms=MANUAL_KILL_EDIT_REFRESH_DELAY_MS),
+        )
         name_entry.bind("<FocusIn>", lambda _event, target_row=row: refresh_manual_name_suggestions(target_row))
         name_entry.bind("<FocusOut>", lambda _event, target_row=row: root.after(140, lambda: hide_manual_name_suggestions(target_row)))
         name_entry.bind("<Return>", lambda _event, target_row=row: select_first_manual_name_suggestion(target_row))
@@ -13172,7 +13184,7 @@ def run_gui(config_path: Path) -> int:
             update_manual_row_numbers()
             update_manual_metrics()
         if notify:
-            on_manual_change()
+            on_manual_change(sort_rows=False, refresh_delay_ms=MANUAL_NAME_EDIT_REFRESH_DELAY_MS)
 
     def add_or_increment_manual_player_all_scopes(name: str, kills: int) -> None:
         nonlocal manual_bulk_updating, manual_last_local_edit_at
