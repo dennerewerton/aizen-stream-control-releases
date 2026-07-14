@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.173",
-    "notes":  "Otimizacao: o envio de Kills FF evita uma leitura duplicada de confirmacao para o mesmo snapshot, reduzindo espera ao salvar quando o Jarvis demora a refletir o rank.",
+    "version":  "2.6.174",
+    "notes":  "Otimizacao: o Salvar das Kills FF agora tenta primeiro um snapshot compacto, reduzindo bastante o tamanho enviado ao Jarvis, com fallback automatico para o payload legado se necessario.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.173/AizenStreamControl.exe",
-                    "sha256":  "bafd950ff6af31e805b36158667ca7a67f388a1981572aa1983d98432ebc18ff"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.174/AizenStreamControl.exe",
+                    "sha256":  "5543c152af748d94dcfbf3e019e5d960a7b397e32bb9a8263e741197e5c17dbf"
                 }
 }

@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.173"
+APP_VERSION = "2.6.174"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5082,7 +5082,7 @@ def send_kills_snapshot_update(
     daily_payload = player_wire_payload(daily_players)
     general_payload = player_wire_payload(general_players)
     now = datetime.now().isoformat(timespec="seconds")
-    payload: dict[str, Any] = {
+    base_payload: dict[str, Any] = {
         "source": "aizen-stream-control",
         "mode": "kills_snapshot",
         "app_version": APP_VERSION,
@@ -5098,20 +5098,30 @@ def send_kills_snapshot_update(
         "replace": True,
         "players": general_payload,
         "ranking": general_payload,
+        "daily_ranking": daily_payload,
+        "scopes": ["daily", "general"],
+        "replace_daily": True,
+        "replace_general": True,
+        "totals": {
+            "total_players": len(general_players),
+            "total_kills": sum(player.kills for player in general_players),
+            "daily_total_players": len(daily_players),
+            "daily_total_kills": sum(player.kills for player in daily_players),
+        },
+    }
+    legacy_payload: dict[str, Any] = {
+        **base_payload,
+        "ranking": general_payload,
         "global_ranking": general_payload,
         "globalRanking": general_payload,
         "general_ranking": general_payload,
         "generalRanking": general_payload,
         "geral_ranking": general_payload,
-        "daily_ranking": daily_payload,
         "dailyRanking": daily_payload,
         "dia_ranking": daily_payload,
         "daily": daily_payload,
         "general": general_payload,
-        "scopes": ["daily", "general"],
-        "replace_daily": True,
         "replaceDaily": True,
-        "replace_general": True,
         "replaceGeneral": True,
         "rankings": {
             "daily": daily_payload,
@@ -5120,13 +5130,8 @@ def send_kills_snapshot_update(
             "general": general_payload,
             "geral": general_payload,
         },
-        "totals": {
-            "total_players": len(general_players),
-            "total_kills": sum(player.kills for player in general_players),
-            "daily_total_players": len(daily_players),
-            "daily_total_kills": sum(player.kills for player in daily_players),
-        },
     }
+    payload_candidates: tuple[dict[str, Any], ...] = (base_payload, legacy_payload)
     headers = {
         "X-Aizen-Client-Id": device_id,
         "X-Aizen-Client-Name": device_name,
@@ -5142,70 +5147,71 @@ def send_kills_snapshot_update(
     with requests.Session() as session:
         final_state: RealtimeState | None = None
         for snapshot_url in snapshot_urls:
-            try:
-                response = session.post(
-                    snapshot_url,
-                    json=payload,
-                    headers=headers,
-                    timeout=KILLS_POST_TIMEOUT_SECONDS,
-                    allow_redirects=False,
-                )
-                if 300 <= response.status_code < 400:
-                    location = response.headers.get("Location", "")
-                    raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
-                response.raise_for_status()
-                state = parse_realtime_state(response.text)
-                confirmation_checked = False
-                if kills_snapshot_matches_state(state, daily_players, general_players):
-                    confirmation_checked = True
-                    try:
-                        confirmed_state = fetch_confirmed_kills_rank_state(
-                            endpoint_url,
-                            daily_players,
-                            general_players,
-                            device_id=device_id,
-                            device_name=device_name,
-                            room=room,
-                            token=token,
-                            session=session,
-                            delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
-                        )
-                    except Exception:
-                        confirmed_state = None
-                    if confirmed_state is not None:
-                        remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
-                        return confirmed_state
-                response_acknowledged = response_acknowledges_kills_snapshot(response.text)
-                if not confirmation_checked:
-                    try:
-                        confirmed_state = fetch_confirmed_kills_rank_state(
-                            endpoint_url,
-                            daily_players,
-                            general_players,
-                            device_id=device_id,
-                            device_name=device_name,
-                            room=room,
-                            token=token,
-                            session=session,
-                            delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
-                        )
+            for payload in payload_candidates:
+                try:
+                    response = session.post(
+                        snapshot_url,
+                        json=payload,
+                        headers=headers,
+                        timeout=KILLS_POST_TIMEOUT_SECONDS,
+                        allow_redirects=False,
+                    )
+                    if 300 <= response.status_code < 400:
+                        location = response.headers.get("Location", "")
+                        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+                    response.raise_for_status()
+                    state = parse_realtime_state(response.text)
+                    confirmation_checked = False
+                    if kills_snapshot_matches_state(state, daily_players, general_players):
+                        confirmation_checked = True
+                        try:
+                            confirmed_state = fetch_confirmed_kills_rank_state(
+                                endpoint_url,
+                                daily_players,
+                                general_players,
+                                device_id=device_id,
+                                device_name=device_name,
+                                room=room,
+                                token=token,
+                                session=session,
+                                delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
+                            )
+                        except Exception:
+                            confirmed_state = None
                         if confirmed_state is not None:
                             remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
                             return confirmed_state
-                    except Exception:
-                        pass
-                if response_acknowledged:
-                    continue
-            except requests.HTTPError as exc:
-                status_code = exc.response.status_code if exc.response is not None else 0
-                if status_code in {400, 404, 405, 409, 422}:
-                    forget_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
-                else:
+                    response_acknowledged = response_acknowledges_kills_snapshot(response.text)
+                    if not confirmation_checked:
+                        try:
+                            confirmed_state = fetch_confirmed_kills_rank_state(
+                                endpoint_url,
+                                daily_players,
+                                general_players,
+                                device_id=device_id,
+                                device_name=device_name,
+                                room=room,
+                                token=token,
+                                session=session,
+                                delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
+                            )
+                            if confirmed_state is not None:
+                                remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
+                                return confirmed_state
+                        except Exception:
+                            pass
+                    if response_acknowledged:
+                        continue
+                except requests.HTTPError as exc:
+                    status_code = exc.response.status_code if exc.response is not None else 0
+                    if status_code in {400, 404, 405, 409, 422}:
+                        forget_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
+                        continue
                     raise
-            except requests.RequestException:
-                raise
-            except Exception:
-                pass
+                except requests.RequestException:
+                    raise
+                except Exception:
+                    continue
 
         try:
             current_state = fetch_kills_rank_realtime(
