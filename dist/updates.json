@@ -3,6 +3,6 @@
     "notes":  "Corrige o Salvar das Kills FF: a aba Diario agora grava e confirma somente o ranking diario no Jarvis, sem depender do Geral.",
     "windows":  {
                     "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.196/AizenStreamControl.exe",
-                    "sha256":  "685698b86dc6c7e82be4945d943c19afbd30f8bf3b20c6ef500627f004f8cf7d"
+                    "sha256":  "5c17f13bc858f404e6e468d2d30da03bfcd93b1644cfedf8048bdb54f571ab65"
                 }
 }
