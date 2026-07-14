@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.175"
+APP_VERSION = "2.6.176"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11061,15 +11061,11 @@ def run_gui(config_path: Path) -> int:
             value = 15
         return max(10, min(120, value))
 
-    def collect_manual_players(fill_missing_names: bool = True, scope: str | None = None) -> list[PlayerKill]:
+    def collect_manual_widget_players(fill_missing_names: bool = True, scope: str | None = None) -> list[PlayerKill]:
         nonlocal manual_applying_remote
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
-        if manual_table_render_pending and manual_table_render_scope == clean_scope:
-            return merge_manual_player_kills(
-                complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope)
-            )
         players: list[PlayerKill] = []
         for row in manual_rows:
             name = row["name_var"].get().strip()
@@ -11090,6 +11086,16 @@ def run_gui(config_path: Path) -> int:
                 finally:
                     manual_applying_remote = previous_applying_remote
         return merge_manual_player_kills(players)
+
+    def collect_manual_players(fill_missing_names: bool = True, scope: str | None = None) -> list[PlayerKill]:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        if manual_table_render_pending and manual_table_render_scope == clean_scope:
+            return merge_manual_player_kills(
+                complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope)
+            )
+        return collect_manual_widget_players(fill_missing_names=fill_missing_names, scope=clean_scope)
 
     def update_manual_metrics(players: list[PlayerKill] | None = None) -> None:
         if manual_bulk_updating:
@@ -11263,6 +11269,41 @@ def run_gui(config_path: Path) -> int:
                 pass
             manual_visual_after_id = None
         manual_visual_sort_pending = False
+
+    def capture_visible_manual_scope_for_send(scope: str | None = None) -> None:
+        nonlocal manual_table_render_pending, manual_table_render_scope
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"} or clean_scope != current_manual_scope() or not manual_rows:
+            return
+        visible_players = collect_manual_widget_players(scope=clean_scope)
+        if not visible_players and manual_scope_buffers.get(clean_scope):
+            return
+
+        buffered_players = clone_player_list(manual_scope_buffers.get(clean_scope, []))
+        if manual_table_render_pending and len(visible_players) < len(buffered_players):
+            merged: dict[str, PlayerKill] = {
+                normalize_player_key(player.name): player
+                for player in buffered_players
+                if player.name.strip()
+            }
+            for player in visible_players:
+                key = normalize_player_key(player.name)
+                if key:
+                    merged[key] = player
+            manual_scope_buffers[clean_scope] = sorted_rank_players(list(merged.values()))
+            cancel_manual_table_incremental_render()
+            manual_table_render_pending = False
+            manual_table_render_scope = ""
+            try:
+                set_manual_players(manual_scope_buffers[clean_scope], scope=clean_scope, force_render=True)
+            except NameError:
+                pass
+        else:
+            cancel_manual_table_incremental_render()
+            manual_table_render_pending = False
+            manual_table_render_scope = ""
+            manual_scope_buffers[clean_scope] = clone_player_list(visible_players)
+        repair_manual_scope_buffer_names(clean_scope)
 
     def run_kills_visual_refresh() -> None:
         nonlocal kills_visual_after_id
@@ -17277,9 +17318,11 @@ def run_gui(config_path: Path) -> int:
         active_scope = normalize_kills_scope_value(local_config.get("kills_manual_scope", "daily"))
         if active_scope not in {"daily", "general"}:
             active_scope = "daily"
+        capture_visible_manual_scope_for_send(active_scope)
         repair_manual_scope_buffer_names("daily", references=kills_daily_ranking)
         repair_manual_scope_buffer_names("general", references=kills_global_ranking)
         fill_visible_manual_missing_names_from_rank(active_scope)
+        capture_visible_manual_scope_for_send(active_scope)
         repair_manual_scope_buffer_names("daily")
         repair_manual_scope_buffer_names("general")
         if active_scope == current_manual_scope():
@@ -17359,6 +17402,8 @@ def run_gui(config_path: Path) -> int:
                         "scopes": ["daily", "general"],
                         "daily_count": len(daily_players),
                         "general_count": len(general_players),
+                        "daily_kills": sum(player.kills for player in daily_players),
+                        "general_kills": sum(player.kills for player in general_players),
                         "state": final_state,
                     },
                 )
@@ -17636,7 +17681,8 @@ def run_gui(config_path: Path) -> int:
             set_text_var(manual_status_var, "Sincronizado")
             log(
                 "Kills FF salvas no Jarvis exatamente como no app "
-                f"({payload.get('daily_count', 0)} diario / {payload.get('general_count', 0)} geral)."
+                f"({payload.get('daily_count', 0)} diario, {payload.get('daily_kills', 0)} kills / "
+                f"{payload.get('general_count', 0)} geral, {payload.get('general_kills', 0)} kills)."
             )
             return
 
