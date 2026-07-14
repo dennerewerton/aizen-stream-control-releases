@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.190"
+APP_VERSION = "2.6.191"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4739,6 +4739,7 @@ def send_kills_action_update(
     room: str = "principal",
     token: str = "",
     session: requests.Session | None = None,
+    parse_response: bool = True,
 ) -> RealtimeState:
     clean_scope = normalize_kills_scope_value(scope)
     scope_payload = clean_scope if clean_scope in {"daily", "general", "both"} else "both"
@@ -4824,6 +4825,8 @@ def send_kills_action_update(
         location = response.headers.get("Location", "")
         raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
     response.raise_for_status()
+    if not parse_response:
+        return RealtimeState(players=[])
     return parse_realtime_state(response.text)
 
 
@@ -5332,6 +5335,7 @@ def send_kills_snapshot_update(
                         room=room,
                         token=token,
                         session=session,
+                        parse_response=False,
                     )
                 try:
                     fetched_state = fetch_confirmed_kills_rank_state(
@@ -5360,6 +5364,7 @@ def send_kills_snapshot_update(
             room=room,
             token=token,
             session=session,
+            parse_response=False,
         )
         final_state = send_kills_action_update(
             endpoint_url,
@@ -5370,6 +5375,7 @@ def send_kills_snapshot_update(
             room=room,
             token=token,
             session=session,
+            parse_response=False,
         )
         for player in daily_players:
             final_state = send_kills_action_update(
@@ -5383,6 +5389,7 @@ def send_kills_snapshot_update(
                 room=room,
                 token=token,
                 session=session,
+                parse_response=False,
             )
         for player in general_players:
             final_state = send_kills_action_update(
@@ -5396,6 +5403,7 @@ def send_kills_snapshot_update(
                 room=room,
                 token=token,
                 session=session,
+                parse_response=False,
             )
     try:
         fetched_state = fetch_confirmed_kills_rank_state(
