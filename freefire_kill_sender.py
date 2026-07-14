@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.213"
+APP_VERSION = "2.6.214"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -7764,6 +7764,7 @@ def run_gui(config_path: Path) -> int:
     avatar_result_after_id: str | None = None
     winner_avatar_current: tuple[str, str] = ("", "-")
     manual_rows: list[dict[str, Any]] = []
+    manual_suggestion_after_ids: dict[int, str] = {}
     manual_scope_buffers: dict[str, list[PlayerKill]] = {"daily": [], "general": []}
     manual_scope_dirty: set[str] = set()
     manual_table_render_pending = False
@@ -12404,7 +12405,31 @@ def run_gui(config_path: Path) -> int:
         ranked.sort(key=lambda item: (-item[2], manual_autocomplete_key(item[0])))
         return ranked[:limit]
 
+    def cancel_manual_name_suggestion_refresh(row: dict[str, Any]) -> None:
+        after_id = manual_suggestion_after_ids.pop(id(row), None)
+        if after_id is None:
+            return
+        try:
+            root.after_cancel(after_id)
+        except tk.TclError:
+            pass
+
+    def schedule_manual_name_suggestions(row: dict[str, Any], delay_ms: int = 90) -> None:
+        if manual_applying_remote or app_closing:
+            return
+        cancel_manual_name_suggestion_refresh(row)
+
+        def run() -> None:
+            manual_suggestion_after_ids.pop(id(row), None)
+            if app_closing:
+                return
+            if any(candidate is row for candidate in manual_rows):
+                refresh_manual_name_suggestions(row)
+
+        manual_suggestion_after_ids[id(row)] = root.after(max(0, delay_ms), run)
+
     def hide_manual_name_suggestions(row: dict[str, Any]) -> None:
+        cancel_manual_name_suggestion_refresh(row)
         suggestion_frame = row.get("suggestion_frame")
         if not suggestion_frame:
             return
@@ -12552,7 +12577,7 @@ def run_gui(config_path: Path) -> int:
         manual_rows.append(row)
         name_var.trace_add(
             "write",
-            lambda *_args, target_row=row: (on_manual_change(sort_rows=False), refresh_manual_name_suggestions(target_row)),
+            lambda *_args, target_row=row: (on_manual_change(sort_rows=False), schedule_manual_name_suggestions(target_row)),
         )
         kills_var.trace_add("write", lambda *_args: on_manual_change(sort_rows=True))
         name_entry.bind("<FocusIn>", lambda _event, target_row=row: refresh_manual_name_suggestions(target_row))
@@ -12755,6 +12780,7 @@ def run_gui(config_path: Path) -> int:
     def remove_manual_row(row: dict[str, Any]) -> None:
         if row not in manual_rows:
             return
+        cancel_manual_name_suggestion_refresh(row)
         manual_rows.remove(row)
         row["frame"].destroy()
         if not manual_rows:

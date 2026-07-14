@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.213",
-    "notes":  "Acelera o Salvar das Kills FF removendo uma leitura previa do painel antes de enviar o snapshot, mantendo a confirmacao apos gravar.",
+    "version":  "2.6.214",
+    "notes":  "Deixa a edicao das Kills FF mais leve ao aplicar debounce nas sugestoes de nick, evitando recriar a busca a cada tecla.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.213/AizenStreamControl.exe",
-                    "sha256":  "42575304845b91cbdee2390339d7942dde6b66efbfa0d3fbcafbd2a6f246a339"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.214/AizenStreamControl.exe",
+                    "sha256":  "e39eede93258df86c0a06a499ac5213da7724394cf7fc28d5e22340a2e0d2120"
                 }
 }
