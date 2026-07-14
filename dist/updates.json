@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.227",
-    "notes":  "Otimiza Kills FF reduzindo varreduras repetidas de nomes no autocomplete e no Salvar, alem de suavizar o redesenho antes do envio ao Jarvis.",
+    "version":  "2.6.228",
+    "notes":  "Adia o carregamento do cache de ranking Kills FF ate a aba ser aberta, deixando a inicializacao mais leve quando o foco esta em outras abas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.227/AizenStreamControl.exe",
-                    "sha256":  "0e268987996bfc5944817c144d98727d5e439256ef263b542f234d6d1de51089"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.228/AizenStreamControl.exe",
+                    "sha256":  "29e696504868f1cdc60177a3fa0b9ff044520d34ee38cb936e3d01c8eda04d38"
                 }
 }

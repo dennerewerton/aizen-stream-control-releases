@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.227"
+APP_VERSION = "2.6.228"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -7818,6 +7818,7 @@ def run_gui(config_path: Path) -> int:
     kills_daily_ranking: list[PlayerKill] = []
     kills_global_ranking: list[PlayerKill] = []
     kills_ignored_players: list[IgnoredKillPlayer] = []
+    kills_rank_cache_pending = False
     kills_rank_render_pending = False
     kills_ignored_render_pending = False
     ff_queue_actions: Any | None = None
@@ -21027,7 +21028,7 @@ def run_gui(config_path: Path) -> int:
         deferred_render_after_id = root.after(max(0, delay_ms), pump_deferred_kills_render)
 
     def pump_deferred_kills_render() -> None:
-        nonlocal deferred_render_after_id
+        nonlocal deferred_render_after_id, kills_rank_cache_pending
         deferred_render_after_id = None
         if app_closing:
             return
@@ -21048,6 +21049,11 @@ def run_gui(config_path: Path) -> int:
         if timers_active:
             ensure_chat_timer_rows_rendered()
         if kills_active:
+            if kills_rank_cache_pending:
+                kills_rank_cache_pending = False
+                if not apply_kills_rank_cache():
+                    refresh_kills_rank_table()
+                    refresh_kills_ignored_list()
             if manual_table_render_pending and manual_table_render_after_id is None:
                 render_scope = manual_table_render_scope if manual_table_render_scope in {"daily", "general"} else current_manual_scope()
                 set_manual_players(
@@ -21096,15 +21102,20 @@ def run_gui(config_path: Path) -> int:
     tabview.configure(command=lambda: schedule_deferred_render_pump(0))
 
     def run_startup_ui_tasks() -> None:
+        nonlocal kills_rank_cache_pending
         if app_closing:
             return
         update_chat_endpoint_text()
         apply_chat_overlay_settings()
         refresh_chat_messages(force=True)
         refresh_participant_list([])
-        if not kills_ff_site_sync_hidden and not apply_kills_rank_cache():
-            refresh_kills_rank_table()
-            refresh_kills_ignored_list()
+        if not kills_ff_site_sync_hidden:
+            if is_kills_ff_tab_active():
+                if not apply_kills_rank_cache():
+                    refresh_kills_rank_table()
+                    refresh_kills_ignored_list()
+            else:
+                kills_rank_cache_pending = True
         if not ff_queue_site_sync_hidden:
             apply_tikfinity_ff_state({})
 
