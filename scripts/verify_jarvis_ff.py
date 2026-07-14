@@ -1165,7 +1165,12 @@ def verify(
             raise RuntimeError(f"Snapshot Kills FF nao substituiu o diario persistido: {persisted_replaced!r}")
         MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["kills_rank"] = {}
-        MockJarvisHandler.state["debug"] = {"strong_snapshot_response": True, "rank_gets": 0}
+        MockJarvisHandler.state["debug"] = {
+            "kills_actions": [],
+            "strong_snapshot_response": True,
+            "rank_gets": 0,
+            "rank_independent": True,
+        }
         strong_snapshot = send_kills_snapshot_update(
             kills_url,
             [PlayerKill("RespostaForteDia", 6)],
@@ -1178,10 +1183,13 @@ def verify(
         strong_daily = {item.name.casefold(): item.kills for item in strong_snapshot.daily_ranking or []}
         strong_global = {item.name.casefold(): item.kills for item in strong_snapshot.global_ranking or []}
         strong_rank_gets = int(MockJarvisHandler.state.get("debug", {}).get("rank_gets") or 0)
+        strong_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
         if strong_daily != {"respostafortedia": 6} or strong_global != {"respostafortegeral": 8}:
             raise RuntimeError(f"Snapshot Kills FF com resposta forte divergente: {strong_snapshot!r}")
-        if strong_rank_gets != 0:
-            raise RuntimeError(f"Snapshot Kills FF fez GET /rank redundante apos resposta forte: {strong_rank_gets}")
+        if strong_rank_gets <= 0:
+            raise RuntimeError("Snapshot Kills FF confiou na resposta sem confirmar o /rank publico.")
+        if "replace" not in strong_actions and strong_actions.count("set") < 2:
+            raise RuntimeError(f"Fallback Kills FF nao gravou diario e geral apos /rank vazio: {strong_actions!r}")
         MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["kills_rank"] = {}
         MockJarvisHandler.state["debug"] = {"kills_actions": [], "weak_snapshot_ack": True}
