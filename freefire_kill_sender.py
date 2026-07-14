@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.189"
+APP_VERSION = "2.6.190"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4766,6 +4766,17 @@ def send_kills_action_update(
         "targetScope": scope_payload,
         "rank": scope_payload,
         "ranking": scope_payload,
+        "scope_alias": scope_slug,
+        "scopeAlias": scope_slug,
+        "scope_pt": scope_slug,
+        "scopePt": scope_slug,
+        "rank_type": scope_payload,
+        "rankType": scope_payload,
+        "target": scope_payload,
+        "target_rank": scope_payload,
+        "targetRank": scope_payload,
+        "tipo": scope_slug,
+        "modo": scope_slug,
     }
     if player is not None:
         payload.update(
@@ -5163,6 +5174,12 @@ def send_kills_snapshot_update(
         "scopes": ["daily", "general"],
         "replace_daily": True,
         "replace_general": True,
+        "total_players": len(general_players),
+        "total_kills": sum(player.kills for player in general_players),
+        "daily_total_players": len(daily_players),
+        "daily_total_kills": sum(player.kills for player in daily_players),
+        "daily_players": len(daily_players),
+        "daily_kills": sum(player.kills for player in daily_players),
         "totals": {
             "total_players": len(general_players),
             "total_kills": sum(player.kills for player in general_players),
@@ -10433,7 +10450,10 @@ def run_gui(config_path: Path) -> int:
         if not buffered_players:
             return False
         completed_players = complete_manual_player_names(buffered_players, clean_scope, references=references)
-        if player_payload(completed_players) == player_payload(buffered_players):
+        if len(completed_players) == len(buffered_players) and all(
+            left.name == right.name and normalize_kill_value(left.kills) == normalize_kill_value(right.kills)
+            for left, right in zip(completed_players, buffered_players)
+        ):
             return False
         manual_scope_buffers[clean_scope] = clone_player_list(completed_players)
         return True
@@ -11099,7 +11119,6 @@ def run_gui(config_path: Path) -> int:
         kills_ignored_players = list(state.ignored_players or [])
         repair_manual_scope_buffer_names("daily", references=kills_daily_ranking)
         repair_manual_scope_buffer_names("general", references=kills_global_ranking)
-        schedule_kills_visual_refresh(delay_ms=80)
         refresh_kills_ignored_list()
         current_scope = current_manual_scope()
         if current_scope not in manual_scope_dirty:
@@ -17845,6 +17864,7 @@ def run_gui(config_path: Path) -> int:
                 manual_last_rank_signature = kills_rank_signature_for_state(state)
                 manual_remote_count_override = state.total_players
                 manual_remote_total_override = state.total_kills
+                save_kills_rank_cache()
                 if state.updated_by:
                     set_text_var(manual_source_var, state.updated_by)
                 else:

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.189",
-    "notes":  "Otimizacao: o Salvar das Kills FF reaproveita a ultima leitura do /rank quando o snapshot nao confirma, evitando uma chamada HTTP extra antes do fallback.",
+    "version":  "2.6.190",
+    "notes":  "Corrige o salvamento Kills FF: reforca o escopo diario no payload do Jarvis, salva o cache confirmado do rank e mantem as otimizacoes de carregamento.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.189/AizenStreamControl.exe",
-                    "sha256":  "6f5d3180deee8838469f08724f0c280f6a366fd8ac4d90175431714d1cffcafd"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.190/AizenStreamControl.exe",
+                    "sha256":  "3f1b99689482676d33639915ba08e8d13a1edf0119761f207213be4b0cdf5bf3"
                 }
 }
