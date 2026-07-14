@@ -223,7 +223,7 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
                 return targets
 
             def save_kills_state(**extra: Any) -> None:
-                self.state["kills"] = {
+                next_state = {
                     "ranking": sort_rows(ranking_rows),
                     "daily_ranking": sort_rows(daily_rows),
                     "ignored": ignored_rows,
@@ -232,7 +232,11 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
                     "total_kills": sum(int(row.get("kills") or 0) for row in ranking_rows),
                     "daily_total_kills": sum(int(row.get("kills") or 0) for row in daily_rows),
                 }
-                self.state["kills"].update(extra)
+                next_state.update(extra)
+                if self.state.get("debug", {}).get("action_rank_only"):
+                    self.state["kills_rank"] = dict(next_state)
+                    return
+                self.state["kills"] = next_state
                 if self.state.get("debug", {}).get("rank_independent"):
                     self.state["kills_rank"] = dict(self.state["kills"])
 
@@ -743,6 +747,9 @@ def verify_contracts() -> None:
         raise RuntimeError(f"Rank diario separado divergente: {split_rank_state.daily_ranking!r}")
     if [(item.name, item.kills) for item in split_rank_state.global_ranking] != [("Geral", 21)]:
         raise RuntimeError(f"Rank geral separado divergente: {split_rank_state.global_ranking!r}")
+    empty_ack_state = parse_realtime_state({"ok": True, "status": "saved"})
+    if empty_ack_state.players or empty_ack_state.daily_ranking or empty_ack_state.global_ranking:
+        raise RuntimeError(f"ACK vazio do Jarvis virou jogador falso: {empty_ack_state!r}")
     overlay_rank = overlay_rank_players(
         split_rank_state.daily_ranking,
         split_rank_state.global_ranking,
@@ -1174,6 +1181,32 @@ def verify(
             raise RuntimeError(f"Salvar Kills FF diario alterou o geral: {scoped_daily!r}")
         if scoped_actions != ["replace"]:
             raise RuntimeError(f"Salvar diario nao usou o caminho rapido de replace unico: {scoped_actions!r}")
+        MockJarvisHandler.state["kills"] = {
+            "daily_ranking": [{"name": "DiaSiteAntigo", "kills": 1}],
+            "ranking": [{"name": "GeralSiteMantido", "kills": 13}],
+            "ignored": {},
+        }
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {"kills_actions": [], "action_rank_only": True, "rank_independent": True}
+        scoped_daily_site = send_kills_scope_replace_update(
+            kills_url,
+            "daily",
+            [PlayerKill("DailySiteSync", 9)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        base_after_scope = fetch_kills_realtime(kills_url, device_id=device_id, device_name=device_name, room=room, token=token)
+        scoped_site_daily = {item.name.casefold(): item.kills for item in scoped_daily_site.daily_ranking or []}
+        base_site_daily = {item.name.casefold(): item.kills for item in base_after_scope.daily_ranking or []}
+        base_site_global = {item.name.casefold(): item.kills for item in base_after_scope.global_ranking or []}
+        if scoped_site_daily != {"dailysitesync": 9} or base_site_daily != {"dailysitesync": 9}:
+            raise RuntimeError(
+                f"Salvar diario confirmou /rank, mas nao sincronizou o painel principal: {scoped_daily_site!r} / {base_after_scope!r}"
+            )
+        if base_site_global != {"geralsitemantido": 13}:
+            raise RuntimeError(f"Salvar diario no painel principal alterou o geral: {base_after_scope!r}")
         MockJarvisHandler.state["kills"] = {
             "daily_ranking": [{"name": "DiaFallback", "kills": 2}],
             "ranking": [{"name": "GeralFallback", "kills": 18}],

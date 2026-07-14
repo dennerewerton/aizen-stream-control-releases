@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.199",
-    "notes":  "Otimizacao: tarefas de Jarvis/Fila/Livepix agora usam pools limitados de workers, evitando rajadas de threads e reduzindo travamentos em cliques repetidos ou rede instavel.",
+    "version":  "2.6.200",
+    "notes":  "Corrige o Salvar do Kills FF diario: confirma /rank, preserva o outro ranking, sincroniza o painel principal do Jarvis e evita tratar ACK ok como jogador.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.199/AizenStreamControl.exe",
-                    "sha256":  "1e6869002a64e743d445e7075729a1c26ce622758aef5a2ac71dab28001b608d"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.200/AizenStreamControl.exe",
+                    "sha256":  "26c45b6dc97ce1bc8f0d39776987f93774d2284c4cf4dff3b4f1f719ea81603c"
                 }
 }

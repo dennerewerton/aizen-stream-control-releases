@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.199"
+APP_VERSION = "2.6.200"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3731,6 +3731,86 @@ def kills_scope_label(value: Any) -> str:
     return "Ambos"
 
 
+def kills_scope_payload_fields(value: Any) -> dict[str, Any]:
+    scope = normalize_kills_scope_value(value)
+    if scope not in {"daily", "general", "both"}:
+        scope = "both"
+    label = kills_scope_label(scope)
+    slug = "diario" if scope == "daily" else "geral" if scope == "general" else "ambos"
+    applies_daily = scope in {"daily", "both"}
+    applies_general = scope in {"general", "both"}
+    return {
+        "scope": scope,
+        "scope_label": label,
+        "scopeLabel": label,
+        "scope_slug": slug,
+        "scopeSlug": slug,
+        "scope_alias": slug,
+        "scopeAlias": slug,
+        "scope_pt": slug,
+        "scopePt": slug,
+        "scope_name": slug,
+        "scopeName": slug,
+        "scope_code": scope,
+        "scopeCode": scope,
+        "rank_scope": scope,
+        "rankScope": scope,
+        "ranking_scope": scope,
+        "rankingScope": scope,
+        "rank": scope,
+        "rank_type": scope,
+        "rankType": scope,
+        "ranking_type": scope,
+        "rankingType": scope,
+        "rank_slug": slug,
+        "rankSlug": slug,
+        "target": scope,
+        "target_scope": scope,
+        "targetScope": scope,
+        "target_rank": scope,
+        "targetRank": scope,
+        "target_rank_slug": slug,
+        "targetRankSlug": slug,
+        "target_period": scope,
+        "targetPeriod": scope,
+        "target_period_slug": slug,
+        "targetPeriodSlug": slug,
+        "period": scope,
+        "period_slug": slug,
+        "periodSlug": slug,
+        "periodo": slug,
+        "period_label": label,
+        "periodLabel": label,
+        "tipo": slug,
+        "modo": slug,
+        "scopes": ["daily", "general"] if scope == "both" else [scope],
+        "applies_daily": applies_daily,
+        "appliesDaily": applies_daily,
+        "aplicar_diario": applies_daily,
+        "apply_daily": applies_daily,
+        "applyDaily": applies_daily,
+        "target_daily": applies_daily,
+        "targetDaily": applies_daily,
+        "is_daily": scope == "daily",
+        "isDaily": scope == "daily",
+        "daily_scope": scope == "daily",
+        "dailyScope": scope == "daily",
+        "applies_general": applies_general,
+        "appliesGeneral": applies_general,
+        "aplicar_geral": applies_general,
+        "apply_general": applies_general,
+        "applyGeneral": applies_general,
+        "target_general": applies_general,
+        "targetGeneral": applies_general,
+        "is_general": scope == "general",
+        "isGeneral": scope == "general",
+        "general_scope": scope == "general",
+        "generalScope": scope == "general",
+        "is_global": scope == "general",
+        "isGlobal": scope == "general",
+    }
+
+
 def kills_scope_description(value: Any) -> str:
     scope = normalize_kills_scope_value(value)
     if scope == "daily":
@@ -4093,6 +4173,54 @@ def optional_int_value(value: Any) -> int | None:
         return None
 
 
+PLAYER_MAP_METADATA_KEYS = {
+    "ok",
+    "success",
+    "status",
+    "state",
+    "message",
+    "mensagem",
+    "detail",
+    "result",
+    "resultado",
+    "error",
+    "errors",
+    "erro",
+    "erros",
+    "action",
+    "mode",
+    "source",
+    "room",
+    "app",
+    "app_version",
+    "version",
+    "sync_version",
+    "client_id",
+    "client_name",
+    "updated_by",
+    "updated_at",
+    "timestamp",
+    "revision",
+    "device",
+    "devices",
+    "summary",
+    "stats",
+    "totals",
+    "total",
+    "total_players",
+    "total_kills",
+    "daily_total_players",
+    "daily_total_kills",
+    "ignored",
+    "ignored_players",
+}
+
+
+def is_player_map_metadata_key(value: Any) -> bool:
+    key = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().casefold()).strip("_")
+    return key in PLAYER_MAP_METADATA_KEYS
+
+
 def parse_players_payload(payload: Any) -> list[PlayerKill]:
     if isinstance(payload, str):
         try:
@@ -4115,6 +4243,8 @@ def parse_players_payload(payload: Any) -> list[PlayerKill]:
             key = ""
             ff_player_id = ""
             entries = 0
+            if is_player_map_metadata_key(name):
+                continue
             if isinstance(kills, dict):
                 item = kills
                 row_name = player_name_from_mapping(item, name)
@@ -4127,6 +4257,8 @@ def parse_players_payload(payload: Any) -> list[PlayerKill]:
                 )
                 entries = normalize_kill_value(first_present(item, ("entries", "partidas", "matches", "games"), 0))
             else:
+                if isinstance(kills, bool):
+                    continue
                 row_name = name
             clean = str(row_name or "").strip()
             if clean:
@@ -4748,51 +4880,16 @@ def send_kills_action_update(
 ) -> RealtimeState:
     clean_scope = normalize_kills_scope_value(scope)
     scope_payload = clean_scope if clean_scope in {"daily", "general", "both"} else "both"
-    scope_label = kills_scope_label(scope_payload)
-    scope_slug = "diario" if scope_payload == "daily" else "geral" if scope_payload == "general" else "ambos"
     payload: dict[str, Any] = {
         "source": "aizen-stream-control",
-        "mode": "manual",
+        "mode": "kills_action",
         "app_version": APP_VERSION,
         "room": room,
         "client_id": device_id,
         "client_name": device_name,
         "updated_by": device_name,
         "action": action,
-        "scope": scope_payload,
-        "scope_label": scope_label,
-        "scopeLabel": scope_label,
-        "scope_slug": scope_slug,
-        "scopeSlug": scope_slug,
-        "rank_scope": scope_payload,
-        "rankScope": scope_payload,
-        "ranking_scope": scope_payload,
-        "rankingScope": scope_payload,
-        "target_scope": scope_payload,
-        "targetScope": scope_payload,
-        "rank": scope_payload,
-        "ranking": scope_payload,
-        "scope_alias": scope_slug,
-        "scopeAlias": scope_slug,
-        "scope_pt": scope_slug,
-        "scopePt": scope_slug,
-        "rank_type": scope_payload,
-        "rankType": scope_payload,
-        "ranking_type": scope_payload,
-        "rankingType": scope_payload,
-        "period": scope_payload,
-        "period_slug": scope_slug,
-        "periodSlug": scope_slug,
-        "periodo": scope_slug,
-        "rank_slug": scope_slug,
-        "rankSlug": scope_slug,
-        "target": scope_payload,
-        "target_rank": scope_payload,
-        "targetRank": scope_payload,
-        "target_rank_slug": scope_slug,
-        "targetRankSlug": scope_slug,
-        "tipo": scope_slug,
-        "modo": scope_slug,
+        **kills_scope_payload_fields(scope_payload),
     }
     if player is not None:
         payload.update(
@@ -4825,6 +4922,7 @@ def send_kills_action_update(
         "X-Aizen-Client-Name": device_name,
         "X-Aizen-Room": room,
         "X-Aizen-App-Version": APP_VERSION,
+        "X-Aizen-Mode": "kills_action",
     }
     if token:
         headers["X-Aizen-Token"] = token
@@ -5493,6 +5591,48 @@ def send_kills_snapshot_update(
     )
 
 
+def sync_kills_snapshot_after_scope_save(
+    endpoint_url: str,
+    confirmed_state: RealtimeState,
+    scope: str,
+    players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> RealtimeState:
+    clean_scope = normalize_kills_scope_value(scope)
+    if clean_scope not in {"daily", "general"}:
+        return confirmed_state
+    daily_players = kills_scope_players_from_state(confirmed_state, "daily")
+    general_players = kills_scope_players_from_state(confirmed_state, "general")
+    if clean_scope == "daily" and not kills_scope_matches_state(confirmed_state, "daily", players):
+        daily_players = sorted_player_kills(players)
+    if clean_scope == "general" and not kills_scope_matches_state(confirmed_state, "general", players):
+        general_players = sorted_player_kills(players)
+    if clean_scope == "daily" and not daily_players and players:
+        daily_players = sorted_player_kills(players)
+    if clean_scope == "general" and not general_players and players:
+        general_players = sorted_player_kills(players)
+    if not (daily_players or general_players):
+        return confirmed_state
+    try:
+        snapshot_state = send_kills_snapshot_update(
+            endpoint_url,
+            daily_players,
+            general_players,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+    except Exception:
+        return confirmed_state
+    if kills_scope_matches_state(snapshot_state, clean_scope, players):
+        return snapshot_state
+    return confirmed_state
+
+
 def send_kills_scope_replace_update(
     endpoint_url: str,
     scope: str,
@@ -5506,7 +5646,7 @@ def send_kills_scope_replace_update(
     if clean_scope not in {"daily", "general"}:
         clean_scope = "daily"
     try:
-        return send_kills_scope_bulk_action_update(
+        state = send_kills_scope_bulk_action_update(
             endpoint_url,
             clean_scope,
             players,
@@ -5516,7 +5656,7 @@ def send_kills_scope_replace_update(
             token=token,
         )
     except Exception:
-        return send_kills_scope_action_replace_update(
+        state = send_kills_scope_action_replace_update(
             endpoint_url,
             clean_scope,
             players,
@@ -5525,6 +5665,16 @@ def send_kills_scope_replace_update(
             room=room,
             token=token,
         )
+    return sync_kills_snapshot_after_scope_save(
+        endpoint_url,
+        state,
+        clean_scope,
+        players,
+        device_id=device_id,
+        device_name=device_name,
+        room=room,
+        token=token,
+    )
 
 
 def send_kills_scope_bulk_action_update(
@@ -5541,7 +5691,6 @@ def send_kills_scope_bulk_action_update(
         clean_scope = "daily"
     players = sorted_player_kills(players)
     payload_players = player_wire_payload(players)
-    scope_slug = "diario" if clean_scope == "daily" else "geral"
     preserve_scope = "general" if clean_scope == "daily" else "daily"
     payload: dict[str, Any] = {
         "source": "aizen-stream-control",
@@ -5555,23 +5704,7 @@ def send_kills_scope_bulk_action_update(
         "updated_at": datetime.now().isoformat(timespec="seconds"),
         "revision": int(time.time() * 1000),
         "action": "replace",
-        "scope": clean_scope,
-        "scope_label": kills_scope_label(clean_scope),
-        "scopeLabel": kills_scope_label(clean_scope),
-        "scope_slug": scope_slug,
-        "scopeSlug": scope_slug,
-        "scope_pt": scope_slug,
-        "scopePt": scope_slug,
-        "rank_scope": clean_scope,
-        "rankScope": clean_scope,
-        "ranking_scope": clean_scope,
-        "rankingScope": clean_scope,
-        "target_scope": clean_scope,
-        "targetScope": clean_scope,
-        "period": clean_scope,
-        "period_slug": scope_slug,
-        "periodSlug": scope_slug,
-        "periodo": scope_slug,
+        **kills_scope_payload_fields(clean_scope),
         "replace": True,
         "replace_scope": clean_scope,
         "replaceScope": clean_scope,
@@ -5645,6 +5778,19 @@ def send_kills_scope_bulk_action_update(
             token=token,
             session=session,
         )
+        if not (previous_state.daily_ranking or previous_state.global_ranking or previous_state.players):
+            try:
+                base_previous_state = fetch_kills_realtime(
+                    endpoint_url,
+                    device_id=device_id,
+                    device_name=device_name,
+                    room=room,
+                    token=token,
+                )
+                if base_previous_state.daily_ranking or base_previous_state.global_ranking or base_previous_state.players:
+                    previous_state = base_previous_state
+            except Exception:
+                pass
         preserve_players = kills_scope_players_from_state(previous_state, preserve_scope)
         response = session.post(
             derive_kills_action_endpoint(endpoint_url),
