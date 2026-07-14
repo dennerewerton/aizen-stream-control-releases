@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.174"
+APP_VERSION = "2.6.175"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11333,7 +11333,8 @@ def run_gui(config_path: Path) -> int:
             return
         try:
             update_manual_config_snapshot()
-            save_config_compact(config_path, config)
+            content = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
+            save_config_text_in_background(config_path, content)
         except Exception as exc:
             log(f"Auto-save leve do Kills FF aguardando configuração válida: {exc}")
 

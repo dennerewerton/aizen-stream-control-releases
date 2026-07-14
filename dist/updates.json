@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.174",
-    "notes":  "Otimizacao: o Salvar das Kills FF agora tenta primeiro um snapshot compacto, reduzindo bastante o tamanho enviado ao Jarvis, com fallback automatico para o payload legado se necessario.",
+    "version":  "2.6.175",
+    "notes":  "Otimizacao: o auto-save leve das Kills FF agora grava o config em segundo plano, reduzindo congeladas ao editar listas grandes de kills.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.174/AizenStreamControl.exe",
-                    "sha256":  "5543c152af748d94dcfbf3e019e5d960a7b397e32bb9a8263e741197e5c17dbf"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.175/AizenStreamControl.exe",
+                    "sha256":  "a2f5190ae5070d359f3e5a5a4e281c3b7439531c2496c7bad4540d3f3caef658"
                 }
 }
