@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.248"
+APP_VERSION = "2.6.249"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -7979,6 +7979,7 @@ def run_gui(config_path: Path) -> int:
     kills_global_ranking: list[PlayerKill] = []
     kills_ignored_players: list[IgnoredKillPlayer] = []
     kills_rank_cache_pending = False
+    kills_rank_cache_signature = ""
     kills_rank_render_pending = False
     kills_ignored_render_pending = False
     ff_queue_actions: Any | None = None
@@ -12174,20 +12175,34 @@ def run_gui(config_path: Path) -> int:
         )
         schedule_kills_visual_refresh(delay_ms=80)
 
+    def current_kills_rank_cache_signature() -> str:
+        return "|".join(
+            (
+                player_rank_light_signature(kills_daily_ranking),
+                player_rank_light_signature(kills_global_ranking),
+            )
+        )
+
     def save_kills_rank_cache() -> None:
+        nonlocal kills_rank_cache_signature
         if not (kills_daily_ranking or kills_global_ranking):
+            return
+        cache_signature = current_kills_rank_cache_signature()
+        if cache_signature == kills_rank_cache_signature and isinstance(config.get("kills_rank_cache"), dict):
             return
         config["kills_rank_cache"] = {
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             "daily_ranking": player_payload(kills_daily_ranking),
             "ranking": player_payload(kills_global_ranking),
         }
+        kills_rank_cache_signature = cache_signature
         try:
             save_config_snapshot_in_background(config)
         except Exception as exc:
             log(f"Nao consegui salvar cache do ranking Kills FF: {exc}")
 
     def apply_kills_rank_cache() -> bool:
+        nonlocal kills_rank_cache_signature
         cached = config.get("kills_rank_cache")
         if not isinstance(cached, dict):
             return False
@@ -12195,6 +12210,7 @@ def run_gui(config_path: Path) -> int:
         if not (state.daily_ranking or state.global_ranking):
             return False
         apply_kills_rankings(state)
+        kills_rank_cache_signature = current_kills_rank_cache_signature()
         cached_at = str(cached.get("updated_at") or "").strip()
         suffix = f" ({cached_at})" if cached_at else ""
         set_text_var(kills_overlay_status_var, f"Mostrando último rank salvo{suffix}")

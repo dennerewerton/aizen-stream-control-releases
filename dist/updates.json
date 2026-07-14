@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.248",
-    "notes":  "Acelera o Salvar das Kills FF quando o Jarvis retorna confirmacao forte de painel persistido: o app agora pede retorno persistido e pula GETs extras de confirmacao somente quando recebe marcador explicito de persistencia. Fallbacks antigos continuam ativos para respostas fracas.",
+    "version":  "2.6.249",
+    "notes":  "Reduz I/O repetido do cache de ranking Kills FF: o app agora calcula uma assinatura leve do rank diario/geral e so regrava o cache no config.json quando o ranking muda de verdade.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.248/AizenStreamControl.exe",
-                    "sha256":  "06257a5e279f575b5b923a1baf27b9b6a2d67d90db6141fbf16d86f5951e5f21"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.249/AizenStreamControl.exe",
+                    "sha256":  "ce2be983a91bf763b1f4f6cc41668b0810775aad07115bea083fdc224adbbd72"
                 }
 }
