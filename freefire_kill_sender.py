@@ -19382,7 +19382,7 @@ def run_gui(config_path: Path) -> int:
                             players_by_scope[scope_key] = clone_player_list(remote_players)
                     return True
 
-                snapshot_ready = manual_kills_should_send_snapshot(scopes_to_save) or preserve_unsaved_empty_scopes()
+                snapshot_ready = manual_kills_should_send_snapshot(scopes_to_save)
                 if snapshot_ready:
                     try:
                         final_state = send_kills_snapshot_update(
