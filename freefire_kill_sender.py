@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.228"
+APP_VERSION = "2.6.229"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5346,6 +5346,20 @@ def response_confirms_persisted_kills_snapshot(
             accepted = 0
         if accepted < len(daily_players) + len(general_players):
             return False
+    persisted_markers = (
+        "persisted",
+        "confirmed",
+        "panel_confirmed",
+        "panelConfirmed",
+        "snapshot_confirmed",
+        "snapshotConfirmed",
+        "saved_to_panel",
+        "savedToPanel",
+        "panel_synced",
+        "panelSynced",
+    )
+    if not any(payload.get(key) is True for key in persisted_markers):
+        return False
     has_daily_payload = any(key in payload for key in ("daily_ranking", "dailyRanking", "daily", "dia_ranking"))
     has_general_payload = any(
         key in payload
@@ -5712,6 +5726,9 @@ def post_kills_snapshot_once(
         "revision": int(time.time() * 1000),
         "action": "replace",
         "replace": True,
+        "return_state": True,
+        "return_persisted": True,
+        "confirm_persisted": True,
         "scope": "both",
         "scopes": ["daily", "general"],
         "replace_daily": True,
@@ -5821,7 +5838,7 @@ def sync_kills_snapshot_after_scope_save(
     post_error_message = ""
     with requests.Session() as session:
         try:
-            post_kills_snapshot_once(
+            posted_state = post_kills_snapshot_once(
                 endpoint_url,
                 daily_players,
                 general_players,
@@ -5831,6 +5848,8 @@ def sync_kills_snapshot_after_scope_save(
                 token=token,
                 session=session,
             )
+            if posted_state is not None:
+                return posted_state
         except Exception as exc:
             post_error_message = str(exc)
         snapshot_state = fetch_confirmed_kills_snapshot_endpoint_state(

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.228",
-    "notes":  "Adia o carregamento do cache de ranking Kills FF ate a aba ser aberta, deixando a inicializacao mais leve quando o foco esta em outras abas.",
+    "version":  "2.6.229",
+    "notes":  "Prepara o Salvar Kills FF para aceitar confirmacao persistida explicita do Jarvis e pular confirmacao extra quando seguro, sem confiar em eco de payload.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.228/AizenStreamControl.exe",
-                    "sha256":  "29e696504868f1cdc60177a3fa0b9ff044520d34ee38cb936e3d01c8eda04d38"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.229/AizenStreamControl.exe",
+                    "sha256":  "8e16cff68486f08a7d9516a541e3bc79c745d7ba5f0188e629012c2c24be5ea8"
                 }
 }
