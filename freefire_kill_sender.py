@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.244"
+APP_VERSION = "2.6.245"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -12139,15 +12139,23 @@ def run_gui(config_path: Path) -> int:
         refresh_kills_ignored_list()
         current_scope = current_manual_scope()
         if current_scope not in manual_scope_dirty:
-            display_players = manual_scope_display_players(current_scope, prefer_remote=True)
             current_players = read_manual_players_light(fill_missing_names=False, scope=current_scope)
-            if manual_signature(display_players, current_scope) != manual_signature(current_players, current_scope):
-                set_manual_players(display_players, scope=current_scope)
-                sync_kills_rank_tab_with_manual_scope(current_scope)
-                fill_visible_manual_missing_names_from_rank(current_scope)
+            rank_players = manual_scope_rank_players(current_scope)
+            if (
+                not manual_players_need_name_completion(rank_players)
+                and not manual_players_need_name_completion(current_players)
+                and manual_signature(rank_players, current_scope) == manual_signature(current_players, current_scope)
+            ):
+                update_manual_metrics(current_players)
             else:
-                fill_visible_manual_missing_names_from_rank(current_scope)
-                update_manual_metrics()
+                display_players = manual_scope_display_players(current_scope, prefer_remote=True)
+                if manual_signature(display_players, current_scope) != manual_signature(current_players, current_scope):
+                    set_manual_players(display_players, scope=current_scope)
+                    sync_kills_rank_tab_with_manual_scope(current_scope)
+                    fill_visible_manual_missing_names_from_rank(current_scope)
+                else:
+                    fill_visible_manual_missing_names_from_rank(current_scope)
+                    update_manual_metrics()
         else:
             fill_visible_manual_missing_names_from_rank(current_scope)
             update_manual_metrics()
@@ -18910,6 +18918,12 @@ def run_gui(config_path: Path) -> int:
         )
         daily_players = manual_scope_buffer_snapshot("daily", references=daily_references)
         general_players = manual_scope_buffer_snapshot("general", references=general_references)
+        if not daily_players and active_scope != "daily" and kills_daily_ranking:
+            daily_players = clone_player_list(kills_daily_ranking)
+            manual_scope_buffers["daily"] = clone_player_list(daily_players)
+        if not general_players and active_scope != "general" and kills_global_ranking:
+            general_players = clone_player_list(kills_global_ranking)
+            manual_scope_buffers["general"] = clone_player_list(general_players)
         apply_local_rank_players("daily", daily_players, schedule_refresh=False)
         apply_local_rank_players("general", general_players, schedule_refresh=False)
         config["kills_realtime_url"] = endpoint_url
@@ -18958,21 +18972,64 @@ def run_gui(config_path: Path) -> int:
                     "general": snapshot_general_players,
                 }
                 final_state: RealtimeState | None = None
-                if manual_kills_should_send_snapshot(scopes_to_save):
-                    final_state = send_kills_snapshot_update(
-                        endpoint_url,
-                        players_by_scope["daily"],
-                        players_by_scope["general"],
-                        device_id=str(local_config.get("device_id", "")),
-                        device_name=str(local_config.get("device_name", "")),
-                        room=str(local_config.get("kills_sync_room", "principal")),
-                        token=str(local_config.get("jarvis_api_token", "")),
-                    )
+
+                def update_saved_scope_players(state: RealtimeState) -> None:
                     for scope_key in ("daily", "general"):
-                        saved_scope_players = kills_scope_players_from_state(final_state, scope_key)
+                        saved_scope_players = kills_scope_players_from_state(state, scope_key)
                         if saved_scope_players:
                             players_by_scope[scope_key] = clone_player_list(saved_scope_players)
-                else:
+
+                def preserve_unsaved_empty_scopes() -> bool:
+                    missing_scopes = [
+                        scope_key
+                        for scope_key in ("daily", "general")
+                        if scope_key not in scopes_to_save and not players_by_scope.get(scope_key)
+                    ]
+                    if not missing_scopes:
+                        return True
+                    try:
+                        remote_state = fetch_kills_rank_realtime(
+                            endpoint_url,
+                            device_id=str(local_config.get("device_id", "")),
+                            device_name=str(local_config.get("device_name", "")),
+                            room=str(local_config.get("kills_sync_room", "principal")),
+                            token=str(local_config.get("jarvis_api_token", "")),
+                        )
+                        if not (remote_state.daily_ranking or remote_state.global_ranking or remote_state.players):
+                            remote_state = fetch_kills_realtime(
+                                endpoint_url,
+                                device_id=str(local_config.get("device_id", "")),
+                                device_name=str(local_config.get("device_name", "")),
+                                room=str(local_config.get("kills_sync_room", "principal")),
+                                token=str(local_config.get("jarvis_api_token", "")),
+                            )
+                    except Exception:
+                        return False
+                    for scope_key in missing_scopes:
+                        remote_players = kills_scope_players_from_state(remote_state, scope_key)
+                        if remote_players:
+                            players_by_scope[scope_key] = clone_player_list(remote_players)
+                    return True
+
+                snapshot_ready = manual_kills_should_send_snapshot(scopes_to_save) or preserve_unsaved_empty_scopes()
+                if snapshot_ready:
+                    try:
+                        final_state = send_kills_snapshot_update(
+                            endpoint_url,
+                            players_by_scope["daily"],
+                            players_by_scope["general"],
+                            device_id=str(local_config.get("device_id", "")),
+                            device_name=str(local_config.get("device_name", "")),
+                            room=str(local_config.get("kills_sync_room", "principal")),
+                            token=str(local_config.get("jarvis_api_token", "")),
+                        )
+                        update_saved_scope_players(final_state)
+                    except Exception:
+                        if manual_kills_should_send_snapshot(scopes_to_save):
+                            raise
+                        final_state = None
+
+                if final_state is None:
                     for index, scope_to_save in enumerate(scopes_to_save):
                         other_scope = "general" if scope_to_save == "daily" else "daily"
                         remaining_scopes = set(scopes_to_save[index + 1 :])

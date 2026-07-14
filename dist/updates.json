@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.244",
-    "notes":  "Reduz criacao de threads no bot de comandos: respostas automaticas agora usam um worker reutilizavel dedicado, deixando o app mais estavel em lives com muitos comandos.",
+    "version":  "2.6.245",
+    "notes":  "Corrige o Salvar das Kills FF no ranking diario: o clique manual agora tenta gravar um snapshot completo diario+geral no Jarvis, preservando o outro ranking, e so cai para replace parcial se o snapshot nao estiver disponivel. Tambem reduz reconstrucoes pesadas apos salvar quando o ranking recebido ja bate com a tabela local.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.244/AizenStreamControl.exe",
-                    "sha256":  "2f9cd4b99c071986a4f1ca80c70f6e401fe15d0b09749a69009b3c06fd30ef3f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.245/AizenStreamControl.exe",
+                    "sha256":  "52b06c07bf87024e82fe30a35770b1e5062c2fffd4eabd9d49b10c666bb94581"
                 }
 }
