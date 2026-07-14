@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.224"
+APP_VERSION = "2.6.225"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -12393,15 +12393,21 @@ def run_gui(config_path: Path) -> int:
         except Exception as exc:
             log(f"Auto-save leve do Kills FF aguardando configuração válida: {exc}")
 
+    def cancel_manual_config_autosave() -> None:
+        nonlocal manual_config_after_id
+        if manual_config_after_id is None:
+            return
+        try:
+            root.after_cancel(manual_config_after_id)
+        except tk.TclError:
+            pass
+        manual_config_after_id = None
+
     def schedule_manual_config_autosave(delay_ms: int = 1200) -> None:
         nonlocal manual_config_after_id
         if app_closing:
             return
-        if manual_config_after_id is not None:
-            try:
-                root.after_cancel(manual_config_after_id)
-            except tk.TclError:
-                pass
+        cancel_manual_config_autosave()
         manual_config_after_id = root.after(delay_ms, run_manual_config_autosave)
 
     def on_manual_change(*_args: Any, sort_rows: bool = True) -> None:
@@ -18721,10 +18727,8 @@ def run_gui(config_path: Path) -> int:
             if force:
                 log("Adicione pelo menos um jogador antes de enviar as kills.")
             return
-        try:
-            schedule_manual_config_autosave(700)
-        except NameError:
-            pass
+        cancel_manual_config_autosave()
+        save_config_snapshot_in_background(config)
         if not force and signature == manual_last_signature:
             manual_status_var.set("Sincronizado")
             return

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.224",
-    "notes":  "Reduz trabalho duplicado no autosave e refresh local das Kills FF, reparando nomes uma vez por escopo e pulando recuperacao quando nao ha nick faltando.",
+    "version":  "2.6.225",
+    "notes":  "Evita autosave duplicado apos Salvar Kills FF: grava o snapshot ja calculado em background e cancela recalculo pendente da UI.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.224/AizenStreamControl.exe",
-                    "sha256":  "8d10b34a4063e93db593c77023c057a1034a2a9f597cb59938bef3ab1a9d7c10"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.225/AizenStreamControl.exe",
+                    "sha256":  "dec7a3c2ca81cc18c327a62595a6a45fb5ddd2b18c1489c4384547fb65d8743c"
                 }
 }
