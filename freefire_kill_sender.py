@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.236"
+APP_VERSION = "2.6.237"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -12131,8 +12131,8 @@ def run_gui(config_path: Path) -> int:
     def kills_rank_signature_for_state(state: RealtimeState) -> str:
         return "|".join(
             (
-                player_rank_light_signature(sorted_rank_players(state.daily_ranking or [])),
-                player_rank_light_signature(sorted_rank_players(state.global_ranking or state.players or [])),
+                player_rank_light_signature(state.daily_ranking or []),
+                player_rank_light_signature(state.global_ranking or state.players or []),
                 ignored_players_light_signature(state.ignored_players or []),
                 str(state.total_players),
                 str(state.total_kills),
@@ -18878,51 +18878,42 @@ def run_gui(config_path: Path) -> int:
             try:
                 snapshot_daily_players = clone_player_list(daily_players)
                 snapshot_general_players = clone_player_list(general_players)
-                if (active_scope == "daily" and not snapshot_general_players) or (
-                    active_scope == "general" and not snapshot_daily_players
-                ):
-                    try:
-                        preserved_state = fetch_kills_rank_realtime(
-                            endpoint_url,
-                            device_id=str(local_config.get("device_id", "")),
-                            device_name=str(local_config.get("device_name", "")),
-                            room=str(local_config.get("kills_sync_room", "principal")),
-                            token=str(local_config.get("jarvis_api_token", "")),
-                        )
-                        if not (preserved_state.daily_ranking or preserved_state.global_ranking or preserved_state.players):
-                            preserved_state = fetch_kills_realtime(
-                                endpoint_url,
-                                device_id=str(local_config.get("device_id", "")),
-                                device_name=str(local_config.get("device_name", "")),
-                                room=str(local_config.get("kills_sync_room", "principal")),
-                                token=str(local_config.get("jarvis_api_token", "")),
-                            )
-                        if active_scope == "daily" and not snapshot_general_players:
-                            snapshot_general_players = kills_scope_players_from_state(preserved_state, "general")
-                        if active_scope == "general" and not snapshot_daily_players:
-                            snapshot_daily_players = kills_scope_players_from_state(preserved_state, "daily")
-                    except Exception:
-                        pass
-                final_state = send_kills_snapshot_update(
+                preserve_players: list[PlayerKill] | None = None
+                if active_scope == "daily" and snapshot_general_players:
+                    preserve_players = snapshot_general_players
+                elif active_scope == "general" and snapshot_daily_players:
+                    preserve_players = snapshot_daily_players
+                final_state = send_kills_scope_replace_update(
                     endpoint_url,
-                    snapshot_daily_players,
-                    snapshot_general_players,
+                    active_scope,
+                    snapshot_daily_players if active_scope == "daily" else snapshot_general_players,
+                    preserve_players=preserve_players,
                     device_id=str(local_config.get("device_id", "")),
                     device_name=str(local_config.get("device_name", "")),
                     room=str(local_config.get("kills_sync_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
+                final_daily_players = kills_scope_players_from_state(final_state, "daily")
+                final_general_players = kills_scope_players_from_state(final_state, "general")
+                if not final_daily_players and snapshot_daily_players:
+                    final_daily_players = snapshot_daily_players
+                if not final_general_players and snapshot_general_players:
+                    final_general_players = snapshot_general_players
+                saved_scopes = [active_scope]
+                preserve_scope = "general" if active_scope == "daily" else "daily"
+                if preserve_players and preserve_scope in manual_scope_dirty:
+                    saved_scopes.append(preserve_scope)
                 enqueue_sync_event(
                     "manual_rank_sent",
                     {
                         "count": len(scope_players),
-                        "signature": manual_snapshot_signature(snapshot_daily_players, snapshot_general_players),
-                        "scope": "both",
-                        "scopes": ["daily", "general"],
-                        "daily_count": len(snapshot_daily_players),
-                        "general_count": len(snapshot_general_players),
-                        "daily_kills": sum(player.kills for player in snapshot_daily_players),
-                        "general_kills": sum(player.kills for player in snapshot_general_players),
+                        "signature": manual_snapshot_signature(final_daily_players, final_general_players),
+                        "scope": active_scope,
+                        "scopes": saved_scopes,
+                        "daily_count": len(final_daily_players),
+                        "general_count": len(final_general_players),
+                        "daily_kills": sum(player.kills for player in final_daily_players),
+                        "general_kills": sum(player.kills for player in final_general_players),
                         "state": final_state,
                     },
                 )

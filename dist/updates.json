@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.236",
-    "notes":  "Otimiza autosave/config do Kills FF usando o snapshot leve ja validado quando nao ha edicao pendente, evitando varrer a tabela inteira em salvamentos gerais.",
+    "version":  "2.6.237",
+    "notes":  "Corrige o Salvar do Kills FF para gravar o rank selecionado no Jarvis com confirmacao do rank diario/geral e reduz trabalho recorrente na verificacao do ranking.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.236/AizenStreamControl.exe",
-                    "sha256":  "86855006eb8c2d0f23dc0ff99350891b3a117e02764e44337101288720f7b0fd"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.237/AizenStreamControl.exe",
+                    "sha256":  "6b09b6c95739d25f9bbca7f1626d42e12979cee150aa1d8bb26dfe54fb6d7e1c"
                 }
 }
