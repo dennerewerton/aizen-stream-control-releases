@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.205"
+APP_VERSION = "2.6.206"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -90,8 +90,10 @@ UPDATE_MANIFEST_TIMEOUT_SECONDS = 4
 UPDATE_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 12
 UPDATE_DOWNLOAD_READ_TIMEOUT_SECONDS = 18
 LOG_QUEUE_SOFT_LIMIT = 1500
+LOG_QUEUE_HARD_LIMIT = 2200
 LOG_TEXT_MAX_LINES = 1200
 LOG_PUMP_BATCH_LIMIT = 60
+LOG_FULL_RENDER_CHUNK_LINES = 240
 LOG_INACTIVE_IDLE_PUMP_MS = 8000
 CHAT_USER_CACHE_LIMIT = 600
 CHAT_EVENT_QUEUE_LIMIT = 800
@@ -7614,7 +7616,7 @@ def run_gui(config_path: Path) -> int:
     ui_thread_id = threading.get_ident()
     config = load_config(config_path)
     theme_config = resolve_ui_theme(config)
-    log_queue: queue.Queue[str] = queue.Queue()
+    log_queue: queue.Queue[str] = queue.Queue(maxsize=LOG_QUEUE_HARD_LIMIT)
     sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=SYNC_QUEUE_LIMIT)
     ff_queue_sync_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=FF_QUEUE_SYNC_QUEUE_LIMIT)
     chat_event_queue: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=CHAT_EVENT_QUEUE_LIMIT)
@@ -7622,6 +7624,7 @@ def run_gui(config_path: Path) -> int:
     log_render_buffer: list[str] = []
     log_rendered_count = 0
     log_needs_full_render = True
+    log_full_render_cursor = 0
     chat_webhook_server: LocalChatWebhookServer | None = None
     livepix_webhook_server: LocalLivepixWebhookServer | None = None
     chat_websocket_worker: ChatWebSocketWorker | None = None
@@ -7798,20 +7801,45 @@ def run_gui(config_path: Path) -> int:
     livepix_dashboard_after_id: str | None = None
     appearance_preview_pending = True
 
-    def log(message: str) -> None:
-        stamp = datetime.now().strftime("%H:%M:%S")
+    def drop_old_log_queue_items(target_size: int) -> int:
+        dropped = 0
         try:
-            if log_queue.qsize() > LOG_QUEUE_SOFT_LIMIT:
-                dropped = 0
-                target_size = LOG_QUEUE_SOFT_LIMIT // 2
-                while log_queue.qsize() > target_size:
-                    log_queue.get_nowait()
-                    dropped += 1
-                if dropped:
-                    log_queue.put(f"[{stamp}] {dropped} log(s) antigos omitidos para manter o app leve.")
+            while log_queue.qsize() > target_size:
+                log_queue.get_nowait()
+                dropped += 1
         except (queue.Empty, NotImplementedError):
             pass
-        log_queue.put(f"[{stamp}] {message}")
+        return dropped
+
+    def enqueue_log_line(line: str) -> None:
+        try:
+            log_queue.put_nowait(line)
+            return
+        except queue.Full:
+            pass
+        drop_old_log_queue_items(LOG_QUEUE_SOFT_LIMIT // 2)
+        try:
+            log_queue.put_nowait(line)
+        except queue.Full:
+            try:
+                log_queue.get_nowait()
+                log_queue.put_nowait(line)
+            except queue.Empty:
+                pass
+            except queue.Full:
+                pass
+
+    def log(message: str) -> None:
+        stamp = datetime.now().strftime("%H:%M:%S")
+        dropped = 0
+        try:
+            if log_queue.qsize() > LOG_QUEUE_SOFT_LIMIT:
+                dropped = drop_old_log_queue_items(LOG_QUEUE_SOFT_LIMIT // 2)
+        except NotImplementedError:
+            pass
+        if dropped:
+            enqueue_log_line(f"[{stamp}] {dropped} log(s) antigos omitidos para manter o app leve.")
+        enqueue_log_line(f"[{stamp}] {message}")
 
     def note_queue_drop(key: str, label: str, count: int = 1) -> None:
         queue_drop_counts[key] = queue_drop_counts.get(key, 0) + max(1, count)
@@ -20379,7 +20407,7 @@ def run_gui(config_path: Path) -> int:
     root.protocol("WM_DELETE_WINDOW", close_app)
 
     def pump_log() -> None:
-        nonlocal log_rendered_count, log_needs_full_render
+        nonlocal log_rendered_count, log_needs_full_render, log_full_render_cursor
         if app_closing:
             return
         messages: list[str] = []
@@ -20398,17 +20426,32 @@ def run_gui(config_path: Path) -> int:
             if overflow > 0:
                 del log_render_buffer[:overflow]
                 log_rendered_count = max(0, log_rendered_count - overflow)
+                log_full_render_cursor = 0
                 log_needs_full_render = True
         logs_active = is_logs_tab_active()
+        if log_rendered_count > len(log_render_buffer):
+            log_rendered_count = 0
+            log_full_render_cursor = 0
+            log_needs_full_render = True
         if logs_active and (log_needs_full_render or log_rendered_count < len(log_render_buffer)):
             try:
                 log_text.configure(state="normal")
-                if log_needs_full_render or log_rendered_count > len(log_render_buffer):
-                    log_text.delete("1.0", tk.END)
-                    if log_render_buffer:
-                        log_text.insert(tk.END, "\n".join(log_render_buffer) + "\n")
-                    log_rendered_count = len(log_render_buffer)
-                    log_needs_full_render = False
+                if log_needs_full_render:
+                    if log_full_render_cursor <= 0:
+                        log_text.delete("1.0", tk.END)
+                        log_rendered_count = 0
+                    end_index = min(
+                        len(log_render_buffer),
+                        log_full_render_cursor + LOG_FULL_RENDER_CHUNK_LINES,
+                    )
+                    chunk = log_render_buffer[log_full_render_cursor:end_index]
+                    if chunk:
+                        log_text.insert(tk.END, "\n".join(chunk) + "\n")
+                    log_full_render_cursor = end_index
+                    log_rendered_count = end_index
+                    if end_index >= len(log_render_buffer):
+                        log_full_render_cursor = 0
+                        log_needs_full_render = False
                 else:
                     pending_messages = log_render_buffer[log_rendered_count:]
                     if pending_messages:
@@ -20419,7 +20462,9 @@ def run_gui(config_path: Path) -> int:
             except tk.TclError:
                 pass
         if not app_closing:
-            if not log_queue.empty():
+            if logs_active and log_needs_full_render:
+                delay_ms = 35
+            elif not log_queue.empty():
                 delay_ms = 30
             elif logs_active and messages:
                 delay_ms = 150

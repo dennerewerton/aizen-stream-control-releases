@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.205",
-    "notes":  "Otimiza o Salvar das Kills FF: reduz recomputacoes da tabela manual e remove uma leitura extra do Jarvis apos o snapshot leve, mantendo a confirmacao do ranking diario/geral.",
+    "version":  "2.6.206",
+    "notes":  "Otimiza a aba Logs: limita a fila interna e renderiza o historico em blocos para evitar travamentos quando muitos eventos de live/chat acumularem.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.205/AizenStreamControl.exe",
-                    "sha256":  "ee3694f1b07ae67802784ec22ef012d5fd92db1e7c3fa8e19a1f27c9bceed39d"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.206/AizenStreamControl.exe",
+                    "sha256":  "e4d7a019a6a65cdf9bb1e559522d27906b002f251e62b5249aa004f93e69da39"
                 }
 }
