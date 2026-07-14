@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.215"
+APP_VERSION = "2.6.216"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5716,6 +5716,7 @@ def post_kills_snapshot_once(
         "generalRanking": general_payload,
         "geral_ranking": general_payload,
         "geralRanking": general_payload,
+        "global": general_payload,
         "daily_ranking": daily_payload,
         "dailyRanking": daily_payload,
         "daily_rank": daily_payload,
@@ -5723,8 +5724,18 @@ def post_kills_snapshot_once(
         "dia_ranking": daily_payload,
         "diaRanking": daily_payload,
         "daily": daily_payload,
+        "day": daily_payload,
+        "dia": daily_payload,
         "general": general_payload,
         "geral": general_payload,
+        "rankings": {
+            "daily": daily_payload,
+            "day": daily_payload,
+            "dia": daily_payload,
+            "global": general_payload,
+            "general": general_payload,
+            "geral": general_payload,
+        },
         "total_players": len(general_players),
         "total_kills": sum(player.kills for player in general_players),
         "daily_total_players": len(daily_players),
@@ -5765,6 +5776,7 @@ def sync_kills_snapshot_after_scope_save(
     confirmed_state: RealtimeState,
     scope: str,
     players: list[PlayerKill],
+    preserve_players: list[PlayerKill] | None = None,
     device_id: str = "",
     device_name: str = "",
     room: str = "principal",
@@ -5783,6 +5795,12 @@ def sync_kills_snapshot_after_scope_save(
         daily_players = sorted_player_kills(players)
     if clean_scope == "general" and not general_players and players:
         general_players = sorted_player_kills(players)
+    if preserve_players is not None:
+        preserved_players = sorted_player_kills(preserve_players)
+        if clean_scope == "daily" and not general_players:
+            general_players = preserved_players
+        if clean_scope == "general" and not daily_players:
+            daily_players = preserved_players
     if not (daily_players or general_players):
         return confirmed_state
     post_error_message = ""
@@ -5860,6 +5878,7 @@ def send_kills_scope_replace_update(
         state,
         clean_scope,
         players,
+        preserve_players=preserve_players,
         device_id=device_id,
         device_name=device_name,
         room=room,
@@ -12369,6 +12388,8 @@ def run_gui(config_path: Path) -> int:
         query_words = query_key.split()
         if query_words and all(any(word in candidate_word for candidate_word in candidate_words) for word in query_words):
             return 78.0
+        if len(query_key) < 3:
+            return 0.0
         similarity = SequenceMatcher(None, query_key, candidate_key).ratio()
         if similarity >= 0.48:
             return 55.0 + similarity * 30.0

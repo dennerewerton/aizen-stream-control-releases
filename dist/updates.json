@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.215",
-    "notes":  "Reduz recalculos repetidos na tabela Kills FF usando buffer leve e evita acesso a widgets Tk fora da thread principal no envio de overlay.",
+    "version":  "2.6.216",
+    "notes":  "Corrige o Salvar das Kills FF para confirmar o rank diario no painel principal do Jarvis e preserva o outro ranking ao salvar apenas Diario ou Geral.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.215/AizenStreamControl.exe",
-                    "sha256":  "23a1f63d6a2e1e4ea89e1cccb71c11b6adfd60b3e0e091f8bae2a90e5bf4d57a"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.216/AizenStreamControl.exe",
+                    "sha256":  "49af74b03fea420fd0561c51ad621c0fe7057827928e25d6f1223fecc5a342e2"
                 }
 }

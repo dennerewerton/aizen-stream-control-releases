@@ -546,6 +546,11 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
             if mode == "kills_snapshot" and self.state.get("debug", {}).get("reject_snapshot"):
                 self._send_json({"ok": False, "error": "snapshot unsupported in mock"}, status=422)
                 return
+            if mode == "kills_snapshot" and self.state.get("debug", {}).get("snapshot_requires_rankings"):
+                rankings_payload = payload.get("rankings")
+                if not isinstance(rankings_payload, dict) or not rankings_payload.get("daily"):
+                    self._send_json({"ok": False, "error": "nested rankings required in mock"}, status=422)
+                    return
             if mode == "kills_snapshot" and self.state.get("debug", {}).get("weak_snapshot_ack"):
                 self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
                 self._send_json({"ok": True, "status": "saved"})
@@ -1215,7 +1220,12 @@ def verify(
             "ignored": {},
         }
         MockJarvisHandler.state["kills_rank"] = {}
-        MockJarvisHandler.state["debug"] = {"kills_actions": [], "action_rank_only": True, "rank_independent": True}
+        MockJarvisHandler.state["debug"] = {
+            "kills_actions": [],
+            "action_rank_only": True,
+            "rank_independent": True,
+            "snapshot_requires_rankings": True,
+        }
         scoped_daily_site = send_kills_scope_replace_update(
             kills_url,
             "daily",
