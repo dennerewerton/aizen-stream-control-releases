@@ -5705,6 +5705,25 @@ def send_kills_snapshot_update(
                             pass
                     if response_acknowledged:
                         weak_snapshot_ack_seen = True
+                        persisted_state = confirmed_persisted_snapshot_state(delays=(0.0,))
+                        if persisted_state is not None:
+                            try:
+                                confirmed_rank_state, latest_rank_state = fetch_kills_rank_confirmation(
+                                    endpoint_url,
+                                    daily_players,
+                                    general_players,
+                                    device_id=device_id,
+                                    device_name=device_name,
+                                    room=room,
+                                    token=token,
+                                    session=session,
+                                    delays=(0.0,),
+                                )
+                            except Exception:
+                                confirmed_rank_state = None
+                            if confirmed_rank_state is not None:
+                                remember_persisted_snapshot_url(snapshot_url)
+                                return persisted_state
                         continue
                 except requests.HTTPError as exc:
                     status_code = exc.response.status_code if exc.response is not None else 0
