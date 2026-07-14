@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.238"
+APP_VERSION = "2.6.239"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -7917,6 +7917,7 @@ def run_gui(config_path: Path) -> int:
     manual_scope_buffers: dict[str, list[PlayerKill]] = {"daily": [], "general": []}
     manual_scope_dirty: set[str] = set()
     manual_reference_cache: dict[str, tuple[str, list[PlayerKill]]] = {}
+    manual_reference_cache_generation = 0
     manual_table_render_pending = False
     manual_table_render_scope = ""
     manual_table_render_after_id: str | None = None
@@ -11315,34 +11316,15 @@ def run_gui(config_path: Path) -> int:
         return any(not str(player.name or "").strip() and normalize_kill_value(player.kills) > 0 for player in players)
 
     def clear_manual_reference_cache() -> None:
+        nonlocal manual_reference_cache_generation
+        manual_reference_cache_generation += 1
         manual_reference_cache.clear()
-
-    def visible_manual_rows_signature() -> str:
-        digest = hashlib.sha1()
-        for row in manual_rows:
-            try:
-                update_digest_part(digest, row["name_var"].get())
-                update_digest_part(digest, normalize_kill_value(row["kills_var"].get()))
-            except (KeyError, tk.TclError):
-                continue
-        update_digest_part(digest, len(manual_rows))
-        return digest.hexdigest()
 
     def manual_reference_cache_key(scope: str) -> str:
         clean_scope = normalize_kills_scope_value(scope)
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
-        other_scope = "daily" if clean_scope == "general" else "general"
-        return "|".join(
-            (
-                clean_scope,
-                visible_manual_rows_signature(),
-                player_rank_light_signature(manual_scope_rank_players(clean_scope)),
-                player_rank_light_signature(manual_scope_buffers.get(clean_scope, [])),
-                player_rank_light_signature(manual_scope_rank_players(other_scope)),
-                player_rank_light_signature(manual_scope_buffers.get(other_scope, [])),
-            )
-        )
+        return f"{clean_scope}|{manual_reference_cache_generation}"
 
     def manual_name_reference_players(scope: str | None = None) -> list[PlayerKill]:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
@@ -11442,6 +11424,7 @@ def run_gui(config_path: Path) -> int:
     def remember_current_manual_scope() -> None:
         scope = current_manual_scope()
         manual_scope_buffers[scope] = clone_player_list(collect_manual_players(scope=scope))
+        clear_manual_reference_cache()
 
     def refresh_manual_table_for_scope(scope: str | None = None, prefer_remote: bool = True) -> None:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
@@ -12541,6 +12524,7 @@ def run_gui(config_path: Path) -> int:
         fill_visible_manual_missing_names_from_rank(clean_scope)
         if clean_scope == current_manual_scope() and not manual_table_render_pending:
             manual_scope_buffers[clean_scope] = clone_player_list(read_manual_players_light(fill_missing_names=False, scope=clean_scope))
+            clear_manual_reference_cache()
         for scope_key in ("daily", "general"):
             repair_manual_scope_buffer_names(scope_key)
         endpoint_url = normalize_endpoint_url(sync_url_var.get())
@@ -12592,6 +12576,7 @@ def run_gui(config_path: Path) -> int:
         if manual_applying_remote:
             return
         scope = current_manual_scope()
+        clear_manual_reference_cache()
         manual_scope_dirty.add(scope)
         clear_manual_metric_overrides()
         manual_last_local_edit_at = time.monotonic()
@@ -12864,6 +12849,7 @@ def run_gui(config_path: Path) -> int:
         if active_scope not in {"daily", "general"}:
             active_scope = "daily"
         manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players(scope=active_scope))
+        clear_manual_reference_cache()
 
         previous_bulk_updating = manual_bulk_updating
         manual_bulk_updating = True
@@ -12875,6 +12861,7 @@ def run_gui(config_path: Path) -> int:
                     players = manual_scope_display_players(scope_key, prefer_remote=True)
                 players.append(PlayerKill(clean_name, add_kills, key=normalize_player_key(clean_name)))
                 manual_scope_buffers[scope_key] = merge_manual_player_kills(players)
+                clear_manual_reference_cache()
                 manual_scope_dirty.add(scope_key)
                 refresh_local_rank_from_manual_scope(scope_key)
         finally:
@@ -13170,6 +13157,7 @@ def run_gui(config_path: Path) -> int:
                 clean_scope = current_manual_scope()
             players = merge_manual_player_kills(complete_manual_player_names(players, clean_scope))
             manual_scope_buffers[clean_scope] = clone_player_list(players)
+            clear_manual_reference_cache()
             if not force_render and not is_kills_ff_tab_active():
                 cancel_manual_table_incremental_render()
                 for row in manual_rows:
@@ -18567,6 +18555,7 @@ def run_gui(config_path: Path) -> int:
         manual_scope_buffers[manual_scope] = clone_player_list(
             read_manual_players_light(fill_missing_names=False, scope=manual_scope)
         )
+        clear_manual_reference_cache()
         config["manual_kills"] = player_payload(manual_scope_buffers.get(manual_scope, []))
         config["manual_kills_by_scope"] = {
             "daily": player_payload(manual_scope_buffers.get("daily", [])),

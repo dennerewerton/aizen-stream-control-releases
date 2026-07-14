@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.238",
-    "notes":  "Otimiza o fluxo Kills FF com cache de referencias de nomes durante atualizacao e salvamento, reduzindo reprocessamento com muitos jogadores.",
+    "version":  "2.6.239",
+    "notes":  "Otimiza o cache de nomes do Kills FF usando geracao incremental, evitando varrer a tabela inteira em consultas repetidas durante adicionar, salvar e atualizar kills.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.238/AizenStreamControl.exe",
-                    "sha256":  "0a1634583b2f7632cf38477e0ea712715a879b3979fc3bcd07a5cae63592dde7"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.239/AizenStreamControl.exe",
+                    "sha256":  "d423259517115ec7f7cb52939f1935d1c42b5da319c239b599cacf170cf83465"
                 }
 }
