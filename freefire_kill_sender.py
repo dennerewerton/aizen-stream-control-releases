@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.217"
+APP_VERSION = "2.6.218"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11793,6 +11793,17 @@ def run_gui(config_path: Path) -> int:
             if table_render_unchanged(signature_key, row_widgets, row_signature):
                 return
             setattr(refresh_kills_rank_table, signature_key, row_signature)
+            generation_key = f"{signature_key}_generation"
+            after_key = f"{signature_key}_after"
+            after_id = getattr(refresh_kills_rank_table, after_key, None)
+            if after_id is not None:
+                try:
+                    root.after_cancel(after_id)
+                except tk.TclError:
+                    pass
+                setattr(refresh_kills_rank_table, after_key, None)
+            generation = int(getattr(refresh_kills_rank_table, generation_key, 0) or 0) + 1
+            setattr(refresh_kills_rank_table, generation_key, generation)
             for widget in row_widgets:
                 try:
                     widget.destroy()
@@ -11813,7 +11824,9 @@ def run_gui(config_path: Path) -> int:
                 row_widgets.append(empty)
                 return
 
-            for index, player in enumerate(players[:KILLS_OVERLAY_RENDER_LIMIT], start=1):
+            display_players = list(players[:KILLS_OVERLAY_RENDER_LIMIT])
+
+            def render_overlay_row(index: int, player: PlayerKill) -> None:
                 row_frame = ctk.CTkFrame(
                     table_frame,
                     fg_color="#171014" if index % 2 else "#0f0b0e",
@@ -11846,6 +11859,28 @@ def run_gui(config_path: Path) -> int:
                     width=80,
                 ).grid(row=0, column=2, sticky="e", padx=(8, 14), pady=10)
                 row_widgets.append(row_frame)
+
+            def render_overlay_chunk(start_index: int = 0) -> None:
+                if app_closing or getattr(refresh_kills_rank_table, generation_key, None) != generation:
+                    return
+                end_index = min(len(display_players), start_index + KILLS_RANK_RENDER_CHUNK_SIZE)
+                for zero_index in range(start_index, end_index):
+                    render_overlay_row(zero_index + 1, display_players[zero_index])
+                if end_index < len(display_players):
+                    next_after_id = root.after(
+                        KILLS_RANK_RENDER_CHUNK_DELAY_MS,
+                        lambda next_index=end_index: render_overlay_chunk(next_index),
+                    )
+                    setattr(refresh_kills_rank_table, after_key, next_after_id)
+                    return
+                setattr(refresh_kills_rank_table, after_key, None)
+
+            if len(display_players) >= KILLS_RANK_INCREMENTAL_THRESHOLD:
+                render_overlay_chunk(0)
+                return
+
+            for index, player in enumerate(display_players, start=1):
+                render_overlay_row(index, player)
 
         try:
             admin_rank_visible = bool(kills_rank_card.winfo_ismapped())
