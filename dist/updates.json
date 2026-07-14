@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.176",
-    "notes":  "Corrige Salvar do Kills FF: o app captura a tabela visivel antes de enviar, confirma diario/geral no Jarvis e mostra no log quantos jogadores e kills foram salvos em cada ranking.",
+    "version":  "2.6.177",
+    "notes":  "Otimizacao: reduz acordadas do leitor de eventos do chat quando o chat esta oculto e sem mensagens recentes, mantendo resposta rapida com chat visivel, sorteio ativo ou confirmacoes do bot.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.176/AizenStreamControl.exe",
-                    "sha256":  "5483a9907b1ddff5998872c08b6fb4aeec5997f4a476cd9c61a8b8556b67b637"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.177/AizenStreamControl.exe",
+                    "sha256":  "d27ca300353468f155d9e1837944f3b233f547a4b94a3e3b97d6a09144611c22"
                 }
 }

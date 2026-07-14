@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.176"
+APP_VERSION = "2.6.177"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -98,6 +98,7 @@ CHAT_EVENT_BATCH_LIMIT = 32
 CHAT_EVENT_BUSY_PUMP_MS = 20
 CHAT_EVENT_IDLE_PUMP_MS = 180
 CHAT_EVENT_QUIET_PUMP_MS = 500
+CHAT_EVENT_BACKGROUND_QUIET_PUMP_MS = 900
 SYNC_QUEUE_LIMIT = 240
 FF_QUEUE_SYNC_QUEUE_LIMIT = 180
 LIVEPIX_QUEUE_LIMIT = 600
@@ -14651,7 +14652,21 @@ def run_gui(config_path: Path) -> int:
         if not chat_event_queue.empty():
             schedule_chat_event_pump(CHAT_EVENT_BUSY_PUMP_MS)
         elif chat_event_runtime_active():
-            idle_delay_ms = CHAT_EVENT_IDLE_PUMP_MS if chat_event_quiet_cycles < 3 else CHAT_EVENT_QUIET_PUMP_MS
+            visible_chat_active = (
+                not chat_tab_hidden
+                or chat_monitor_messages_frame is not None
+                or chat_overlay_messages_frame is not None
+            )
+            try:
+                raffle_active = bool(raffle_worker and raffle_worker.is_running())
+            except Exception:
+                raffle_active = False
+            if chat_event_quiet_cycles < 3:
+                idle_delay_ms = CHAT_EVENT_IDLE_PUMP_MS
+            elif visible_chat_active or bot_pending_confirmations or raffle_active:
+                idle_delay_ms = CHAT_EVENT_QUIET_PUMP_MS
+            else:
+                idle_delay_ms = CHAT_EVENT_BACKGROUND_QUIET_PUMP_MS
             schedule_chat_event_pump(idle_delay_ms)
 
     def bot_safe_delay_seconds() -> int:
