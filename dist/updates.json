@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.252",
-    "notes":  "Reduz travas/demora no Salvar das Kills FF em rede instavel: as leituras internas usadas apenas para confirmar persistencia no Jarvis agora usam timeout curto de 3s, mantendo o timeout normal para Atualizar/Buscar. Assim o app nao fica preso por muito tempo em confirmacoes quando o site ou a internet demoram a responder.",
+    "version":  "2.6.253",
+    "notes":  "Corrige salvamento do rank diario do Kills FF no Jarvis: o app agora tenta o payload legado completo apos respostas fracas, confirma painel principal e /rank antes de exibir sincronizado, e envia aliases extras para daily/general.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.252/AizenStreamControl.exe",
-                    "sha256":  "f821f558dec9735b5814ebec7351520c9e7b845887644a903844b04369209aed"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.253/AizenStreamControl.exe",
+                    "sha256":  "6a17e9ac11feb0b30031472311969aa1a68d80c814543c5ae794c9cace35eccf"
                 }
 }
