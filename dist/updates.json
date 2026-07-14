@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.181",
-    "notes":  "Otimizacao Kills FF: o cache do ranking agora e salvo em segundo plano e em formato compacto, evitando travadinhas da interface logo apos ler ou salvar kills.",
+    "version":  "2.6.182",
+    "notes":  "Otimizacao: salvamentos operacionais de Kills FF, Fila FF, Overlay FF, TikFinity, Livepix, chat e sorteio agora gravam config em segundo plano, reduzindo travadinhas nos botoes e ao iniciar rotinas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.181/AizenStreamControl.exe",
-                    "sha256":  "79159a5043ddd25252eea2fd4d0dbe89b8699ad12297996964bb526185237c55"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.182/AizenStreamControl.exe",
+                    "sha256":  "7e1653f517441bf9a727ca523f6df15576b3ace7564643c0f3c34b78ca275879"
                 }
 }

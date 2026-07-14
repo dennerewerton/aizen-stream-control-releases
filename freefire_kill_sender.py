@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.181"
+APP_VERSION = "2.6.182"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -10493,7 +10493,7 @@ def run_gui(config_path: Path) -> int:
             return False
         try:
             local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            save_config_snapshot_in_background(local_config)
         except Exception as exc:
             messagebox.showerror("Erro", str(exc))
             return False
@@ -12313,7 +12313,7 @@ def run_gui(config_path: Path) -> int:
             return False
         try:
             local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            save_config_snapshot_in_background(local_config)
         except Exception as exc:
             messagebox.showerror("Erro", str(exc))
             return False
@@ -12882,7 +12882,7 @@ def run_gui(config_path: Path) -> int:
             return
         try:
             local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            save_config_snapshot_in_background(local_config)
         except Exception as exc:
             messagebox.showerror("Erro", str(exc))
             return
@@ -12917,7 +12917,7 @@ def run_gui(config_path: Path) -> int:
             return
         try:
             local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            save_config_snapshot_in_background(local_config)
         except Exception as exc:
             messagebox.showerror("Erro", str(exc))
             return
@@ -13132,7 +13132,7 @@ def run_gui(config_path: Path) -> int:
             return
         try:
             local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            save_config_snapshot_in_background(local_config)
         except Exception as exc:
             messagebox.showerror("Erro", str(exc))
             return
@@ -13166,7 +13166,7 @@ def run_gui(config_path: Path) -> int:
             return
         try:
             local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            save_config_snapshot_in_background(local_config)
         except Exception as exc:
             messagebox.showerror("Erro", str(exc))
             return
@@ -13276,7 +13276,7 @@ def run_gui(config_path: Path) -> int:
             return
         try:
             local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            save_config_snapshot_in_background(local_config)
         except Exception as exc:
             messagebox.showerror("Jarvis FF", str(exc))
             return
@@ -13582,7 +13582,7 @@ def run_gui(config_path: Path) -> int:
         try:
             local_config = update_config_from_form()
             if force:
-                save_config(config_path, local_config)
+                save_config_snapshot_in_background(local_config)
         except Exception as exc:
             if force:
                 messagebox.showerror("Overlay FF", str(exc))
@@ -13629,7 +13629,7 @@ def run_gui(config_path: Path) -> int:
         try:
             local_config = update_config_from_form()
             if force:
-                save_config(config_path, local_config)
+                save_config_snapshot_in_background(local_config)
         except Exception as exc:
             if force:
                 messagebox.showerror("Overlay FF", str(exc))
@@ -13859,13 +13859,13 @@ def run_gui(config_path: Path) -> int:
             return
         try:
             local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            save_config_snapshot_in_background(local_config)
             stop_chat_listener(silent=True)
             if chat_source_key() == "websocket":
                 websocket_url = normalize_tikfinity_websocket_url(chat_websocket_url_var.get())
                 chat_websocket_url_var.set(websocket_url)
                 local_config["chat_websocket_url"] = websocket_url
-                save_config(config_path, local_config)
+                save_config_snapshot_in_background(local_config)
                 worker = ChatWebSocketWorker(websocket_url, receive_chat_payload, log)
                 worker.start()
                 chat_websocket_worker = worker
@@ -16337,7 +16337,7 @@ def run_gui(config_path: Path) -> int:
 
     def save_livepix_config_silent() -> dict[str, Any]:
         livepix_config = update_livepix_config_from_vars()
-        save_config_compact(config_path, livepix_config)
+        save_config_snapshot_in_background(livepix_config)
         return livepix_config
 
     def start_livepix_webhook() -> None:
@@ -17233,6 +17233,17 @@ def run_gui(config_path: Path) -> int:
 
         threading.Thread(target=run, name="AizenConfigAutosave", daemon=True).start()
 
+    def save_config_snapshot_in_background(config_snapshot: dict[str, Any], compact: bool = True) -> None:
+        try:
+            content = (
+                json.dumps(config_snapshot, ensure_ascii=False, separators=(",", ":"))
+                if compact
+                else json.dumps(config_snapshot, ensure_ascii=False, indent=2)
+            )
+            save_config_text_in_background(config_path, content)
+        except Exception as exc:
+            log(f"Auto-save em segundo plano aguardando configuração válida: {exc}")
+
     def save_current_config_silent(compact: bool = False, background: bool = False) -> bool:
         nonlocal config_auto_save_running, config_auto_save_write_generation
         try:
@@ -17529,7 +17540,7 @@ def run_gui(config_path: Path) -> int:
             return
         try:
             local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            save_config_snapshot_in_background(local_config)
         except Exception as exc:
             messagebox.showerror("Erro", str(exc))
             return
@@ -17576,7 +17587,7 @@ def run_gui(config_path: Path) -> int:
         try:
             local_config = update_config_from_form()
             if force:
-                save_config(config_path, local_config)
+                save_config_snapshot_in_background(local_config)
         except Exception as exc:
             if force:
                 messagebox.showerror("Erro", str(exc))
@@ -18590,7 +18601,7 @@ def run_gui(config_path: Path) -> int:
         nonlocal raffle_worker, raffle_end_at, raffle_animating, raffle_started_at
         try:
             local_config = update_config_from_form()
-            save_config(config_path, local_config)
+            save_config_snapshot_in_background(local_config)
             if raffle_worker is not None:
                 messagebox.showinfo("Sorteio", "Conclua ou cancele o sorteio atual antes de iniciar outro.")
                 return
