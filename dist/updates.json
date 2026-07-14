@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.187",
-    "notes":  "Otimizacao: o ranking administrativo das Kills FF agora renderiza listas grandes em blocos, evitando travadas quando muitos jogadores chegam do Jarvis.",
+    "version":  "2.6.188",
+    "notes":  "Otimizacao: assinaturas de mudanca das Kills FF agora usam hash leve em vez de JSON grande, reduzindo custo ao atualizar rankings e detectar sincronizacao.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.187/AizenStreamControl.exe",
-                    "sha256":  "74e32e46ee19773ef1fd394c7e57b090a689eeff6c29c0286ab784921b77910c"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.188/AizenStreamControl.exe",
+                    "sha256":  "a866b08df580746a9b5b0eccf8da80535b12b37d666fd5097b6df91f2c23ea25"
                 }
 }

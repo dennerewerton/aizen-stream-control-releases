@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.187"
+APP_VERSION = "2.6.188"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -10710,14 +10710,38 @@ def run_gui(config_path: Path) -> int:
         except (AttributeError, tk.TclError):
             return False
 
+    def update_digest_part(digest: Any, value: Any) -> None:
+        digest.update(str(value if value is not None else "").encode("utf-8", "replace"))
+        digest.update(b"\0")
+
+    def player_rank_light_signature(players: list[PlayerKill], limit: int | None = None) -> str:
+        digest = hashlib.sha1()
+        count = 0
+        for index, player in enumerate(players):
+            if limit is not None and index >= limit:
+                break
+            count += 1
+            update_digest_part(digest, player.name)
+            update_digest_part(digest, player.key)
+            update_digest_part(digest, normalize_kill_value(player.kills))
+            update_digest_part(digest, player.ff_player_id)
+            update_digest_part(digest, normalize_kill_value(player.entries))
+        update_digest_part(digest, count)
+        update_digest_part(digest, len(players))
+        return digest.hexdigest()
+
+    def ignored_players_light_signature(players: list[IgnoredKillPlayer]) -> str:
+        digest = hashlib.sha1()
+        for player in players:
+            update_digest_part(digest, player.name)
+            update_digest_part(digest, player.key)
+        update_digest_part(digest, len(players))
+        return digest.hexdigest()
+
     def refresh_kills_ignored_list(force: bool = False) -> None:
         nonlocal kills_ignored_render_pending
         kills_ignored_count_var.set(str(len(kills_ignored_players)))
-        ignored_signature = json.dumps(
-            [{"name": player.name, "key": player.key} for player in kills_ignored_players],
-            ensure_ascii=False,
-            sort_keys=True,
-        )
+        ignored_signature = ignored_players_light_signature(kills_ignored_players)
         if not force and not is_kills_ff_tab_active():
             if getattr(refresh_kills_ignored_list, "_deferred_signature", None) != ignored_signature:
                 refresh_kills_ignored_list._deferred_signature = ignored_signature  # type: ignore[attr-defined]
@@ -10787,17 +10811,10 @@ def run_gui(config_path: Path) -> int:
         set_text_var(kills_daily_rank_total_var, daily_total)
         set_text_var(kills_global_rank_count_var, len(kills_global_ranking))
         set_text_var(kills_global_rank_total_var, global_total)
-        table_signature = json.dumps(
-            {
-                "daily": player_payload(kills_daily_ranking),
-                "global": player_payload(kills_global_ranking),
-                "ignored": [
-                    {"name": player.name, "key": player.key}
-                    for player in kills_ignored_players
-                ],
-            },
-            ensure_ascii=False,
-            sort_keys=True,
+        table_signature = (
+            player_rank_light_signature(kills_daily_ranking),
+            player_rank_light_signature(kills_global_ranking),
+            ignored_players_light_signature(kills_ignored_players),
         )
         if not force and not is_kills_ff_tab_active():
             if getattr(refresh_kills_rank_table, "_deferred_signature", None) != table_signature:
@@ -10811,7 +10828,7 @@ def run_gui(config_path: Path) -> int:
         kills_rank_render_pending = False
 
         def rank_render_signature(players: list[PlayerKill], limit: int) -> str:
-            return json.dumps(player_payload(players[:limit]), ensure_ascii=False, sort_keys=True)
+            return player_rank_light_signature(players, limit=limit)
 
         def table_render_unchanged(signature_key: str, row_widgets: list[Any], signature: str) -> bool:
             if force or not row_widgets:
@@ -11105,31 +11122,30 @@ def run_gui(config_path: Path) -> int:
         return True
 
     def kills_rank_signature_for_state(state: RealtimeState) -> str:
-        return json.dumps(
-            {
-                "daily": player_payload(sorted_rank_players(state.daily_ranking or [])),
-                "global": player_payload(sorted_rank_players(state.global_ranking or state.players or [])),
-                "ignored": [{"name": player.name, "key": player.key} for player in state.ignored_players],
-                "total_players": state.total_players,
-                "total_kills": state.total_kills,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
+        return "|".join(
+            (
+                player_rank_light_signature(sorted_rank_players(state.daily_ranking or [])),
+                player_rank_light_signature(sorted_rank_players(state.global_ranking or state.players or [])),
+                ignored_players_light_signature(state.ignored_players or []),
+                str(state.total_players),
+                str(state.total_kills),
+            )
         )
 
     def manual_signature(players: list[PlayerKill], scope: str = "") -> str:
-        payload: Any = player_payload(players)
-        if scope:
-            payload = {"scope": normalize_kills_scope_value(scope), "players": payload}
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        clean_scope = normalize_kills_scope_value(scope) if scope else ""
+        return f"{clean_scope}|{player_rank_light_signature(players)}"
 
     def manual_snapshot_signature(daily_players: list[PlayerKill], general_players: list[PlayerKill]) -> str:
-        payload = {
-            "scope": "both",
-            "daily": player_payload(sorted_player_kills(daily_players)),
-            "general": player_payload(sorted_player_kills(general_players)),
-        }
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        return "|".join(
+            (
+                "both",
+                "daily",
+                player_rank_light_signature(sorted_player_kills(daily_players)),
+                "general",
+                player_rank_light_signature(sorted_player_kills(general_players)),
+            )
+        )
 
     def poll_interval_seconds() -> int:
         try:
