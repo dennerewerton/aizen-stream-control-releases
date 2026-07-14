@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.202"
+APP_VERSION = "2.6.203"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -7723,6 +7723,9 @@ def run_gui(config_path: Path) -> int:
     ff_queue_last_signature = ""
     ff_queue_poll_quiet_cycles = 0
     ff_queue_last_fetch_error = ""
+    ff_queue_cached_entries: list[FFQueueEntry] = []
+    ff_queue_render_pending = False
+    ff_queue_render_minimum_rows = 0
     tikfinity_ff_widgets: list[Any] = []
     tikfinity_ff_user_widgets: list[Any] = []
     tikfinity_ff_history_widgets: list[Any] = []
@@ -11378,6 +11381,14 @@ def run_gui(config_path: Path) -> int:
         except (AttributeError, tk.TclError):
             return False
 
+    def is_ff_queue_tab_active() -> bool:
+        if ff_queue_site_sync_hidden:
+            return False
+        try:
+            return tabview.get() == "Fila FF"
+        except (AttributeError, tk.TclError):
+            return False
+
     def update_digest_part(digest: Any, value: Any) -> None:
         digest.update(str(value if value is not None else "").encode("utf-8", "replace"))
         digest.update(b"\0")
@@ -12939,6 +12950,20 @@ def run_gui(config_path: Path) -> int:
         update_digest_part(digest, len(entries))
         return digest.hexdigest()
 
+    def clone_ff_queue_entries(entries: list[FFQueueEntry]) -> list[FFQueueEntry]:
+        return [
+            FFQueueEntry(
+                name=entry.name,
+                note=entry.note,
+                status=entry.status,
+                rooms=normalize_kill_value(entry.rooms),
+                user_id=entry.user_id,
+                panel_user_id=entry.panel_user_id,
+                ff_player_id=entry.ff_player_id,
+            )
+            for entry in entries
+        ]
+
     def ff_queue_poll_interval_seconds() -> int:
         try:
             value = int(float(ff_queue_poll_seconds_var.get().replace(",", ".")))
@@ -12947,6 +12972,8 @@ def run_gui(config_path: Path) -> int:
         return max(10, min(120, value))
 
     def collect_ff_queue_entries() -> list[FFQueueEntry]:
+        if ff_queue_render_pending and not is_ff_queue_tab_active():
+            return clone_ff_queue_entries(ff_queue_cached_entries)
         entries: list[FFQueueEntry] = []
         for row in ff_queue_rows:
             name = row["name_var"].get().strip()
@@ -13422,18 +13449,49 @@ def run_gui(config_path: Path) -> int:
         total_credits: int | None = None,
     ) -> None:
         nonlocal ff_queue_applying_remote, ff_queue_remote_count_override, ff_queue_remote_rooms_override
+        nonlocal ff_queue_cached_entries, ff_queue_render_pending, ff_queue_render_minimum_rows
+        normalized_entries = clone_ff_queue_entries(merge_ff_queue_entries(entries))
+        next_signature = (
+            ff_queue_signature(normalized_entries),
+            int(minimum_rows),
+            total_members,
+            total_credits,
+        )
+        current_signature = getattr(set_ff_queue_entries, "_signature", None)
+        if current_signature == next_signature and not ff_queue_render_pending:
+            ff_queue_remote_count_override = total_members
+            ff_queue_remote_rooms_override = total_credits
+            return
+        ff_queue_cached_entries = clone_ff_queue_entries(normalized_entries)
+        set_ff_queue_entries._signature = next_signature  # type: ignore[attr-defined]
         if ff_queue_site_sync_hidden:
             ff_queue_remote_count_override = total_members
             ff_queue_remote_rooms_override = total_credits
+            return
+        if not is_ff_queue_tab_active():
+            ff_queue_remote_count_override = total_members
+            ff_queue_remote_rooms_override = total_credits
+            ff_queue_render_pending = True
+            ff_queue_render_minimum_rows = int(minimum_rows)
+            summary_entries = clone_ff_queue_entries(normalized_entries)
+            summary_count = (
+                ff_queue_remote_count_override
+                if ff_queue_remote_count_override is not None
+                else sum(1 for entry in summary_entries if entry.status != "Concluido")
+            )
+            set_text_var(ff_queue_count_var, summary_count)
+            set_text_var(ff_queue_playing_var, sum(1 for entry in summary_entries if entry.status == "Jogando"))
             return
         ff_queue_applying_remote = True
         try:
             ff_queue_remote_count_override = total_members
             ff_queue_remote_rooms_override = total_credits
+            ff_queue_render_pending = False
+            ff_queue_render_minimum_rows = 0
             for row in ff_queue_rows:
                 row["frame"].destroy()
             ff_queue_rows.clear()
-            for entry_item in entries:
+            for entry_item in normalized_entries:
                 add_ff_queue_row(
                     entry_item.name,
                     entry_item.note,
@@ -20527,12 +20585,14 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         kills_active = is_kills_ff_tab_active()
+        ff_queue_active = is_ff_queue_tab_active()
         commands_active = is_commands_tab_active()
         timers_active = is_timers_tab_active()
         livepix_active = is_livepix_tab_active()
         raffle_active = is_raffle_tab_active()
         appearance_active = is_appearance_tab_active()
         has_kills_pending = manual_table_render_pending or kills_rank_render_pending or kills_ignored_render_pending
+        has_ff_queue_pending = ff_queue_render_pending
         has_livepix_pending = livepix_history_render_pending
         has_raffle_pending = raffle_participant_render_pending and bool(raffle_participant_pending_items)
         has_appearance_pending = appearance_preview_pending and appearance_active
@@ -20561,6 +20621,13 @@ def run_gui(config_path: Path) -> int:
                 refresh_kills_rank_table(force=True)
             if kills_ignored_render_pending or not kills_ignored_rows:
                 refresh_kills_ignored_list(force=True)
+        if ff_queue_active and ff_queue_render_pending:
+            set_ff_queue_entries(
+                clone_ff_queue_entries(ff_queue_cached_entries),
+                minimum_rows=ff_queue_render_minimum_rows,
+                total_members=ff_queue_remote_count_override,
+                total_credits=ff_queue_remote_rooms_override,
+            )
         if livepix_active:
             start_livepix_history_load(force=True)
         if livepix_active and (livepix_history_render_pending or not livepix_widgets):
@@ -20569,8 +20636,16 @@ def run_gui(config_path: Path) -> int:
             refresh_participant_list(raffle_participant_pending_items, force=True)
         if appearance_active and appearance_preview_pending:
             refresh_appearance_preview_if_needed(force=True)
-        active_tab_open = kills_active or commands_active or timers_active or livepix_active or raffle_active or appearance_active
-        active_tab_pending = has_kills_pending or has_livepix_pending or has_raffle_pending or has_appearance_pending
+        active_tab_open = (
+            kills_active
+            or ff_queue_active
+            or commands_active
+            or timers_active
+            or livepix_active
+            or raffle_active
+            or appearance_active
+        )
+        active_tab_pending = has_kills_pending or has_ff_queue_pending or has_livepix_pending or has_raffle_pending or has_appearance_pending
         if active_tab_open and active_tab_pending:
             delay_ms = 350
         elif active_tab_open:
