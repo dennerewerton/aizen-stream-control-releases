@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.186"
+APP_VERSION = "2.6.187"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -117,6 +117,9 @@ LIVEPIX_DASHBOARD_REFRESH_DELAY_MS = 180
 KILLS_VISUAL_REFRESH_DELAY_MS = 220
 KILLS_RANK_RENDER_LIMIT = 100
 KILLS_OVERLAY_RENDER_LIMIT = 50
+KILLS_RANK_INCREMENTAL_THRESHOLD = 36
+KILLS_RANK_RENDER_CHUNK_SIZE = 16
+KILLS_RANK_RENDER_CHUNK_DELAY_MS = 12
 MANUAL_TABLE_INCREMENTAL_THRESHOLD = 18
 MANUAL_TABLE_RENDER_CHUNK_SIZE = 10
 MANUAL_TABLE_RENDER_CHUNK_DELAY_MS = 15
@@ -10833,6 +10836,17 @@ def run_gui(config_path: Path) -> int:
             if table_render_unchanged(f"_rank_signature_{scope_label}", row_widgets, row_signature):
                 return
             setattr(refresh_kills_rank_table, f"_rank_signature_{scope_label}", row_signature)
+            generation_key = f"_rank_generation_{scope_label}"
+            after_key = f"_rank_after_{scope_label}"
+            after_id = getattr(refresh_kills_rank_table, after_key, None)
+            if after_id is not None:
+                try:
+                    root.after_cancel(after_id)
+                except tk.TclError:
+                    pass
+                setattr(refresh_kills_rank_table, after_key, None)
+            generation = int(getattr(refresh_kills_rank_table, generation_key, 0) or 0) + 1
+            setattr(refresh_kills_rank_table, generation_key, generation)
             for widget in row_widgets:
                 try:
                     widget.destroy()
@@ -10852,7 +10866,9 @@ def run_gui(config_path: Path) -> int:
                 row_widgets.append(empty)
                 return
 
-            for index, player in enumerate(players[:KILLS_RANK_RENDER_LIMIT], start=1):
+            display_players = list(players[:KILLS_RANK_RENDER_LIMIT])
+
+            def render_row(index: int, player: PlayerKill) -> None:
                 row_frame = ctk.CTkFrame(
                     table_frame,
                     fg_color="#171014" if index % 2 else "#0f0b0e",
@@ -10890,6 +10906,28 @@ def run_gui(config_path: Path) -> int:
                     width=58,
                 ).grid(row=0, column=3, sticky="e", padx=(4, 10), pady=6)
                 row_widgets.append(row_frame)
+
+            def render_chunk(start_index: int = 0) -> None:
+                if app_closing or getattr(refresh_kills_rank_table, generation_key, None) != generation:
+                    return
+                end_index = min(len(display_players), start_index + KILLS_RANK_RENDER_CHUNK_SIZE)
+                for zero_index in range(start_index, end_index):
+                    render_row(zero_index + 1, display_players[zero_index])
+                if end_index < len(display_players):
+                    next_after_id = root.after(
+                        KILLS_RANK_RENDER_CHUNK_DELAY_MS,
+                        lambda next_index=end_index: render_chunk(next_index),
+                    )
+                    setattr(refresh_kills_rank_table, after_key, next_after_id)
+                    return
+                setattr(refresh_kills_rank_table, after_key, None)
+
+            if len(display_players) >= KILLS_RANK_INCREMENTAL_THRESHOLD:
+                render_chunk(0)
+                return
+
+            for index, player in enumerate(display_players, start=1):
+                render_row(index, player)
 
         def render_overlay_rank(
             table_frame: Any,
