@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.208"
+APP_VERSION = "2.6.209"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5735,6 +5735,7 @@ def send_kills_scope_replace_update(
     endpoint_url: str,
     scope: str,
     players: list[PlayerKill],
+    preserve_players: list[PlayerKill] | None = None,
     device_id: str = "",
     device_name: str = "",
     room: str = "principal",
@@ -5748,6 +5749,7 @@ def send_kills_scope_replace_update(
             endpoint_url,
             clean_scope,
             players,
+            preserve_players=preserve_players,
             device_id=device_id,
             device_name=device_name,
             room=room,
@@ -5779,6 +5781,7 @@ def send_kills_scope_bulk_action_update(
     endpoint_url: str,
     scope: str,
     players: list[PlayerKill],
+    preserve_players: list[PlayerKill] | None = None,
     device_id: str = "",
     device_name: str = "",
     room: str = "principal",
@@ -5790,6 +5793,7 @@ def send_kills_scope_bulk_action_update(
     players = sorted_player_kills(players)
     payload_players = player_wire_payload(players)
     preserve_scope = "general" if clean_scope == "daily" else "daily"
+    preserve_players_snapshot = sorted_player_kills(preserve_players or []) if preserve_players is not None else None
     payload: dict[str, Any] = {
         "source": "aizen-stream-control",
         "mode": "kills_action",
@@ -5868,28 +5872,29 @@ def send_kills_scope_bulk_action_update(
     if token:
         headers["X-Aizen-Token"] = token
     with requests.Session() as session:
-        previous_state = fetch_kills_rank_realtime(
-            endpoint_url,
-            device_id=device_id,
-            device_name=device_name,
-            room=room,
-            token=token,
-            session=session,
-        )
-        if not (previous_state.daily_ranking or previous_state.global_ranking or previous_state.players):
-            try:
-                base_previous_state = fetch_kills_realtime(
-                    endpoint_url,
-                    device_id=device_id,
-                    device_name=device_name,
-                    room=room,
-                    token=token,
-                )
-                if base_previous_state.daily_ranking or base_previous_state.global_ranking or base_previous_state.players:
-                    previous_state = base_previous_state
-            except Exception:
-                pass
-        preserve_players = kills_scope_players_from_state(previous_state, preserve_scope)
+        if preserve_players_snapshot is None:
+            previous_state = fetch_kills_rank_realtime(
+                endpoint_url,
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+                session=session,
+            )
+            if not (previous_state.daily_ranking or previous_state.global_ranking or previous_state.players):
+                try:
+                    base_previous_state = fetch_kills_realtime(
+                        endpoint_url,
+                        device_id=device_id,
+                        device_name=device_name,
+                        room=room,
+                        token=token,
+                    )
+                    if base_previous_state.daily_ranking or base_previous_state.global_ranking or base_previous_state.players:
+                        previous_state = base_previous_state
+                except Exception:
+                    pass
+            preserve_players_snapshot = kills_scope_players_from_state(previous_state, preserve_scope)
         response = session.post(
             derive_kills_action_endpoint(endpoint_url),
             json=payload,
@@ -5917,11 +5922,11 @@ def send_kills_scope_bulk_action_update(
         )
         if confirmed_state is None:
             raise RuntimeError("Jarvis nao confirmou o ranking no /rank apos replace em lote.")
-        if not kills_scope_matches_state(confirmed_state, preserve_scope, preserve_players):
+        if not kills_scope_matches_state(confirmed_state, preserve_scope, preserve_players_snapshot):
             restored_state = send_kills_scope_action_replace_update(
                 endpoint_url,
                 preserve_scope,
-                preserve_players,
+                preserve_players_snapshot,
                 device_id=device_id,
                 device_name=device_name,
                 room=room,
@@ -18509,10 +18514,12 @@ def run_gui(config_path: Path) -> int:
 
         def run() -> None:
             try:
+                preserve_scope_players = general_players if active_scope == "daily" else daily_players
                 final_state = send_kills_scope_replace_update(
                     endpoint_url,
                     active_scope,
                     scope_players,
+                    preserve_players=preserve_scope_players or None,
                     device_id=str(local_config.get("device_id", "")),
                     device_name=str(local_config.get("device_name", "")),
                     room=str(local_config.get("kills_sync_room", "principal")),

@@ -1182,6 +1182,33 @@ def verify(
         if scoped_actions != ["replace"]:
             raise RuntimeError(f"Salvar diario nao usou o caminho rapido de replace unico: {scoped_actions!r}")
         MockJarvisHandler.state["kills"] = {
+            "daily_ranking": [{"name": "DiaSemGet", "kills": 1}],
+            "ranking": [{"name": "GeralLocal", "kills": 22}],
+            "ignored": {},
+        }
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {"kills_actions": [], "rank_gets": 0}
+        scoped_daily_known_preserve = send_kills_scope_replace_update(
+            kills_url,
+            "daily",
+            [PlayerKill("DailyFast", 5)],
+            preserve_players=[PlayerKill("GeralLocal", 22)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        known_preserve_daily = {item.name.casefold(): item.kills for item in scoped_daily_known_preserve.daily_ranking or []}
+        known_preserve_global = {item.name.casefold(): item.kills for item in scoped_daily_known_preserve.global_ranking or []}
+        known_preserve_rank_gets = int(MockJarvisHandler.state.get("debug", {}).get("rank_gets") or 0)
+        known_preserve_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
+        if known_preserve_daily != {"dailyfast": 5} or known_preserve_global != {"gerallocal": 22}:
+            raise RuntimeError(f"Salvar diario com preservacao local divergente: {scoped_daily_known_preserve!r}")
+        if known_preserve_rank_gets != 1:
+            raise RuntimeError(f"Salvar diario com preservacao local fez GET extra no /rank: {known_preserve_rank_gets}")
+        if known_preserve_actions != ["replace"]:
+            raise RuntimeError(f"Salvar diario com preservacao local nao ficou no replace rapido: {known_preserve_actions!r}")
+        MockJarvisHandler.state["kills"] = {
             "daily_ranking": [{"name": "DiaSiteAntigo", "kills": 1}],
             "ranking": [{"name": "GeralSiteMantido", "kills": 13}],
             "ignored": {},
