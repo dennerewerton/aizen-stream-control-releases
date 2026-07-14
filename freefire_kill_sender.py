@@ -21777,7 +21777,7 @@ def run_gui(config_path: Path) -> int:
     tabview.configure(command=lambda: schedule_deferred_render_pump(0))
 
     def run_startup_ui_tasks() -> None:
-        nonlocal kills_rank_cache_pending
+        nonlocal kills_rank_cache_pending, raffle_participant_render_pending, raffle_participant_pending_items
         if app_closing:
             return
         update_chat_endpoint_text()
@@ -21787,6 +21787,9 @@ def run_gui(config_path: Path) -> int:
             refresh_chat_messages(force=True)
         if is_raffle_tab_active():
             refresh_participant_list([], force=True)
+        else:
+            raffle_participant_pending_items = []
+            raffle_participant_render_pending = True
         if not kills_ff_site_sync_hidden:
             if is_kills_ff_tab_active():
                 if not apply_kills_rank_cache():
