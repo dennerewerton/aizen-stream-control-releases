@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.249"
+APP_VERSION = "2.6.250"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4837,15 +4837,19 @@ def derive_kills_action_endpoint(endpoint_url: str) -> str:
     clean = normalize_endpoint_url(endpoint_url)
     parsed = urlparse(clean)
     path = parsed.path.rstrip("/")
-    if path.endswith("/api/freefire-kills"):
-        path = f"{path}/action"
-    elif path.endswith("/freefire-kills"):
-        path = f"{path}/action"
-    elif path.endswith("/action"):
-        path = path
+    if path.endswith("/api/freefire-kills/action"):
+        next_path = path
+    elif path.endswith("/api/freefire-kills/rank"):
+        next_path = path[: -len("/rank")] + "/action"
+    elif path.endswith("/api/freefire-kills/style"):
+        next_path = path[: -len("/style")] + "/action"
+    elif path.endswith("/api/freefire-kills"):
+        next_path = f"{path}/action"
+    elif path.endswith("/freefire-kills/obs") or path.endswith("/freefire-kills"):
+        next_path = "/api/freefire-kills/action"
     else:
-        path = f"{path}/action"
-    return parsed._replace(path=path, query="", fragment="").geturl()
+        next_path = f"{path}/action"
+    return parsed._replace(path=next_path, query="", fragment="").geturl()
 
 
 def derive_kills_snapshot_endpoint(endpoint_url: str) -> str:
@@ -8154,6 +8158,9 @@ def run_gui(config_path: Path) -> int:
             queue_drop_counts[key] = 0
             queue_drop_last_log_at[key] = now
 
+    def is_worker_done_queue_item(item: Any) -> bool:
+        return isinstance(item, tuple) and len(item) >= 1 and item[0] == "__worker_done"
+
     def enqueue_limited_queue(
         target_queue: queue.Queue[Any],
         item: Any,
@@ -8166,7 +8173,14 @@ def run_gui(config_path: Path) -> int:
         except queue.Full:
             pass
         try:
-            target_queue.get_nowait()
+            dropped_item = target_queue.get_nowait()
+            if is_worker_done_queue_item(dropped_item) and not is_worker_done_queue_item(item):
+                try:
+                    target_queue.put_nowait(dropped_item)
+                except queue.Full:
+                    pass
+                note_queue_drop(key, label)
+                return False
             note_queue_drop(key, label)
         except queue.Empty:
             pass
@@ -8176,6 +8190,47 @@ def run_gui(config_path: Path) -> int:
         except queue.Full:
             note_queue_drop(key, label)
             return False
+
+    def enqueue_worker_done_event(target_queue: queue.Queue[Any], key: str, label: str) -> bool:
+        item = ("__worker_done", None)
+        try:
+            target_queue.put_nowait(item)
+            return True
+        except queue.Full:
+            pass
+        if threading.get_ident() != ui_thread_id:
+            try:
+                target_queue.put(item, timeout=0.5)
+                return True
+            except queue.Full:
+                pass
+
+        buffered_items: list[Any] = []
+        dropped_regular_item = False
+        try:
+            while True:
+                candidate = target_queue.get_nowait()
+                if not dropped_regular_item and not is_worker_done_queue_item(candidate):
+                    dropped_regular_item = True
+                    note_queue_drop(key, label)
+                    break
+                buffered_items.append(candidate)
+        except queue.Empty:
+            pass
+        for candidate in buffered_items:
+            try:
+                target_queue.put_nowait(candidate)
+            except queue.Full:
+                note_queue_drop(key, label)
+                break
+        if dropped_regular_item:
+            try:
+                target_queue.put_nowait(item)
+                return True
+            except queue.Full:
+                pass
+        note_queue_drop(key, label)
+        return False
 
     def in_ui_thread() -> bool:
         return threading.get_ident() == ui_thread_id
@@ -8224,10 +8279,12 @@ def run_gui(config_path: Path) -> int:
         schedule_sync_queue_pump(0)
 
         def wrapped() -> None:
+            nonlocal sync_workers_active
             try:
                 target()
             finally:
-                enqueue_limited_queue(sync_queue, ("__worker_done", None), "sync", "Fila Jarvis cheia")
+                if not enqueue_worker_done_event(sync_queue, "sync", "Fila Jarvis cheia"):
+                    sync_workers_active = max(0, sync_workers_active - 1)
 
         try:
             sync_executor.submit(wrapped)
@@ -8244,10 +8301,12 @@ def run_gui(config_path: Path) -> int:
         schedule_ff_queue_sync_pump(0)
 
         def wrapped() -> None:
+            nonlocal ff_queue_workers_active
             try:
                 target()
             finally:
-                enqueue_limited_queue(ff_queue_sync_queue, ("__worker_done", None), "ff_queue", "Fila FF cheia")
+                if not enqueue_worker_done_event(ff_queue_sync_queue, "ff_queue", "Fila FF cheia"):
+                    ff_queue_workers_active = max(0, ff_queue_workers_active - 1)
 
         try:
             ff_queue_executor.submit(wrapped)
@@ -8264,10 +8323,12 @@ def run_gui(config_path: Path) -> int:
         schedule_livepix_queue_pump(0)
 
         def wrapped() -> None:
+            nonlocal livepix_workers_active
             try:
                 target()
             finally:
-                enqueue_limited_queue(livepix_queue, ("__worker_done", None), "livepix", "Fila Livepix cheia")
+                if not enqueue_worker_done_event(livepix_queue, "livepix", "Fila Livepix cheia"):
+                    livepix_workers_active = max(0, livepix_workers_active - 1)
 
         try:
             livepix_executor.submit(wrapped)

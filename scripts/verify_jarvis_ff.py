@@ -686,6 +686,10 @@ def verify_contracts() -> None:
         raise RuntimeError(f"Derivacao entre endpoints falhou: {direct_kills_to_queue}")
     if derive_kills_action_endpoint(expected_endpoints["kills"]) != "https://jarvis.squareweb.app/api/freefire-kills/action":
         raise RuntimeError("Derivacao da action Kills FF falhou.")
+    if derive_kills_action_endpoint("https://jarvis.squareweb.app/api/freefire-kills/rank") != "https://jarvis.squareweb.app/api/freefire-kills/action":
+        raise RuntimeError("Derivacao da action Kills FF por rank falhou.")
+    if derive_kills_action_endpoint("https://jarvis.squareweb.app/freefire-kills/obs") != "https://jarvis.squareweb.app/api/freefire-kills/action":
+        raise RuntimeError("Derivacao da action Kills FF por OBS falhou.")
     if derive_kills_snapshot_endpoint("https://jarvis.squareweb.app/api/freefire-kills/action") != expected_endpoints["kills"]:
         raise RuntimeError("Derivacao do snapshot Kills FF por action falhou.")
     if derive_kills_snapshot_endpoint("https://jarvis.squareweb.app/freefire-kills/obs") != expected_endpoints["kills"]:
@@ -1227,6 +1231,28 @@ def verify(
             raise RuntimeError(f"Salvar Kills FF diario alterou o geral: {scoped_daily!r}")
         if scoped_actions != ["replace"]:
             raise RuntimeError(f"Salvar diario nao usou o caminho rapido de replace unico: {scoped_actions!r}")
+        MockJarvisHandler.state["kills"] = {
+            "daily_ranking": [{"name": "DiaRankUrlAntigo", "kills": 1}],
+            "ranking": [{"name": "GeralRankUrlMantido", "kills": 10}],
+            "ignored": {},
+        }
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {"kills_actions": []}
+        rank_url_daily = send_kills_scope_replace_update(
+            f"{kills_url}/rank",
+            "daily",
+            [PlayerKill("DailyRankUrl", 8)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        rank_url_daily_map = {item.name.casefold(): item.kills for item in rank_url_daily.daily_ranking or []}
+        rank_url_global_map = {item.name.casefold(): item.kills for item in rank_url_daily.global_ranking or []}
+        if rank_url_daily_map != {"dailyrankurl": 8}:
+            raise RuntimeError(f"Salvar diario por URL /rank nao gravou diario: {rank_url_daily!r}")
+        if rank_url_global_map != {"geralrankurlmantido": 10}:
+            raise RuntimeError(f"Salvar diario por URL /rank alterou geral: {rank_url_daily!r}")
         MockJarvisHandler.state["kills"] = {
             "daily_ranking": [{"name": "DiaSemGet", "kills": 1}],
             "ranking": [{"name": "GeralLocal", "kills": 22}],

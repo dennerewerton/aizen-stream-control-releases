@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.249",
-    "notes":  "Reduz I/O repetido do cache de ranking Kills FF: o app agora calcula uma assinatura leve do rank diario/geral e so regrava o cache no config.json quando o ranking muda de verdade.",
+    "version":  "2.6.250",
+    "notes":  "Corrige o Salvar do Kills FF quando a URL configurada vem de /rank ou /obs: o app agora deriva corretamente /api/freefire-kills/action para confirmar e persistir o rank diario no Jarvis. Tambem preserva eventos internos de finalizacao de workers para evitar travamentos apos picos de sincronizacao.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.249/AizenStreamControl.exe",
-                    "sha256":  "ce2be983a91bf763b1f4f6cc41668b0810775aad07115bea083fdc224adbbd72"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.250/AizenStreamControl.exe",
+                    "sha256":  "ac0f1989c0ec52ff021938ae320e48f22c0fdec97a2f6e9ed382c4e3c19c1a3c"
                 }
 }
