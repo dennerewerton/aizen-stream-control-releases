@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT))
 
 from freefire_kill_sender import (  # noqa: E402
     FFQueueEntry,
+    KILLS_SNAPSHOT_ENDPOINT_CACHE,
+    KILLS_SNAPSHOT_ENDPOINT_CACHE_LOCK,
     chat_command_token,
     cleanup_stale_pyinstaller_dirs,
     complete_player_names_from_references,
@@ -1158,6 +1160,9 @@ def verify(
         MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["kills_rank"] = {}
         MockJarvisHandler.state["debug"] = {"kills_actions": [], "weak_snapshot_ack": True}
+        weak_cache_key, _weak_candidates_before = kills_snapshot_url_candidates(kills_url)
+        with KILLS_SNAPSHOT_ENDPOINT_CACHE_LOCK:
+            KILLS_SNAPSHOT_ENDPOINT_CACHE.pop(weak_cache_key, None)
         weak_ack_snapshot = send_kills_snapshot_update(
             kills_url,
             [PlayerKill("DiarioOk", 7)],
@@ -1174,6 +1179,9 @@ def verify(
             raise RuntimeError(f"Snapshot Kills FF com ack fraco nao caiu para fallback: {weak_ack_snapshot!r}")
         if weak_ack_actions.count("set") < 2:
             raise RuntimeError(f"Fallback do Snapshot Kills FF nao gravou diario e geral: {weak_ack_actions!r}")
+        _weak_cache_key, weak_candidates_after = kills_snapshot_url_candidates(kills_url)
+        if weak_candidates_after and weak_candidates_after[0].rstrip("/").endswith("/freefire-kills/action"):
+            raise RuntimeError(f"Fallback Kills FF contaminou cache de snapshot com /action: {weak_candidates_after!r}")
         MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["kills_rank"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["debug"] = {"kills_actions": [], "rank_independent": True}

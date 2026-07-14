@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.178",
-    "notes":  "Otimizacao: reduz o ciclo de renderizacao das abas pesadas quando nao ha nada pendente, diminuindo carga de fundo no Kills FF, Livepix, sorteio, comandos e aparencia.",
+    "version":  "2.6.179",
+    "notes":  "Otimizacao Kills FF: o fallback por acoes nao contamina mais o cache do endpoint de snapshot com /action, evitando tentativas extras e deixando os proximos Salvarem mais rapidos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.178/AizenStreamControl.exe",
-                    "sha256":  "e917ed61a8dfb53bf8b5676521a8b85d7f88e57f8865b7a6a1a705fece33d9ce"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.179/AizenStreamControl.exe",
+                    "sha256":  "5ffad0a31fc1595fd5f6a4773d772150d0e5f17211df831a33c892ed7d3593fe"
                 }
 }

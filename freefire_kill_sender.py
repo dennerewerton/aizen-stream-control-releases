@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.178"
+APP_VERSION = "2.6.179"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5262,7 +5262,6 @@ def send_kills_snapshot_update(
                         session=session,
                     )
                     if fetched_state is not None:
-                        remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_action_url)
                         return fetched_state
                 except Exception:
                     pass
@@ -5326,7 +5325,6 @@ def send_kills_snapshot_update(
             token=token,
         )
         if fetched_state is not None:
-            remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_action_url)
             return fetched_state
     except Exception:
         pass
