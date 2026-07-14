@@ -555,6 +555,13 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
                 self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
                 self._send_json({"ok": True, "status": "saved"})
                 return
+            if mode == "kills_snapshot" and self.state.get("debug", {}).get("strong_snapshot_without_persist"):
+                self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
+                response_payload = {"ok": True, **payload}
+                if not self.state.get("debug", {}).get("strong_snapshot_without_accepted"):
+                    response_payload["accepted"] = len(payload.get("players") or []) + len(payload.get("daily_ranking") or [])
+                self._send_json(response_payload)
+                return
             self.state["kills"] = payload
             self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
             if mode == "kills_snapshot" and self.state.get("debug", {}).get("strong_snapshot_response"):
@@ -1248,8 +1255,8 @@ def verify(
         strong_scope_snapshot_gets = int(MockJarvisHandler.state.get("debug", {}).get("snapshot_gets") or 0)
         if strong_scope_daily != {"dailystrong": 6} or strong_scope_global != {"geralfortelocal": 24}:
             raise RuntimeError(f"Salvar diario com resposta forte divergente: {scoped_daily_strong!r}")
-        if strong_scope_snapshot_gets != 0:
-            raise RuntimeError(f"Salvar diario com resposta forte fez GET extra no painel principal: {strong_scope_snapshot_gets}")
+        if strong_scope_snapshot_gets <= 0:
+            raise RuntimeError("Salvar diario com resposta forte nao confirmou o painel principal.")
         MockJarvisHandler.state["kills"] = {
             "daily_ranking": [{"name": "DiaForteSemAccepted", "kills": 1}],
             "ranking": [{"name": "GeralForteSemAccepted", "kills": 28}],
@@ -1280,10 +1287,8 @@ def verify(
         no_accepted_snapshot_gets = int(MockJarvisHandler.state.get("debug", {}).get("snapshot_gets") or 0)
         if no_accepted_daily != {"dailystrongnoaccepted": 7} or no_accepted_global != {"geralfortesemaccepted": 28}:
             raise RuntimeError(f"Salvar diario com resposta forte sem accepted divergente: {scoped_daily_strong_no_accepted!r}")
-        if no_accepted_snapshot_gets != 0:
-            raise RuntimeError(
-                f"Salvar diario com resposta forte sem accepted fez GET extra no painel principal: {no_accepted_snapshot_gets}"
-            )
+        if no_accepted_snapshot_gets <= 0:
+            raise RuntimeError("Salvar diario com resposta forte sem accepted nao confirmou o painel principal.")
         MockJarvisHandler.state["kills"] = {
             "daily_ranking": [{"name": "DiaSiteAntigo", "kills": 1}],
             "ranking": [{"name": "GeralSiteMantido", "kills": 13}],
@@ -1315,6 +1320,33 @@ def verify(
             )
         if base_site_global != {"geralsitemantido": 13}:
             raise RuntimeError(f"Salvar diario no painel principal alterou o geral: {base_after_scope!r}")
+        MockJarvisHandler.state["kills"] = {
+            "daily_ranking": [{"name": "DiaForteNaoPersistiu", "kills": 1}],
+            "ranking": [{"name": "GeralForteNaoPersistiu", "kills": 11}],
+            "ignored": {},
+        }
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {
+            "kills_actions": [],
+            "action_rank_only": True,
+            "rank_independent": True,
+            "strong_snapshot_without_persist": True,
+        }
+        try:
+            send_kills_scope_replace_update(
+                kills_url,
+                "daily",
+                [PlayerKill("DiarioForteSemPersistir", 15)],
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+            )
+        except RuntimeError as exc:
+            if "painel principal" not in str(exc):
+                raise RuntimeError(f"Salvar diario aceitou erro forte inesperado: {exc}") from exc
+        else:
+            raise RuntimeError("Salvar diario aceitou resposta forte sem persistir no painel principal.")
         MockJarvisHandler.state["kills"] = {
             "daily_ranking": [{"name": "DiaNaoGravou", "kills": 1}],
             "ranking": [{"name": "GeralNaoGravou", "kills": 11}],

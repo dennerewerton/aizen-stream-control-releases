@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.220",
-    "notes":  "Acelera o Salvar das Kills FF aceitando resposta forte do Jarvis mesmo sem contador accepted quando os rankings enviados voltam confirmados.",
+    "version":  "2.6.221",
+    "notes":  "Corrige o Salvar das Kills FF para confirmar o ranking diario no painel Jarvis antes de marcar como sincronizado.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.220/AizenStreamControl.exe",
-                    "sha256":  "750406475466c28d6af32835534313fd8908ded7058a9673ba7eced10086b660"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.221/AizenStreamControl.exe",
+                    "sha256":  "1cc8947b1ccc76e8a3f50e25284b6397abca9f5fd9df7c6ae24b5c923cddce1a"
                 }
 }
