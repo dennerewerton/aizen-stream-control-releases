@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.188"
+APP_VERSION = "2.6.189"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4843,7 +4843,7 @@ def kills_snapshot_matches_state(
     return actual_daily == expected_daily and actual_general == expected_general
 
 
-def fetch_confirmed_kills_rank_state(
+def fetch_kills_rank_confirmation(
     endpoint_url: str,
     daily_players: list[PlayerKill],
     general_players: list[PlayerKill],
@@ -4853,7 +4853,7 @@ def fetch_confirmed_kills_rank_state(
     token: str = "",
     session: requests.Session | None = None,
     delays: tuple[float, ...] = KILLS_RANK_CONFIRM_DELAYS_SECONDS,
-) -> RealtimeState | None:
+) -> tuple[RealtimeState | None, RealtimeState | None]:
     last_state: RealtimeState | None = None
     for delay_seconds in delays:
         if delay_seconds > 0:
@@ -4871,8 +4871,33 @@ def fetch_confirmed_kills_rank_state(
             continue
         last_state = state
         if kills_snapshot_matches_state(state, daily_players, general_players):
-            return state
-    return last_state if last_state is not None and kills_snapshot_matches_state(last_state, daily_players, general_players) else None
+            return state, state
+    return None, last_state
+
+
+def fetch_confirmed_kills_rank_state(
+    endpoint_url: str,
+    daily_players: list[PlayerKill],
+    general_players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+    session: requests.Session | None = None,
+    delays: tuple[float, ...] = KILLS_RANK_CONFIRM_DELAYS_SECONDS,
+) -> RealtimeState | None:
+    confirmed_state, _last_state = fetch_kills_rank_confirmation(
+        endpoint_url,
+        daily_players,
+        general_players,
+        device_id=device_id,
+        device_name=device_name,
+        room=room,
+        token=token,
+        session=session,
+        delays=delays,
+    )
+    return confirmed_state
 
 
 def clone_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
@@ -5183,6 +5208,7 @@ def send_kills_snapshot_update(
     with requests.Session() as session:
         final_state: RealtimeState | None = None
         unconfirmed_snapshot_ack = False
+        latest_rank_state: RealtimeState | None = None
         for snapshot_url in snapshot_urls:
             for payload in payload_candidates:
                 try:
@@ -5202,7 +5228,7 @@ def send_kills_snapshot_update(
                     if kills_snapshot_matches_state(state, daily_players, general_players):
                         confirmation_checked = True
                         try:
-                            confirmed_state = fetch_confirmed_kills_rank_state(
+                            confirmed_state, latest_rank_state = fetch_kills_rank_confirmation(
                                 endpoint_url,
                                 daily_players,
                                 general_players,
@@ -5221,7 +5247,7 @@ def send_kills_snapshot_update(
                     response_acknowledged = response_acknowledges_kills_snapshot(response.text)
                     if not confirmation_checked:
                         try:
-                            confirmed_state = fetch_confirmed_kills_rank_state(
+                            confirmed_state, latest_rank_state = fetch_kills_rank_confirmation(
                                 endpoint_url,
                                 daily_players,
                                 general_players,
@@ -5239,7 +5265,7 @@ def send_kills_snapshot_update(
                             pass
                     if response_acknowledged:
                         unconfirmed_snapshot_ack = True
-                        continue
+                        break
                 except requests.HTTPError as exc:
                     status_code = exc.response.status_code if exc.response is not None else 0
                     if status_code in {400, 404, 405, 409, 422}:
@@ -5254,14 +5280,16 @@ def send_kills_snapshot_update(
                 break
 
         try:
-            current_state = fetch_kills_rank_realtime(
-                endpoint_url,
-                device_id=device_id,
-                device_name=device_name,
-                room=room,
-                token=token,
-                session=session,
-            )
+            current_state = latest_rank_state
+            if current_state is None:
+                current_state = fetch_kills_rank_realtime(
+                    endpoint_url,
+                    device_id=device_id,
+                    device_name=device_name,
+                    room=room,
+                    token=token,
+                    session=session,
+                )
             if kills_snapshot_matches_state(current_state, daily_players, general_players):
                 return current_state
             current_daily = sorted_player_kills(current_state.daily_ranking or [])

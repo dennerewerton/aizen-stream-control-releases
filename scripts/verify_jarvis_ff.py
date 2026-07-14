@@ -1192,7 +1192,7 @@ def verify(
             raise RuntimeError(f"Fallback Kills FF nao gravou diario e geral apos /rank vazio: {strong_actions!r}")
         MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["kills_rank"] = {}
-        MockJarvisHandler.state["debug"] = {"kills_actions": [], "weak_snapshot_ack": True}
+        MockJarvisHandler.state["debug"] = {"kills_actions": [], "weak_snapshot_ack": True, "rank_gets": 0}
         weak_cache_key, _weak_candidates_before = kills_snapshot_url_candidates(kills_url)
         with KILLS_SNAPSHOT_ENDPOINT_CACHE_LOCK:
             KILLS_SNAPSHOT_ENDPOINT_CACHE.pop(weak_cache_key, None)
@@ -1208,12 +1208,15 @@ def verify(
         weak_ack_daily = {item.name.casefold(): item.kills for item in weak_ack_snapshot.daily_ranking or []}
         weak_ack_global = {item.name.casefold(): item.kills for item in weak_ack_snapshot.global_ranking or []}
         weak_ack_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
+        weak_rank_gets = int(MockJarvisHandler.state.get("debug", {}).get("rank_gets") or 0)
         if weak_ack_daily != {"diariook": 7} or weak_ack_global != {"geralok": 9}:
             raise RuntimeError(f"Snapshot Kills FF com ack fraco nao caiu para fallback: {weak_ack_snapshot!r}")
         if weak_ack_actions.count("set") < 2:
             raise RuntimeError(f"Fallback do Snapshot Kills FF nao gravou diario e geral: {weak_ack_actions!r}")
         if "replace" in weak_ack_actions:
             raise RuntimeError(f"Fallback do Snapshot Kills FF fez replace redundante apos ACK fraco: {weak_ack_actions!r}")
+        if weak_rank_gets > 3:
+            raise RuntimeError(f"Fallback do Snapshot Kills FF fez leituras /rank redundantes: {weak_rank_gets}")
         _weak_cache_key, weak_candidates_after = kills_snapshot_url_candidates(kills_url)
         if weak_candidates_after and weak_candidates_after[0].rstrip("/").endswith("/freefire-kills/action"):
             raise RuntimeError(f"Fallback Kills FF contaminou cache de snapshot com /action: {weak_candidates_after!r}")
