@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.242"
+APP_VERSION = "2.6.243"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -18778,8 +18778,8 @@ def run_gui(config_path: Path) -> int:
             variable.trace_add("write", lambda *_args: schedule_config_autosave())
 
     def save_form() -> None:
-        if save_current_config_silent():
-            log(f"Configuracao salva em {config_path}")
+        if save_current_config_silent(compact=True, background=True):
+            log(f"Configuracao enviada para salvar em segundo plano em {config_path}")
         else:
             messagebox.showerror("Erro", "Nao consegui salvar agora. Verifique se algum campo numerico esta incompleto.")
 
@@ -18797,7 +18797,12 @@ def run_gui(config_path: Path) -> int:
 
     def save_appearance(restart: bool = False) -> None:
         try:
-            save_config(config_path, update_config_from_form())
+            if restart:
+                save_config(config_path, update_config_from_form())
+            else:
+                if not save_current_config_silent(compact=True, background=True):
+                    messagebox.showerror("Erro", "Nao consegui salvar agora. Verifique se algum campo numerico esta incompleto.")
+                    return
             log("Aparencia salva.")
             if restart:
                 restart_app()

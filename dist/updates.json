@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.242",
-    "notes":  "Reduz trabalho de UI em segundo plano: abas inativas agora apenas marcam renderizacao pendente e deixam para renderizar quando forem abertas, evitando bombas de render vazias na inicializacao.",
+    "version":  "2.6.243",
+    "notes":  "Reduz travadinhas ao salvar configuracoes: os botoes Salvar comuns agora enviam o config.json para gravacao em segundo plano, mantendo salvamento sincrono apenas ao fechar ou reabrir o app.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.242/AizenStreamControl.exe",
-                    "sha256":  "1fb78641a27af141aaf9e6e57d300327e8afd7b66a6dff678ea9ee4f04a92c9a"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.243/AizenStreamControl.exe",
+                    "sha256":  "c12572a7701c368cb64388a49697f8002e4ccd0aab483a53e0c0156c3cff12d3"
                 }
 }
