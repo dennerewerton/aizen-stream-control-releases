@@ -40,6 +40,7 @@ from freefire_kill_sender import (  # noqa: E402
     fetch_tikfinity_ff_gifts,
     is_live_chat_event_payload,
     kills_snapshot_url_candidates,
+    manual_kills_scopes_to_save,
     kills_scope_label,
     merge_ff_queue_entries,
     normalize_live_chat_payload,
@@ -719,6 +720,22 @@ def verify_contracts() -> None:
             raise RuntimeError(f"Escopo Kills FF divergente: {raw_scope!r}")
         if kills_scope_label(raw_scope) != expected_label:
             raise RuntimeError(f"Rotulo de escopo Kills FF divergente: {raw_scope!r}")
+    both_dirty_scopes = manual_kills_scopes_to_save(
+        "Geral",
+        {"daily", "general"},
+        [PlayerKill("Dia", 3)],
+        [PlayerKill("Geral", 5)],
+    )
+    if both_dirty_scopes != ["general", "daily"]:
+        raise RuntimeError(f"Salvar Kills FF nao enfileirou diario e geral: {both_dirty_scopes!r}")
+    active_only_scopes = manual_kills_scopes_to_save(
+        "Diario",
+        set(),
+        [PlayerKill("Dia", 3)],
+        [],
+    )
+    if active_only_scopes != ["daily"]:
+        raise RuntimeError(f"Salvar Kills FF deveria enviar somente o ativo: {active_only_scopes!r}")
 
     kills_state = parse_realtime_state(
         {

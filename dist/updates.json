@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.239",
-    "notes":  "Otimiza o cache de nomes do Kills FF usando geracao incremental, evitando varrer a tabela inteira em consultas repetidas durante adicionar, salvar e atualizar kills.",
+    "version":  "2.6.240",
+    "notes":  "Corrige o botao Salvar do Kills FF para enviar explicitamente os ranks Diario e Geral alterados ao Jarvis, evitando que o rank diario fique sem gravar quando ambos foram modificados.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.239/AizenStreamControl.exe",
-                    "sha256":  "d423259517115ec7f7cb52939f1935d1c42b5da319c239b599cacf170cf83465"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.240/AizenStreamControl.exe",
+                    "sha256":  "9810dc25f8ce97ec728df44b369ede54a7efa8253920b01b5b8fe9dea2c07e83"
                 }
 }

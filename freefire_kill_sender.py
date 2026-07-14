@@ -32,7 +32,7 @@ from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import parse_qs, quote, urlparse
 
 import requests
@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.239"
+APP_VERSION = "2.6.240"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -3833,6 +3833,36 @@ def kills_scope_description(value: Any) -> str:
     if scope == "general":
         return "somente no rank geral"
     return "no rank do dia e no geral"
+
+
+def manual_kills_scopes_to_save(
+    active_scope: Any,
+    dirty_scopes: Iterable[Any],
+    daily_players: list[PlayerKill],
+    general_players: list[PlayerKill],
+) -> list[str]:
+    clean_active = normalize_kills_scope_value(active_scope)
+    if clean_active not in {"daily", "general"}:
+        clean_active = "daily"
+    dirty = {
+        clean_scope
+        for scope in dirty_scopes
+        if (clean_scope := normalize_kills_scope_value(scope)) in {"daily", "general"}
+    }
+    players_by_scope = {
+        "daily": daily_players,
+        "general": general_players,
+    }
+    scopes: list[str] = []
+    for scope in (clean_active, "daily", "general"):
+        if scope in scopes:
+            continue
+        if scope != clean_active and scope not in dirty:
+            continue
+        if scope != clean_active and not players_by_scope.get(scope):
+            continue
+        scopes.append(scope)
+    return scopes or [clean_active]
 
 
 FF_QUEUE_STATUSES = ["Na fila", "Chamado", "Jogando", "Concluido"]
@@ -18890,6 +18920,7 @@ def run_gui(config_path: Path) -> int:
         schedule_kills_visual_refresh(delay_ms=240)
         scope_players = daily_players if active_scope == "daily" else general_players
         signature = manual_signature(scope_players, active_scope)
+        scopes_to_save = manual_kills_scopes_to_save(active_scope, manual_scope_dirty, daily_players, general_players)
         if not endpoint_url:
             manual_status_var.set("Sem endpoint")
             if force:
@@ -18915,38 +18946,52 @@ def run_gui(config_path: Path) -> int:
             try:
                 snapshot_daily_players = clone_player_list(daily_players)
                 snapshot_general_players = clone_player_list(general_players)
-                preserve_players: list[PlayerKill] | None = None
-                if active_scope == "daily" and snapshot_general_players:
-                    preserve_players = snapshot_general_players
-                elif active_scope == "general" and snapshot_daily_players:
-                    preserve_players = snapshot_daily_players
-                final_state = send_kills_scope_replace_update(
-                    endpoint_url,
-                    active_scope,
-                    snapshot_daily_players if active_scope == "daily" else snapshot_general_players,
-                    preserve_players=preserve_players,
-                    device_id=str(local_config.get("device_id", "")),
-                    device_name=str(local_config.get("device_name", "")),
-                    room=str(local_config.get("kills_sync_room", "principal")),
-                    token=str(local_config.get("jarvis_api_token", "")),
-                )
+                players_by_scope: dict[str, list[PlayerKill]] = {
+                    "daily": snapshot_daily_players,
+                    "general": snapshot_general_players,
+                }
+                final_state: RealtimeState | None = None
+                for index, scope_to_save in enumerate(scopes_to_save):
+                    other_scope = "general" if scope_to_save == "daily" else "daily"
+                    remaining_scopes = set(scopes_to_save[index + 1 :])
+                    preserve_players: list[PlayerKill] | None = None
+                    if other_scope in remaining_scopes or players_by_scope.get(other_scope):
+                        preserve_players = clone_player_list(players_by_scope.get(other_scope, []))
+                    final_state = send_kills_scope_replace_update(
+                        endpoint_url,
+                        scope_to_save,
+                        players_by_scope[scope_to_save],
+                        preserve_players=preserve_players,
+                        device_id=str(local_config.get("device_id", "")),
+                        device_name=str(local_config.get("device_name", "")),
+                        room=str(local_config.get("kills_sync_room", "principal")),
+                        token=str(local_config.get("jarvis_api_token", "")),
+                    )
+                    saved_scope_players = kills_scope_players_from_state(final_state, scope_to_save)
+                    if saved_scope_players:
+                        players_by_scope[scope_to_save] = clone_player_list(saved_scope_players)
+                    other_scope_players = kills_scope_players_from_state(final_state, other_scope)
+                    if other_scope not in remaining_scopes and other_scope_players:
+                        players_by_scope[other_scope] = clone_player_list(other_scope_players)
+                if final_state is None:
+                    final_state = local_kills_snapshot_state(
+                        players_by_scope["daily"],
+                        players_by_scope["general"],
+                        updated_by=str(local_config.get("device_name", "")),
+                    )
                 final_daily_players = kills_scope_players_from_state(final_state, "daily")
                 final_general_players = kills_scope_players_from_state(final_state, "general")
-                if not final_daily_players and snapshot_daily_players:
-                    final_daily_players = snapshot_daily_players
-                if not final_general_players and snapshot_general_players:
-                    final_general_players = snapshot_general_players
-                saved_scopes = [active_scope]
-                preserve_scope = "general" if active_scope == "daily" else "daily"
-                if preserve_players and preserve_scope in manual_scope_dirty:
-                    saved_scopes.append(preserve_scope)
+                if not final_daily_players and players_by_scope["daily"]:
+                    final_daily_players = players_by_scope["daily"]
+                if not final_general_players and players_by_scope["general"]:
+                    final_general_players = players_by_scope["general"]
                 enqueue_sync_event(
                     "manual_rank_sent",
                     {
                         "count": len(scope_players),
                         "signature": manual_snapshot_signature(final_daily_players, final_general_players),
                         "scope": active_scope,
-                        "scopes": saved_scopes,
+                        "scopes": list(scopes_to_save),
                         "daily_count": len(final_daily_players),
                         "general_count": len(final_general_players),
                         "daily_kills": sum(player.kills for player in final_daily_players),
@@ -19228,14 +19273,24 @@ def run_gui(config_path: Path) -> int:
             update_manual_metrics()
             set_text_var(manual_status_var, "Sincronizado")
             sent_scope = normalize_kills_scope_value(payload.get("scope"))
-            if sent_scope in {"daily", "general"}:
-                label = kills_scope_label(sent_scope)
-                count_key = "daily_count" if sent_scope == "daily" else "general_count"
-                kills_key = "daily_kills" if sent_scope == "daily" else "general_kills"
-                log(
-                    "Kills FF salvas no Jarvis "
-                    f"({label}: {payload.get(count_key, 0)} jogador(es), {payload.get(kills_key, 0)} kills)."
-                )
+            logged_scopes: list[str] = []
+            if isinstance(sent_scopes, list):
+                for raw_scope in sent_scopes:
+                    clean_sent_scope = normalize_kills_scope_value(raw_scope)
+                    if clean_sent_scope in {"daily", "general"} and clean_sent_scope not in logged_scopes:
+                        logged_scopes.append(clean_sent_scope)
+            elif sent_scope in {"daily", "general"}:
+                logged_scopes.append(sent_scope)
+            if logged_scopes:
+                summary_parts = []
+                for clean_sent_scope in logged_scopes:
+                    label = kills_scope_label(clean_sent_scope)
+                    count_key = "daily_count" if clean_sent_scope == "daily" else "general_count"
+                    kills_key = "daily_kills" if clean_sent_scope == "daily" else "general_kills"
+                    summary_parts.append(
+                        f"{label}: {payload.get(count_key, 0)} jogador(es), {payload.get(kills_key, 0)} kills"
+                    )
+                log(f"Kills FF salvas no Jarvis ({' / '.join(summary_parts)}).")
             else:
                 log(
                     "Kills FF salvas no Jarvis exatamente como no app "
