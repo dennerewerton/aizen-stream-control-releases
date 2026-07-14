@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.254"
+APP_VERSION = "2.6.255"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -124,6 +124,7 @@ LIVEPIX_EVENT_STORAGE_LIMIT = 1000
 LIVEPIX_HISTORY_RENDER_LIMIT = 30
 LIVEPIX_HISTORY_RENDER_CHUNK_SIZE = 8
 LIVEPIX_STARTUP_SYNC_DELAY_MS = 3500
+LIVEPIX_STARTUP_HISTORY_DELAY_MS = 5200
 LIVEPIX_DASHBOARD_REFRESH_DELAY_MS = 180
 LIVEPIX_LIGHT_COLLECTION_LIMIT = 30
 LIVEPIX_LIGHT_COLLECTION_MAX_PAGES = 1
@@ -144,6 +145,7 @@ KILLS_CONFIRM_GET_TIMEOUT_SECONDS = 3
 KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS = (0.0, 0.2)
 KILLS_RANK_CONFIRM_DELAYS_SECONDS = (0.0, 0.35, 0.85)
 STARTUP_IDLE_TASK_DELAY_MS = 650
+STARTUP_MAINTENANCE_DELAY_MS = 30000
 BACKGROUND_IDLE_PUMP_MS = 2000
 SYNC_QUEUE_IDLE_PUMP_MS = 1200
 SYNC_QUEUE_PROCESSED_PUMP_MS = 140
@@ -156,7 +158,7 @@ FF_QUEUE_WORKER_MAX_THREADS = 2
 LIVEPIX_WORKER_MAX_THREADS = 3
 BOT_WORKER_MAX_THREADS = 1
 STALE_MEI_MIN_AGE_SECONDS = 24 * 60 * 60
-STALE_MEI_CLEANUP_LIMIT = 8
+STALE_MEI_CLEANUP_LIMIT = 3
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
 WRITE_TEXT_CACHE_LOCK = threading.Lock()
 WRITE_TEXT_IO_LOCK = threading.Lock()
@@ -18345,7 +18347,7 @@ def run_gui(config_path: Path) -> int:
             return
         if livepix_startup_work_needed():
             root.after(650, lambda: schedule_livepix_dashboard_refresh(0))
-            root.after(900, start_livepix_history_load)
+            root.after(LIVEPIX_STARTUP_HISTORY_DELAY_MS, start_livepix_history_load)
         if (
             livepix_enabled_var.get()
             and livepix_client_id_var.get().strip()
@@ -21780,7 +21782,7 @@ def run_gui(config_path: Path) -> int:
         schedule_ff_queue_poll()
     root.after(STARTUP_IDLE_TASK_DELAY_MS, run_startup_ui_tasks)
     root.after(STARTUP_IDLE_TASK_DELAY_MS + 250, run_startup_runtime_tasks)
-    root.after(STARTUP_IDLE_TASK_DELAY_MS + 1800, start_stale_pyinstaller_cleanup)
+    root.after(STARTUP_MAINTENANCE_DELAY_MS, start_stale_pyinstaller_cleanup)
     log("Kills FF ativo em modo manual. Abas Fila FF, Overlay FF e Chat Ao Vivo seguem ocultas.")
     root.mainloop()
     return 0
