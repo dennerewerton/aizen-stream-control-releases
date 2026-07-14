@@ -525,6 +525,10 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
                 return
             self.state["kills"] = payload
             self.headers_seen["kills"] = {key: value for key, value in self.headers.items()}
+            if mode == "kills_snapshot" and self.state.get("debug", {}).get("strong_snapshot_response"):
+                accepted = len(payload.get("players") or []) + len(payload.get("daily_ranking") or [])
+                self._send_json({"ok": True, "accepted": accepted, **payload})
+                return
         self._send_json({"ok": True})
 
     def do_GET(self) -> None:
@@ -544,6 +548,8 @@ class MockJarvisHandler(BaseHTTPRequestHandler):
             self.headers_seen["tikfinity"] = {key: value for key, value in self.headers.items()}
             self._send_json({"ok": True, **self.state["tikfinity"]})
         elif "freefire-kills/rank" in self.path:
+            debug = self.state.setdefault("debug", {})
+            debug["rank_gets"] = int(debug.get("rank_gets") or 0) + 1
             if self.state.get("debug", {}).get("rank_independent"):
                 payload = self.state.get("kills_rank", {})
             else:
@@ -1157,6 +1163,25 @@ def verify(
         persisted_replaced_global = {item.name.casefold(): item.kills for item in persisted_replaced.global_ranking or []}
         if persisted_replaced_daily != {"pedro": 1} or persisted_replaced_global:
             raise RuntimeError(f"Snapshot Kills FF nao substituiu o diario persistido: {persisted_replaced!r}")
+        MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {"strong_snapshot_response": True, "rank_gets": 0}
+        strong_snapshot = send_kills_snapshot_update(
+            kills_url,
+            [PlayerKill("RespostaForteDia", 6)],
+            [PlayerKill("RespostaForteGeral", 8)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        strong_daily = {item.name.casefold(): item.kills for item in strong_snapshot.daily_ranking or []}
+        strong_global = {item.name.casefold(): item.kills for item in strong_snapshot.global_ranking or []}
+        strong_rank_gets = int(MockJarvisHandler.state.get("debug", {}).get("rank_gets") or 0)
+        if strong_daily != {"respostafortedia": 6} or strong_global != {"respostafortegeral": 8}:
+            raise RuntimeError(f"Snapshot Kills FF com resposta forte divergente: {strong_snapshot!r}")
+        if strong_rank_gets != 0:
+            raise RuntimeError(f"Snapshot Kills FF fez GET /rank redundante apos resposta forte: {strong_rank_gets}")
         MockJarvisHandler.state["kills"] = {"ranking": [], "daily_ranking": [], "ignored": {}}
         MockJarvisHandler.state["kills_rank"] = {}
         MockJarvisHandler.state["debug"] = {"kills_actions": [], "weak_snapshot_ack": True}

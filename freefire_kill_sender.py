@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.179"
+APP_VERSION = "2.6.180"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5024,6 +5024,37 @@ def response_acknowledges_kills_snapshot(response_text: str) -> bool:
     return has_positive_ack(payload)
 
 
+def response_confirms_persisted_kills_snapshot(
+    response_text: str,
+    state: RealtimeState,
+    daily_players: list[PlayerKill],
+    general_players: list[PlayerKill],
+) -> bool:
+    if not kills_snapshot_matches_state(state, daily_players, general_players):
+        return False
+    try:
+        payload = json.loads(str(response_text or "").strip())
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    mode = str(payload.get("mode") or "").strip().casefold()
+    if mode not in {"kills_snapshot", "rank_snapshot", "snapshot", "replace"}:
+        return False
+    try:
+        accepted = int(float(str(payload.get("accepted") or 0).replace(",", ".")))
+    except (TypeError, ValueError):
+        accepted = 0
+    if accepted < len(daily_players) + len(general_players):
+        return False
+    has_daily_payload = any(key in payload for key in ("daily_ranking", "dailyRanking", "daily", "dia_ranking"))
+    has_general_payload = any(
+        key in payload
+        for key in ("players", "ranking", "global_ranking", "globalRanking", "general_ranking", "generalRanking")
+    )
+    return has_daily_payload and has_general_payload and response_acknowledges_kills_snapshot(response_text)
+
+
 def kills_delta_actions(
     current_players: list[PlayerKill],
     expected_players: list[PlayerKill],
@@ -5165,6 +5196,14 @@ def send_kills_snapshot_update(
                     state = parse_realtime_state(response.text)
                     confirmation_checked = False
                     if kills_snapshot_matches_state(state, daily_players, general_players):
+                        if response_confirms_persisted_kills_snapshot(
+                            response.text,
+                            state,
+                            daily_players,
+                            general_players,
+                        ):
+                            remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
+                            return state
                         confirmation_checked = True
                         try:
                             confirmed_state = fetch_confirmed_kills_rank_state(

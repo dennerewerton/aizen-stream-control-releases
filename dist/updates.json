@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.179",
-    "notes":  "Otimizacao Kills FF: o fallback por acoes nao contamina mais o cache do endpoint de snapshot com /action, evitando tentativas extras e deixando os proximos Salvarem mais rapidos.",
+    "version":  "2.6.180",
+    "notes":  "Otimizacao Kills FF: quando o Jarvis ja responde com o snapshot salvo completo, o app evita o GET /rank extra e conclui o Salvar mais rapido; respostas fracas continuam confirmando como antes.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.179/AizenStreamControl.exe",
-                    "sha256":  "5ffad0a31fc1595fd5f6a4773d772150d0e5f17211df831a33c892ed7d3593fe"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.180/AizenStreamControl.exe",
+                    "sha256":  "5c11990b085192e1286676d980557e3840319e1b79e2b3494804583f03942e97"
                 }
 }
