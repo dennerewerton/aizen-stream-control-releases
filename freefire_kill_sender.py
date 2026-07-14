@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.241"
+APP_VERSION = "2.6.242"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11733,14 +11733,6 @@ def run_gui(config_path: Path) -> int:
         except (AttributeError, tk.TclError):
             return False
 
-    def request_deferred_render_pump(delay_ms: int = 0) -> None:
-        if app_closing:
-            return
-        try:
-            schedule_deferred_render_pump(delay_ms)
-        except NameError:
-            pass
-
     def update_digest_part(digest: Any, value: Any) -> None:
         digest.update(str(value if value is not None else "").encode("utf-8", "replace"))
         digest.update(b"\0")
@@ -11774,7 +11766,6 @@ def run_gui(config_path: Path) -> int:
         if not force and not is_kills_ff_tab_active():
             if not kills_ignored_render_pending:
                 kills_ignored_render_pending = True
-                request_deferred_render_pump()
             return
         kills_ignored_count_var.set(str(len(kills_ignored_players)))
         ignored_signature = ignored_players_light_signature(kills_ignored_players)
@@ -11839,7 +11830,6 @@ def run_gui(config_path: Path) -> int:
         if not force and not is_kills_ff_tab_active():
             if not kills_rank_render_pending:
                 kills_rank_render_pending = True
-                request_deferred_render_pump()
             return
         daily_total = sum(player.kills for player in kills_daily_ranking)
         global_total = sum(player.kills for player in kills_global_ranking)
@@ -13204,7 +13194,6 @@ def run_gui(config_path: Path) -> int:
                 manual_rows.clear()
                 manual_table_render_pending = True
                 manual_table_render_scope = clean_scope
-                request_deferred_render_pump()
                 return
             target_rows = max(len(players), minimum_rows)
             widget_delta = abs(len(manual_rows) - target_rows)
@@ -13952,7 +13941,6 @@ def run_gui(config_path: Path) -> int:
             )
             set_text_var(ff_queue_count_var, summary_count)
             set_text_var(ff_queue_playing_var, sum(1 for entry in summary_entries if entry.status == "Jogando"))
-            request_deferred_render_pump()
             return
         ff_queue_applying_remote = True
         try:
@@ -17639,7 +17627,6 @@ def run_gui(config_path: Path) -> int:
             if getattr(render_livepix_events, "_deferred_signature", None) != render_signature:
                 render_livepix_events._deferred_signature = render_signature  # type: ignore[attr-defined]
                 livepix_history_render_pending = True
-                request_deferred_render_pump()
             return
         if (
             getattr(render_livepix_events, "_signature", None) == render_signature
@@ -18338,7 +18325,6 @@ def run_gui(config_path: Path) -> int:
                     render_livepix_overlay()
                 else:
                     livepix_history_render_pending = True
-                    request_deferred_render_pump()
                 schedule_livepix_dashboard_refresh()
             elif kind == "history_load_error":
                 livepix_events_loading = False
@@ -20017,7 +20003,6 @@ def run_gui(config_path: Path) -> int:
             cancel_raffle_participant_render()
             raffle_participant_pending_items = list(items)
             raffle_participant_render_pending = True
-            request_deferred_render_pump()
             return
         participants = normalize_participant_items(items)
         desired = [
@@ -21407,7 +21392,6 @@ def run_gui(config_path: Path) -> int:
         schedule_ff_queue_sync_pump(0)
     if chat_event_runtime_active() or not chat_event_queue.empty():
         schedule_chat_event_pump(0)
-    schedule_deferred_render_pump(0)
     if livepix_startup_work_needed():
         schedule_livepix_queue_pump(0)
     schedule_livepix_startup_tasks()

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.241",
-    "notes":  "Otimiza o Salvar do Kills FF: quando Diario e Geral precisam ser enviados, o app usa um snapshot unico confirmado em vez de duas sincronizacoes separadas.",
+    "version":  "2.6.242",
+    "notes":  "Reduz trabalho de UI em segundo plano: abas inativas agora apenas marcam renderizacao pendente e deixam para renderizar quando forem abertas, evitando bombas de render vazias na inicializacao.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.241/AizenStreamControl.exe",
-                    "sha256":  "b79c8ca99ad7de7d14dc0560391fb9ca6867a6baaabf7b9d347f4ad1be862cd4"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.242/AizenStreamControl.exe",
+                    "sha256":  "1fb78641a27af141aaf9e6e57d300327e8afd7b66a6dff678ea9ee4f04a92c9a"
                 }
 }
