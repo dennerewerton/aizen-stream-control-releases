@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.185"
+APP_VERSION = "2.6.186"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5179,6 +5179,7 @@ def send_kills_snapshot_update(
     snapshot_action_url = derive_kills_action_endpoint(endpoint_url)
     with requests.Session() as session:
         final_state: RealtimeState | None = None
+        unconfirmed_snapshot_ack = False
         for snapshot_url in snapshot_urls:
             for payload in payload_candidates:
                 try:
@@ -5234,6 +5235,7 @@ def send_kills_snapshot_update(
                         except Exception:
                             pass
                     if response_acknowledged:
+                        unconfirmed_snapshot_ack = True
                         continue
                 except requests.HTTPError as exc:
                     status_code = exc.response.status_code if exc.response is not None else 0
@@ -5245,6 +5247,8 @@ def send_kills_snapshot_update(
                     raise
                 except Exception:
                     continue
+            if unconfirmed_snapshot_ack:
+                break
 
         try:
             current_state = fetch_kills_rank_realtime(

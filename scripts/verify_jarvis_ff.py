@@ -1212,6 +1212,8 @@ def verify(
             raise RuntimeError(f"Snapshot Kills FF com ack fraco nao caiu para fallback: {weak_ack_snapshot!r}")
         if weak_ack_actions.count("set") < 2:
             raise RuntimeError(f"Fallback do Snapshot Kills FF nao gravou diario e geral: {weak_ack_actions!r}")
+        if "replace" in weak_ack_actions:
+            raise RuntimeError(f"Fallback do Snapshot Kills FF fez replace redundante apos ACK fraco: {weak_ack_actions!r}")
         _weak_cache_key, weak_candidates_after = kills_snapshot_url_candidates(kills_url)
         if weak_candidates_after and weak_candidates_after[0].rstrip("/").endswith("/freefire-kills/action"):
             raise RuntimeError(f"Fallback Kills FF contaminou cache de snapshot com /action: {weak_candidates_after!r}")
