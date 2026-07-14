@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.194"
+APP_VERSION = "2.6.195"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -12318,7 +12318,17 @@ def run_gui(config_path: Path) -> int:
             ff_queue_summary_widgets.append(row_frame)
 
     def ff_queue_signature(entries: list[FFQueueEntry]) -> str:
-        return json.dumps(ff_queue_payload(entries), ensure_ascii=False, sort_keys=True)
+        digest = hashlib.sha1()
+        for entry in entries:
+            update_digest_part(digest, entry.name)
+            update_digest_part(digest, entry.note)
+            update_digest_part(digest, entry.status)
+            update_digest_part(digest, normalize_kill_value(entry.rooms))
+            update_digest_part(digest, entry.user_id)
+            update_digest_part(digest, entry.panel_user_id)
+            update_digest_part(digest, entry.ff_player_id)
+        update_digest_part(digest, len(entries))
+        return digest.hexdigest()
 
     def ff_queue_poll_interval_seconds() -> int:
         try:
@@ -13486,11 +13496,26 @@ def run_gui(config_path: Path) -> int:
 
     def ff_overlay_signature() -> str:
         players, _queue_items, _total_kills, _active_rooms = ff_overlay_snapshot()
-        return json.dumps(
-            overlay_payload(players, collect_ff_queue_entries(), ff_overlay_options_payload()),
-            ensure_ascii=False,
-            sort_keys=True,
-        )
+        digest = hashlib.sha1()
+        update_digest_part(digest, player_rank_light_signature(players))
+        update_digest_part(digest, ff_queue_signature(collect_ff_queue_entries()))
+        for key, value in sorted(ff_overlay_options_payload().items()):
+            update_digest_part(digest, key)
+            update_digest_part(digest, value)
+        return digest.hexdigest()
+
+    def ff_overlay_queue_items_signature(queue_items: list[dict[str, Any]]) -> str:
+        digest = hashlib.sha1()
+        for item in queue_items:
+            update_digest_part(digest, item.get("name", ""))
+            update_digest_part(digest, item.get("rooms", 0))
+            update_digest_part(digest, item.get("waiting", 0))
+            update_digest_part(digest, item.get("called", 0))
+            update_digest_part(digest, item.get("playing", 0))
+            update_digest_part(digest, item.get("panel_user_id", ""))
+            update_digest_part(digest, item.get("ff_player_id", ""))
+        update_digest_part(digest, len(queue_items))
+        return digest.hexdigest()
 
     def render_ff_overlay_panel(target: Any, widget_store: list[Any], preview: bool = False) -> None:
         for widget in widget_store:
@@ -13644,18 +13669,16 @@ def run_gui(config_path: Path) -> int:
         if ff_overlay_site_sync_hidden and ff_overlay_preview_frame is None and ff_overlay_content_frame is None:
             return
         players, queue_items, total_kills, active_rooms = ff_overlay_snapshot()
-        signature = json.dumps(
-            {
-                "players": player_payload(players),
-                "queue": queue_items,
-                "total": total_kills,
-                "rooms": active_rooms,
-                "compact": bool(ff_overlay_compact_var.get()),
-                "show_kills": bool(ff_overlay_show_kills_var.get()),
-                "show_queue": bool(ff_overlay_show_queue_var.get()),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
+        signature = "|".join(
+            (
+                player_rank_light_signature(players),
+                str(total_kills),
+                str(active_rooms),
+                ff_overlay_queue_items_signature(queue_items),
+                str(bool(ff_overlay_compact_var.get())),
+                str(bool(ff_overlay_show_kills_var.get())),
+                str(bool(ff_overlay_show_queue_var.get())),
+            )
         )
         if not force and getattr(refresh_ff_overlay, "_signature", None) == signature:
             return
