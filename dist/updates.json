@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.195",
-    "notes":  "Otimizacao: Fila FF e Overlay FF usam assinaturas leves em vez de serializar JSON para detectar mudancas, reduzindo trabalho repetido em sincronizacoes e refresh.",
+    "version":  "2.6.196",
+    "notes":  "Corrige o Salvar das Kills FF: a aba Diario agora grava e confirma somente o ranking diario no Jarvis, sem depender do Geral.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.195/AizenStreamControl.exe",
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.196/AizenStreamControl.exe",
                     "sha256":  "685698b86dc6c7e82be4945d943c19afbd30f8bf3b20c6ef500627f004f8cf7d"
                 }
 }

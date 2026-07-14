@@ -54,6 +54,7 @@ from freefire_kill_sender import (  # noqa: E402
     send_ff_queue_action_update,
     send_ff_queue_realtime_update,
     send_kills_action_update,
+    send_kills_scope_replace_update,
     send_kills_snapshot_update,
     send_kills_style_update,
     send_kills_realtime_update,
@@ -1127,6 +1128,31 @@ def verify(
         )
         if reset_state.daily_ranking or reset_state.global_ranking:
             raise RuntimeError(f"Reset total Kills FF divergente: {reset_state!r}")
+        MockJarvisHandler.state["kills"] = {
+            "daily_ranking": [{"name": "DiaAntigo", "kills": 1}],
+            "ranking": [{"name": "GeralMantido", "kills": 12}],
+            "ignored": {},
+        }
+        MockJarvisHandler.state["kills_rank"] = {}
+        MockJarvisHandler.state["debug"] = {"kills_actions": []}
+        scoped_daily = send_kills_scope_replace_update(
+            kills_url,
+            "daily",
+            [PlayerKill("DailyOnly", 4)],
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        scoped_daily_map = {item.name.casefold(): item.kills for item in scoped_daily.daily_ranking or []}
+        scoped_global_map = {item.name.casefold(): item.kills for item in scoped_daily.global_ranking or []}
+        scoped_actions = MockJarvisHandler.state.get("debug", {}).get("kills_actions", [])
+        if scoped_daily_map != {"dailyonly": 4}:
+            raise RuntimeError(f"Salvar Kills FF diario nao substituiu o diario: {scoped_daily!r}")
+        if scoped_global_map != {"geralmantido": 12}:
+            raise RuntimeError(f"Salvar Kills FF diario alterou o geral: {scoped_daily!r}")
+        if "reset_general" in scoped_actions:
+            raise RuntimeError(f"Salvar diario resetou o geral indevidamente: {scoped_actions!r}")
         snapshot_state = send_kills_snapshot_update(
             kills_url,
             [PlayerKill("Pedro", 2), PlayerKill("pedro", 3), PlayerKill("Ana", 1)],

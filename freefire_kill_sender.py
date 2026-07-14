@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.195"
+APP_VERSION = "2.6.196"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4774,9 +4774,19 @@ def send_kills_action_update(
         "scopePt": scope_slug,
         "rank_type": scope_payload,
         "rankType": scope_payload,
+        "ranking_type": scope_payload,
+        "rankingType": scope_payload,
+        "period": scope_payload,
+        "period_slug": scope_slug,
+        "periodSlug": scope_slug,
+        "periodo": scope_slug,
+        "rank_slug": scope_slug,
+        "rankSlug": scope_slug,
         "target": scope_payload,
         "target_rank": scope_payload,
         "targetRank": scope_payload,
+        "target_rank_slug": scope_slug,
+        "targetRankSlug": scope_slug,
         "tipo": scope_slug,
         "modo": scope_slug,
     }
@@ -4858,6 +4868,16 @@ def kills_snapshot_matches_state(
     return actual_daily == expected_daily and actual_general == expected_general
 
 
+def kills_scope_matches_state(state: RealtimeState, scope: str, players: list[PlayerKill]) -> bool:
+    clean_scope = normalize_kills_scope_value(scope)
+    expected = player_kill_map(players)
+    if clean_scope == "general":
+        actual_players = state.global_ranking or ([] if state.daily_ranking else state.players or [])
+    else:
+        actual_players = state.daily_ranking or []
+    return player_kill_map(actual_players) == expected
+
+
 def fetch_kills_rank_confirmation(
     endpoint_url: str,
     daily_players: list[PlayerKill],
@@ -4913,6 +4933,39 @@ def fetch_confirmed_kills_rank_state(
         delays=delays,
     )
     return confirmed_state
+
+
+def fetch_confirmed_kills_scope_state(
+    endpoint_url: str,
+    scope: str,
+    players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+    session: requests.Session | None = None,
+    delays: tuple[float, ...] = KILLS_RANK_CONFIRM_DELAYS_SECONDS,
+) -> RealtimeState | None:
+    clean_scope = normalize_kills_scope_value(scope)
+    if clean_scope not in {"daily", "general"}:
+        clean_scope = "daily"
+    for delay_seconds in delays:
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+        try:
+            state = fetch_kills_rank_realtime(
+                endpoint_url,
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+                session=session,
+            )
+        except Exception:
+            continue
+        if kills_scope_matches_state(state, clean_scope, players):
+            return state
+    return None
 
 
 def clone_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
@@ -5182,7 +5235,10 @@ def send_kills_snapshot_update(
         "total_kills": sum(player.kills for player in general_players),
         "daily_total_players": len(daily_players),
         "daily_total_kills": sum(player.kills for player in daily_players),
-        "daily_players": len(daily_players),
+        "daily_player_count": len(daily_players),
+        "dailyPlayerCount": len(daily_players),
+        "daily_players": daily_payload,
+        "dailyPlayers": daily_payload,
         "daily_kills": sum(player.kills for player in daily_players),
         "totals": {
             "total_players": len(general_players),
@@ -5422,6 +5478,64 @@ def send_kills_snapshot_update(
         pass
     raise RuntimeError(
         "Jarvis respondeu, mas o endpoint /rank nao confirmou o ranking diario/geral enviado. "
+        "Clique em Atualizar rank e tente Salvar de novo."
+    )
+
+
+def send_kills_scope_replace_update(
+    endpoint_url: str,
+    scope: str,
+    players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> RealtimeState:
+    clean_scope = normalize_kills_scope_value(scope)
+    if clean_scope not in {"daily", "general"}:
+        clean_scope = "daily"
+    players = sorted_player_kills(players)
+    reset_action = "reset_general" if clean_scope == "general" else "reset_daily"
+    with requests.Session() as session:
+        send_kills_action_update(
+            endpoint_url,
+            reset_action,
+            scope=clean_scope,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+            session=session,
+            parse_response=False,
+        )
+        for player in players:
+            send_kills_action_update(
+                endpoint_url,
+                "set",
+                player=player,
+                kills=player.kills,
+                scope=clean_scope,
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+                session=session,
+                parse_response=False,
+            )
+        confirmed_state = fetch_confirmed_kills_scope_state(
+            endpoint_url,
+            clean_scope,
+            players,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+            session=session,
+        )
+        if confirmed_state is not None:
+            return confirmed_state
+    raise RuntimeError(
+        f"Jarvis respondeu, mas o endpoint /rank nao confirmou o ranking {kills_scope_label(clean_scope).lower()} enviado. "
         "Clique em Atualizar rank e tente Salvar de novo."
     )
 
@@ -17597,13 +17711,14 @@ def run_gui(config_path: Path) -> int:
         config["jarvis_api_token"] = str(local_config.get("jarvis_api_token") or "")
         config["kills_sync_room"] = str(local_config.get("kills_sync_room") or "principal")
         schedule_kills_visual_refresh(delay_ms=80)
-        signature = manual_snapshot_signature(daily_players, general_players)
+        scope_players = daily_players if active_scope == "daily" else general_players
+        signature = manual_signature(scope_players, active_scope)
         if not endpoint_url:
             manual_status_var.set("Sem endpoint")
             if force:
                 log("Informe a URL do painel/Jarvis para sincronizar as kills.")
             return
-        if not daily_players and not general_players:
+        if not scope_players:
             manual_status_var.set("Sem jogadores")
             if force:
                 log("Adicione pelo menos um jogador antes de enviar as kills.")
@@ -17623,10 +17738,10 @@ def run_gui(config_path: Path) -> int:
 
         def run() -> None:
             try:
-                final_state = send_kills_snapshot_update(
+                final_state = send_kills_scope_replace_update(
                     endpoint_url,
-                    daily_players,
-                    general_players,
+                    active_scope,
+                    scope_players,
                     device_id=str(local_config.get("device_id", "")),
                     device_name=str(local_config.get("device_name", "")),
                     room=str(local_config.get("kills_sync_room", "principal")),
@@ -17635,10 +17750,10 @@ def run_gui(config_path: Path) -> int:
                 enqueue_sync_event(
                     "manual_rank_sent",
                     {
-                        "count": len(daily_players) + len(general_players),
+                        "count": len(scope_players),
                         "signature": signature,
-                        "scope": "both",
-                        "scopes": ["daily", "general"],
+                        "scope": active_scope,
+                        "scopes": [active_scope],
                         "daily_count": len(daily_players),
                         "general_count": len(general_players),
                         "daily_kills": sum(player.kills for player in daily_players),
@@ -17919,11 +18034,21 @@ def run_gui(config_path: Path) -> int:
                 set_text_var(manual_source_var, device_name_var.get().strip() or default_device_name())
             update_manual_metrics()
             set_text_var(manual_status_var, "Sincronizado")
-            log(
-                "Kills FF salvas no Jarvis exatamente como no app "
-                f"({payload.get('daily_count', 0)} diario, {payload.get('daily_kills', 0)} kills / "
-                f"{payload.get('general_count', 0)} geral, {payload.get('general_kills', 0)} kills)."
-            )
+            sent_scope = normalize_kills_scope_value(payload.get("scope"))
+            if sent_scope in {"daily", "general"}:
+                label = kills_scope_label(sent_scope)
+                count_key = "daily_count" if sent_scope == "daily" else "general_count"
+                kills_key = "daily_kills" if sent_scope == "daily" else "general_kills"
+                log(
+                    "Kills FF salvas no Jarvis "
+                    f"({label}: {payload.get(count_key, 0)} jogador(es), {payload.get(kills_key, 0)} kills)."
+                )
+            else:
+                log(
+                    "Kills FF salvas no Jarvis exatamente como no app "
+                    f"({payload.get('daily_count', 0)} diario, {payload.get('daily_kills', 0)} kills / "
+                    f"{payload.get('general_count', 0)} geral, {payload.get('general_kills', 0)} kills)."
+                )
             return
 
         if kind == "send_error":
