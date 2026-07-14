@@ -12343,6 +12343,8 @@ def run_gui(config_path: Path) -> int:
 
     def apply_kills_rankings(state: RealtimeState) -> None:
         nonlocal kills_daily_ranking, kills_global_ranking, kills_ignored_players
+        nonlocal kills_rank_render_pending, kills_ignored_render_pending
+        nonlocal manual_table_render_pending, manual_table_render_scope
         incoming_daily = complete_manual_player_names(state.daily_ranking or [], "daily")
         incoming_global_source = state.global_ranking if state.global_ranking else ([] if state.daily_ranking else state.players or [])
         incoming_global = complete_manual_player_names(incoming_global_source, "general")
@@ -12355,10 +12357,28 @@ def run_gui(config_path: Path) -> int:
             kills_global_ranking = []
         kills_ignored_players = list(state.ignored_players or [])
         clear_manual_reference_cache()
+        current_scope = current_manual_scope()
+        if not is_kills_ff_tab_active():
+            if "daily" not in manual_scope_dirty and kills_daily_ranking:
+                manual_scope_buffers["daily"] = clone_player_list(kills_daily_ranking)
+            if "general" not in manual_scope_dirty and kills_global_ranking:
+                manual_scope_buffers["general"] = clone_player_list(kills_global_ranking)
+            if current_scope not in manual_scope_dirty:
+                manual_table_render_pending = True
+                manual_table_render_scope = current_scope
+                update_manual_metrics(manual_scope_buffers.get(current_scope, []))
+            kills_rank_render_pending = True
+            kills_ignored_render_pending = True
+            set_text_var(
+                kills_overlay_status_var,
+                f"Carregado: {len(kills_daily_ranking)} dia / {len(kills_global_ranking)} geral"
+                if (kills_daily_ranking or kills_global_ranking)
+                else "Jarvis respondeu sem ranking",
+            )
+            return
         repair_manual_scope_buffer_names("daily", references=kills_daily_ranking)
         repair_manual_scope_buffer_names("general", references=kills_global_ranking)
         refresh_kills_ignored_list()
-        current_scope = current_manual_scope()
         if current_scope not in manual_scope_dirty:
             current_players = read_manual_players_light(fill_missing_names=False, scope=current_scope)
             rank_players = manual_scope_rank_players(current_scope)
