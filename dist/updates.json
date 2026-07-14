@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.245",
-    "notes":  "Corrige o Salvar das Kills FF no ranking diario: o clique manual agora tenta gravar um snapshot completo diario+geral no Jarvis, preservando o outro ranking, e so cai para replace parcial se o snapshot nao estiver disponivel. Tambem reduz reconstrucoes pesadas apos salvar quando o ranking recebido ja bate com a tabela local.",
+    "version":  "2.6.246",
+    "notes":  "Otimiza a tabela manual das Kills FF: quando o ranking ja esta desenhado com os mesmos jogadores, o app pula a reconfiguracao linha por linha e apenas atualiza metricas. Isso reduz pequenas travadas apos salvar, atualizar rank ou receber o mesmo estado do Jarvis repetidas vezes.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.245/AizenStreamControl.exe",
-                    "sha256":  "52b06c07bf87024e82fe30a35770b1e5062c2fffd4eabd9d49b10c666bb94581"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.246/AizenStreamControl.exe",
+                    "sha256":  "86ba18d3c46c1afa912fc6a5e2ef628b01c65aa2e5cb88ff5d42c9524aa02c46"
                 }
 }

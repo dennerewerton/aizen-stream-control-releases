@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.245"
+APP_VERSION = "2.6.246"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -7962,6 +7962,7 @@ def run_gui(config_path: Path) -> int:
     manual_table_render_scope = ""
     manual_table_render_after_id: str | None = None
     manual_table_render_generation = 0
+    manual_table_render_signature: tuple[str, str, int] | None = None
     manual_active_scope = normalize_kills_scope_value(config.get("kills_manual_scope", "daily"))
     if manual_active_scope not in {"daily", "general"}:
         manual_active_scope = "daily"
@@ -12611,11 +12612,12 @@ def run_gui(config_path: Path) -> int:
         manual_config_after_id = root.after(delay_ms, run_manual_config_autosave)
 
     def on_manual_change(*_args: Any, sort_rows: bool = True) -> None:
-        nonlocal manual_last_local_edit_at
+        nonlocal manual_last_local_edit_at, manual_table_render_signature
         if manual_applying_remote:
             return
         scope = current_manual_scope()
         clear_manual_reference_cache()
+        manual_table_render_signature = None
         manual_scope_dirty.add(scope)
         clear_manual_metric_overrides()
         manual_last_local_edit_at = time.monotonic()
@@ -13081,8 +13083,9 @@ def run_gui(config_path: Path) -> int:
         on_manual_change()
 
     def cancel_manual_table_incremental_render() -> None:
-        nonlocal manual_table_render_after_id, manual_table_render_generation
+        nonlocal manual_table_render_after_id, manual_table_render_generation, manual_table_render_signature
         manual_table_render_generation += 1
+        manual_table_render_signature = None
         if manual_table_render_after_id is None:
             return
         try:
@@ -13119,15 +13122,18 @@ def run_gui(config_path: Path) -> int:
     ) -> None:
         nonlocal manual_applying_remote, manual_bulk_updating, manual_remote_count_override, manual_remote_total_override
         nonlocal manual_table_render_after_id, manual_table_render_pending, manual_table_render_scope
+        nonlocal manual_table_render_signature
         clean_scope = normalize_kills_scope_value(scope)
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
         snapshot_players = clone_player_list(players)
         target_rows = max(len(snapshot_players), minimum_rows)
+        render_signature = (clean_scope, manual_signature(snapshot_players, clean_scope), target_rows)
         cancel_manual_table_incremental_render()
         render_generation = manual_table_render_generation
         manual_table_render_pending = True
         manual_table_render_scope = clean_scope
+        manual_table_render_signature = None
         manual_remote_count_override = total_players
         manual_remote_total_override = total_kills
 
@@ -13141,6 +13147,7 @@ def run_gui(config_path: Path) -> int:
         def render_chunk(start_index: int = 0) -> None:
             nonlocal manual_applying_remote, manual_bulk_updating, manual_table_render_after_id
             nonlocal manual_table_render_pending, manual_table_render_scope
+            nonlocal manual_table_render_signature
             manual_table_render_after_id = None
             if app_closing or render_generation != manual_table_render_generation:
                 return
@@ -13170,6 +13177,7 @@ def run_gui(config_path: Path) -> int:
             if manual_table_render_scope == clean_scope:
                 manual_table_render_pending = False
                 manual_table_render_scope = ""
+            manual_table_render_signature = render_signature
             if not manual_bulk_updating:
                 update_manual_metrics(snapshot_players)
 
@@ -13185,6 +13193,7 @@ def run_gui(config_path: Path) -> int:
     ) -> None:
         nonlocal manual_applying_remote, manual_bulk_updating, manual_remote_count_override, manual_remote_total_override
         nonlocal manual_table_render_pending, manual_table_render_scope
+        nonlocal manual_table_render_signature
         previous_bulk_updating = manual_bulk_updating
         manual_applying_remote = True
         manual_bulk_updating = True
@@ -13204,8 +13213,23 @@ def run_gui(config_path: Path) -> int:
                 manual_rows.clear()
                 manual_table_render_pending = True
                 manual_table_render_scope = clean_scope
+                manual_table_render_signature = None
                 return
             target_rows = max(len(players), minimum_rows)
+            render_signature = (clean_scope, manual_signature(players, clean_scope), target_rows)
+            skip_render = (
+                not force_render
+                and not manual_table_render_pending
+                and manual_table_render_after_id is None
+                and manual_table_render_signature == render_signature
+                and len(manual_rows) == target_rows
+            )
+            if skip_render:
+                manual_bulk_updating = previous_bulk_updating
+                manual_applying_remote = False
+                if not manual_bulk_updating:
+                    update_manual_metrics(players)
+                return
             widget_delta = abs(len(manual_rows) - target_rows)
             if target_rows >= MANUAL_TABLE_INCREMENTAL_THRESHOLD and widget_delta > MANUAL_TABLE_RENDER_CHUNK_SIZE:
                 start_incremental_manual_table_render(players, minimum_rows, total_players, total_kills, clean_scope)
@@ -13226,6 +13250,7 @@ def run_gui(config_path: Path) -> int:
             if manual_table_render_scope == clean_scope:
                 manual_table_render_pending = False
                 manual_table_render_scope = ""
+            manual_table_render_signature = render_signature
         finally:
             manual_bulk_updating = previous_bulk_updating
             manual_applying_remote = False
