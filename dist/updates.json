@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.235",
-    "notes":  "Reduz tentativas repetidas ao salvar Kills FF: ao receber ACK fraco do Jarvis, confirma uma vez e cai para o replace em lote somente se o /rank ainda nao estiver alinhado, acelerando o lançamento das kills.",
+    "version":  "2.6.236",
+    "notes":  "Otimiza autosave/config do Kills FF usando o snapshot leve ja validado quando nao ha edicao pendente, evitando varrer a tabela inteira em salvamentos gerais.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.235/AizenStreamControl.exe",
-                    "sha256":  "77c9abaaaa2760591b90a13b23ec512ab8bc4bd938cb3a78d3c213fa8a87c911"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.236/AizenStreamControl.exe",
+                    "sha256":  "86855006eb8c2d0f23dc0ff99350891b3a117e02764e44337101288720f7b0fd"
                 }
 }

@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.235"
+APP_VERSION = "2.6.236"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -18516,7 +18516,9 @@ def run_gui(config_path: Path) -> int:
             manual_scope = "daily"
         config["kills_manual_scope"] = manual_scope
         set_text_var(manual_scope_var, kills_scope_label(config["kills_manual_scope"]))
-        manual_scope_buffers[manual_scope] = clone_player_list(collect_manual_players(scope=manual_scope))
+        manual_scope_buffers[manual_scope] = clone_player_list(
+            read_manual_players_light(fill_missing_names=False, scope=manual_scope)
+        )
         config["manual_kills"] = player_payload(manual_scope_buffers.get(manual_scope, []))
         config["manual_kills_by_scope"] = {
             "daily": player_payload(manual_scope_buffers.get("daily", [])),
