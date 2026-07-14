@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.251",
-    "notes":  "Otimiza a abertura quando Livepix esta ativo: a sincronizacao automatica inicial agora roda em modo leve, buscando conta, carteira e eventos recentes sem carregar todas as colecoes pesadas. Ao abrir a aba Livepix ou clicar em Sincronizar/Testar, o app completa a sincronizacao completa. Isso reduz carga de rede/CPU no startup e deixa o fluxo de Kills FF mais livre.",
+    "version":  "2.6.252",
+    "notes":  "Reduz travas/demora no Salvar das Kills FF em rede instavel: as leituras internas usadas apenas para confirmar persistencia no Jarvis agora usam timeout curto de 3s, mantendo o timeout normal para Atualizar/Buscar. Assim o app nao fica preso por muito tempo em confirmacoes quando o site ou a internet demoram a responder.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.251/AizenStreamControl.exe",
-                    "sha256":  "bcf78a578f22bd74e3b6d545cb560af2b1c73ae422be7a7a827dc15ae4768d90"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.252/AizenStreamControl.exe",
+                    "sha256":  "f821f558dec9735b5814ebec7351520c9e7b845887644a903844b04369209aed"
                 }
 }

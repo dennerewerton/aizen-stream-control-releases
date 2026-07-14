@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.251"
+APP_VERSION = "2.6.252"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -140,6 +140,7 @@ MANUAL_TABLE_RENDER_CHUNK_SIZE = 10
 MANUAL_TABLE_RENDER_CHUNK_DELAY_MS = 15
 KILLS_POST_TIMEOUT_SECONDS = 10
 KILLS_GET_TIMEOUT_SECONDS = 8
+KILLS_CONFIRM_GET_TIMEOUT_SECONDS = 3
 KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS = (0.0, 0.2)
 KILLS_RANK_CONFIRM_DELAYS_SECONDS = (0.0, 0.35, 0.85)
 STARTUP_IDLE_TASK_DELAY_MS = 650
@@ -4746,6 +4747,7 @@ def fetch_kills_rank_realtime(
     room: str = "principal",
     token: str = "",
     session: requests.Session | None = None,
+    timeout: float = KILLS_GET_TIMEOUT_SECONDS,
 ) -> RealtimeState:
     headers = {
         "X-Aizen-Client-Id": device_id,
@@ -4769,7 +4771,7 @@ def fetch_kills_rank_realtime(
         derive_kills_rank_endpoint(endpoint_url),
         params=params,
         headers=headers,
-        timeout=KILLS_GET_TIMEOUT_SECONDS,
+        timeout=timeout,
         allow_redirects=False,
     )
     if 300 <= response.status_code < 400:
@@ -4786,6 +4788,7 @@ def fetch_kills_snapshot_realtime(
     room: str = "principal",
     token: str = "",
     session: requests.Session | None = None,
+    timeout: float = KILLS_GET_TIMEOUT_SECONDS,
 ) -> RealtimeState:
     headers = {
         "X-Aizen-Client-Id": device_id,
@@ -4808,7 +4811,7 @@ def fetch_kills_snapshot_realtime(
         derive_kills_snapshot_endpoint(endpoint_url),
         params=params,
         headers=headers,
-        timeout=KILLS_GET_TIMEOUT_SECONDS,
+        timeout=timeout,
         allow_redirects=False,
     )
     if 300 <= response.status_code < 400:
@@ -5108,6 +5111,7 @@ def fetch_kills_rank_confirmation(
     token: str = "",
     session: requests.Session | None = None,
     delays: tuple[float, ...] = KILLS_RANK_CONFIRM_DELAYS_SECONDS,
+    timeout: float = KILLS_CONFIRM_GET_TIMEOUT_SECONDS,
 ) -> tuple[RealtimeState | None, RealtimeState | None]:
     last_state: RealtimeState | None = None
     for delay_seconds in delays:
@@ -5121,6 +5125,7 @@ def fetch_kills_rank_confirmation(
                 room=room,
                 token=token,
                 session=session,
+                timeout=timeout,
             )
         except Exception:
             continue
@@ -5140,6 +5145,7 @@ def fetch_confirmed_kills_rank_state(
     token: str = "",
     session: requests.Session | None = None,
     delays: tuple[float, ...] = KILLS_RANK_CONFIRM_DELAYS_SECONDS,
+    timeout: float = KILLS_CONFIRM_GET_TIMEOUT_SECONDS,
 ) -> RealtimeState | None:
     confirmed_state, _last_state = fetch_kills_rank_confirmation(
         endpoint_url,
@@ -5151,6 +5157,7 @@ def fetch_confirmed_kills_rank_state(
         token=token,
         session=session,
         delays=delays,
+        timeout=timeout,
     )
     return confirmed_state
 
@@ -5165,6 +5172,7 @@ def fetch_confirmed_kills_scope_state(
     token: str = "",
     session: requests.Session | None = None,
     delays: tuple[float, ...] = KILLS_RANK_CONFIRM_DELAYS_SECONDS,
+    timeout: float = KILLS_CONFIRM_GET_TIMEOUT_SECONDS,
 ) -> RealtimeState | None:
     clean_scope = normalize_kills_scope_value(scope)
     if clean_scope not in {"daily", "general"}:
@@ -5180,6 +5188,7 @@ def fetch_confirmed_kills_scope_state(
                 room=room,
                 token=token,
                 session=session,
+                timeout=timeout,
             )
         except Exception:
             continue
@@ -5198,6 +5207,7 @@ def fetch_confirmed_kills_snapshot_endpoint_state(
     token: str = "",
     session: requests.Session | None = None,
     delays: tuple[float, ...] = KILLS_RANK_CONFIRM_DELAYS_SECONDS,
+    timeout: float = KILLS_CONFIRM_GET_TIMEOUT_SECONDS,
 ) -> RealtimeState | None:
     for delay_seconds in delays:
         if delay_seconds > 0:
@@ -5210,6 +5220,7 @@ def fetch_confirmed_kills_snapshot_endpoint_state(
                 room=room,
                 token=token,
                 session=session,
+                timeout=timeout,
             )
         except Exception:
             continue
