@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.226"
+APP_VERSION = "2.6.227"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -12097,13 +12097,16 @@ def run_gui(config_path: Path) -> int:
             return clone_player_list(manual_scope_buffers.get(clean_scope, []))
         return collect_manual_players(fill_missing_names=fill_missing_names, scope=clean_scope)
 
-    def manual_scope_buffer_snapshot(scope: str | None = None) -> list[PlayerKill]:
+    def manual_scope_buffer_snapshot(
+        scope: str | None = None,
+        references: list[PlayerKill] | None = None,
+    ) -> list[PlayerKill]:
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"}:
             clean_scope = "daily"
         buffered_players = manual_scope_buffers.get(clean_scope, [])
         if manual_players_need_name_completion(buffered_players):
-            buffered_players = complete_manual_player_names(buffered_players, clean_scope)
+            buffered_players = complete_manual_player_names(buffered_players, clean_scope, references=references)
         players = merge_manual_player_kills(buffered_players)
         manual_scope_buffers[clean_scope] = clone_player_list(players)
         return players
@@ -12485,12 +12488,7 @@ def run_gui(config_path: Path) -> int:
     def manual_existing_name_suggestions(query: str, limit: int = 8) -> list[tuple[str, int, float]]:
         seen: set[str] = set()
         ranked: list[tuple[str, int, float]] = []
-        sources: list[PlayerKill] = []
-        sources.extend(collect_manual_players())
-        for scope_key in ("daily", "general"):
-            sources.extend(manual_scope_buffers.get(scope_key, []))
-        sources.extend(kills_daily_ranking)
-        sources.extend(kills_global_ranking)
+        sources = manual_name_reference_players(current_manual_scope())
         for player in sources:
             candidate_name = player.name.strip()
             if not candidate_name:
@@ -18706,8 +18704,18 @@ def run_gui(config_path: Path) -> int:
                 )
                 messagebox.showinfo("Kills FF", "Preencha o nick dos jogadores que possuem kills antes de salvar.")
                 return
-        daily_players = manual_scope_buffer_snapshot("daily")
-        general_players = manual_scope_buffer_snapshot("general")
+        daily_references = (
+            manual_name_reference_players("daily")
+            if manual_players_need_name_completion(manual_scope_buffers.get("daily", []))
+            else None
+        )
+        general_references = (
+            manual_name_reference_players("general")
+            if manual_players_need_name_completion(manual_scope_buffers.get("general", []))
+            else None
+        )
+        daily_players = manual_scope_buffer_snapshot("daily", references=daily_references)
+        general_players = manual_scope_buffer_snapshot("general", references=general_references)
         apply_local_rank_players("daily", daily_players, schedule_refresh=False)
         apply_local_rank_players("general", general_players, schedule_refresh=False)
         config["kills_realtime_url"] = endpoint_url
@@ -18722,7 +18730,7 @@ def run_gui(config_path: Path) -> int:
         config["device_name"] = str(local_config.get("device_name") or default_device_name())
         config["jarvis_api_token"] = str(local_config.get("jarvis_api_token") or "")
         config["kills_sync_room"] = str(local_config.get("kills_sync_room") or "principal")
-        schedule_kills_visual_refresh(delay_ms=80)
+        schedule_kills_visual_refresh(delay_ms=240)
         scope_players = daily_players if active_scope == "daily" else general_players
         signature = manual_signature(scope_players, active_scope)
         if not endpoint_url:
