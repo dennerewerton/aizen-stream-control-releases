@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.203"
+APP_VERSION = "2.6.204"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -113,6 +113,7 @@ AVATAR_DOWNLOAD_WORKERS = 3
 RAFFLE_SEEN_MESSAGES_LIMIT = 2500
 LIVEPIX_EVENT_STORAGE_LIMIT = 1000
 LIVEPIX_HISTORY_RENDER_LIMIT = 30
+LIVEPIX_HISTORY_RENDER_CHUNK_SIZE = 8
 LIVEPIX_STARTUP_SYNC_DELAY_MS = 3500
 LIVEPIX_DASHBOARD_REFRESH_DELAY_MS = 180
 KILLS_VISUAL_REFRESH_DELAY_MS = 220
@@ -7798,6 +7799,8 @@ def run_gui(config_path: Path) -> int:
     livepix_overlay_frame: Any | None = None
     livepix_widgets: list[Any] = []
     livepix_history_render_pending = False
+    livepix_render_after_id: str | None = None
+    livepix_render_generation = 0
     livepix_dashboard_after_id: str | None = None
     appearance_preview_pending = True
 
@@ -17066,8 +17069,19 @@ def run_gui(config_path: Path) -> int:
         except (AttributeError, tk.TclError):
             return False
 
+    def cancel_livepix_event_render() -> None:
+        nonlocal livepix_render_after_id, livepix_render_generation
+        livepix_render_generation += 1
+        if livepix_render_after_id is None:
+            return
+        try:
+            root.after_cancel(livepix_render_after_id)
+        except tk.TclError:
+            pass
+        livepix_render_after_id = None
+
     def render_livepix_events(force: bool = False) -> None:
-        nonlocal livepix_history_render_pending
+        nonlocal livepix_history_render_pending, livepix_render_after_id, livepix_render_generation
         if "livepix_events_frame" not in globals() and not hasattr(render_livepix_events, "frame"):
             return
         frame = getattr(render_livepix_events, "frame", None)
@@ -17092,11 +17106,16 @@ def run_gui(config_path: Path) -> int:
                 render_livepix_events._deferred_signature = render_signature  # type: ignore[attr-defined]
                 livepix_history_render_pending = True
             return
-        if getattr(render_livepix_events, "_signature", None) == render_signature and not livepix_history_render_pending:
+        if (
+            getattr(render_livepix_events, "_signature", None) == render_signature
+            and not livepix_history_render_pending
+            and livepix_render_after_id is None
+        ):
             return
         render_livepix_events._signature = render_signature  # type: ignore[attr-defined]
         render_livepix_events._deferred_signature = []  # type: ignore[attr-defined]
         livepix_history_render_pending = False
+        cancel_livepix_event_render()
         for widget in livepix_widgets:
             try:
                 widget.destroy()
@@ -17118,67 +17137,84 @@ def run_gui(config_path: Path) -> int:
             wraplength = max(420, frame.winfo_width() - 210)
         except tk.TclError:
             wraplength = 680
-        row_index = 0
-        current_date = ""
-        for event in events:
-            date_label = format_livepix_date_label(event.created_at)
-            if date_label != current_date:
-                current_date = date_label
-                date_widget = ctk.CTkLabel(
-                    frame,
-                    text=date_label,
-                    text_color=muted,
-                    font=("Segoe UI Semibold", 15),
-                    anchor="w",
-                )
-                date_widget.grid(row=row_index, column=0, sticky="ew", padx=10, pady=(18 if row_index else 6, 6))
-                livepix_widgets.append(date_widget)
-                row_index += 1
+        render_generation = livepix_render_generation
 
-            row = ctk.CTkFrame(frame, fg_color="#151515", corner_radius=6, border_width=1, border_color=border)
-            row.grid(row=row_index, column=0, sticky="ew", padx=10, pady=5)
-            row.columnconfigure(1, weight=1)
-            row.columnconfigure(3, weight=0)
-            kind_label = {
-                "message": "Mensagem",
-                "payment": "Pagamento",
-                "subscription": "Assinatura",
-            }.get(event.kind, event.kind.title() or "Evento")
-            ctk.CTkLabel(row, text="↔", text_color=muted, font=("Segoe UI Semibold", 16), width=26).grid(
-                row=0, column=0, sticky="nw", padx=(16, 4), pady=(18, 0)
-            )
-            title = event.username or event.reference or "Apoiador"
-            ctk.CTkLabel(row, text=title, text_color=fg, font=("Segoe UI Semibold", 15), anchor="w").grid(
-                row=0, column=1, sticky="ew", padx=8, pady=(18, 0)
-            )
-            ctk.CTkLabel(row, text=format_livepix_time_label(event.created_at), text_color=muted, font=("Segoe UI", 12), anchor="w").grid(
-                row=1, column=1, sticky="ew", padx=8, pady=(0, 14)
-            )
-            ctk.CTkLabel(row, text="▣", text_color=muted, font=("Segoe UI Semibold", 14), width=26).grid(
-                row=2, column=0, sticky="nw", padx=(16, 4), pady=(0, 0)
-            )
-            detail = event.message or event.reference or kind_label
-            ctk.CTkLabel(row, text=detail[:500], text_color=fg, font=("Segoe UI", 13), anchor="w", justify="left", wraplength=wraplength).grid(
-                row=2, column=1, columnspan=3, sticky="ew", padx=8, pady=(0, 24)
-            )
-            ctk.CTkLabel(
-                row,
-                text=format_livepix_amount(event.amount, event.currency),
-                text_color="#31e06f",
-                font=("Segoe UI Semibold", 20),
-                anchor="w",
-            ).grid(row=3, column=0, columnspan=2, sticky="w", padx=(16, 8), pady=(0, 20))
-            actions = ctk.CTkFrame(row, fg_color="#151515", corner_radius=0)
-            actions.grid(row=3, column=3, sticky="e", padx=(8, 18), pady=(0, 18))
-            button(actions, "▶", lambda item=event: replay_livepix_history_event(item), "ghost", width=42).pack(side=tk.LEFT, padx=(0, 8))
-            button(actions, "⚑", lambda item=event: toggle_livepix_history_flag(item), "ghost", width=42).pack(side=tk.LEFT, padx=(0, 8))
-            button(actions, "⊘", lambda item=event: hide_livepix_history_event(item), "ghost", width=42).pack(side=tk.LEFT)
-            if event.flagged:
-                ctk.CTkLabel(row, text="Marcado", text_color=danger, font=("Segoe UI Semibold", 11)).grid(
-                    row=1, column=3, sticky="e", padx=(8, 18), pady=(0, 14)
+        def render_chunk(start_index: int = 0, row_index: int = 0, current_date: str = "") -> None:
+            nonlocal livepix_render_after_id
+            livepix_render_after_id = None
+            if app_closing or render_generation != livepix_render_generation:
+                return
+            end_index = min(len(events), start_index + LIVEPIX_HISTORY_RENDER_CHUNK_SIZE)
+            for event in events[start_index:end_index]:
+                date_label = format_livepix_date_label(event.created_at)
+                if date_label != current_date:
+                    current_date = date_label
+                    date_widget = ctk.CTkLabel(
+                        frame,
+                        text=date_label,
+                        text_color=muted,
+                        font=("Segoe UI Semibold", 15),
+                        anchor="w",
+                    )
+                    date_widget.grid(row=row_index, column=0, sticky="ew", padx=10, pady=(18 if row_index else 6, 6))
+                    livepix_widgets.append(date_widget)
+                    row_index += 1
+
+                row = ctk.CTkFrame(frame, fg_color="#151515", corner_radius=6, border_width=1, border_color=border)
+                row.grid(row=row_index, column=0, sticky="ew", padx=10, pady=5)
+                row.columnconfigure(1, weight=1)
+                row.columnconfigure(3, weight=0)
+                kind_label = {
+                    "message": "Mensagem",
+                    "payment": "Pagamento",
+                    "subscription": "Assinatura",
+                }.get(event.kind, event.kind.title() or "Evento")
+                ctk.CTkLabel(row, text="↔", text_color=muted, font=("Segoe UI Semibold", 16), width=26).grid(
+                    row=0, column=0, sticky="nw", padx=(16, 4), pady=(18, 0)
                 )
-            livepix_widgets.append(row)
-            row_index += 1
+                title = event.username or event.reference or "Apoiador"
+                ctk.CTkLabel(row, text=title, text_color=fg, font=("Segoe UI Semibold", 15), anchor="w").grid(
+                    row=0, column=1, sticky="ew", padx=8, pady=(18, 0)
+                )
+                ctk.CTkLabel(row, text=format_livepix_time_label(event.created_at), text_color=muted, font=("Segoe UI", 12), anchor="w").grid(
+                    row=1, column=1, sticky="ew", padx=8, pady=(0, 14)
+                )
+                ctk.CTkLabel(row, text="▣", text_color=muted, font=("Segoe UI Semibold", 14), width=26).grid(
+                    row=2, column=0, sticky="nw", padx=(16, 4), pady=(0, 0)
+                )
+                detail = event.message or event.reference or kind_label
+                ctk.CTkLabel(row, text=detail[:500], text_color=fg, font=("Segoe UI", 13), anchor="w", justify="left", wraplength=wraplength).grid(
+                    row=2, column=1, columnspan=3, sticky="ew", padx=8, pady=(0, 24)
+                )
+                ctk.CTkLabel(
+                    row,
+                    text=format_livepix_amount(event.amount, event.currency),
+                    text_color="#31e06f",
+                    font=("Segoe UI Semibold", 20),
+                    anchor="w",
+                ).grid(row=3, column=0, columnspan=2, sticky="w", padx=(16, 8), pady=(0, 20))
+                actions = ctk.CTkFrame(row, fg_color="#151515", corner_radius=0)
+                actions.grid(row=3, column=3, sticky="e", padx=(8, 18), pady=(0, 18))
+                button(actions, "▶", lambda item=event: replay_livepix_history_event(item), "ghost", width=42).pack(side=tk.LEFT, padx=(0, 8))
+                button(actions, "⚑", lambda item=event: toggle_livepix_history_flag(item), "ghost", width=42).pack(side=tk.LEFT, padx=(0, 8))
+                button(actions, "⊘", lambda item=event: hide_livepix_history_event(item), "ghost", width=42).pack(side=tk.LEFT)
+                if event.flagged:
+                    ctk.CTkLabel(row, text="Marcado", text_color=danger, font=("Segoe UI Semibold", 11)).grid(
+                        row=1, column=3, sticky="e", padx=(8, 18), pady=(0, 14)
+                    )
+                livepix_widgets.append(row)
+                row_index += 1
+            if end_index < len(events):
+                livepix_render_after_id = root.after(
+                    25,
+                    lambda next_index=end_index, next_row=row_index, next_date=current_date: render_chunk(
+                        next_index,
+                        next_row,
+                        next_date,
+                    ),
+                )
+
+        livepix_render_after_id = root.after(0, render_chunk)
 
     def handle_livepix_webhook(payload: dict[str, Any]) -> None:
         enqueue_livepix_event("webhook", payload)
