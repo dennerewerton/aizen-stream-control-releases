@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.231"
+APP_VERSION = "2.6.232"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11615,14 +11615,13 @@ def run_gui(config_path: Path) -> int:
 
     def refresh_kills_ignored_list(force: bool = False) -> None:
         nonlocal kills_ignored_render_pending
-        kills_ignored_count_var.set(str(len(kills_ignored_players)))
-        ignored_signature = ignored_players_light_signature(kills_ignored_players)
         if not force and not is_kills_ff_tab_active():
-            if getattr(refresh_kills_ignored_list, "_deferred_signature", None) != ignored_signature:
-                refresh_kills_ignored_list._deferred_signature = ignored_signature  # type: ignore[attr-defined]
+            if not kills_ignored_render_pending:
                 kills_ignored_render_pending = True
                 request_deferred_render_pump()
             return
+        kills_ignored_count_var.set(str(len(kills_ignored_players)))
+        ignored_signature = ignored_players_light_signature(kills_ignored_players)
         if (
             getattr(refresh_kills_ignored_list, "_signature", None) == ignored_signature
             and not kills_ignored_render_pending
@@ -11681,6 +11680,11 @@ def run_gui(config_path: Path) -> int:
 
     def refresh_kills_rank_table(force: bool = False) -> None:
         nonlocal kills_rank_render_pending
+        if not force and not is_kills_ff_tab_active():
+            if not kills_rank_render_pending:
+                kills_rank_render_pending = True
+                request_deferred_render_pump()
+            return
         daily_total = sum(player.kills for player in kills_daily_ranking)
         global_total = sum(player.kills for player in kills_global_ranking)
         set_text_var(kills_daily_rank_count_var, len(kills_daily_ranking))
@@ -11692,12 +11696,6 @@ def run_gui(config_path: Path) -> int:
             player_rank_light_signature(kills_global_ranking),
             ignored_players_light_signature(kills_ignored_players),
         )
-        if not force and not is_kills_ff_tab_active():
-            if getattr(refresh_kills_rank_table, "_deferred_signature", None) != table_signature:
-                refresh_kills_rank_table._deferred_signature = table_signature  # type: ignore[attr-defined]
-                kills_rank_render_pending = True
-                request_deferred_render_pump()
-            return
         if not force and getattr(refresh_kills_rank_table, "_signature", None) == table_signature and not kills_rank_render_pending:
             return
         refresh_kills_rank_table._signature = table_signature  # type: ignore[attr-defined]

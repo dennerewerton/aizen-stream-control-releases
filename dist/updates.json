@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.231",
-    "notes":  "Evita reparo/clonagem repetida de nomes nas Kills FF quando todos os jogadores ja possuem nick, reduzindo trabalho em atualizacoes e salvamentos.",
+    "version":  "2.6.232",
+    "notes":  "Evita calcular totais e assinaturas do ranking Kills FF quando a aba nao esta aberta; o render e feito sob demanda ao entrar na aba.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.231/AizenStreamControl.exe",
-                    "sha256":  "66f27c9e827ad55a8116e709ae97c645361517bb6e0c571d69fb96e3788d6d5a"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.232/AizenStreamControl.exe",
+                    "sha256":  "dccd503e89b0b1c512961930155a30352a5a83c69a275829e259998785a4ea90"
                 }
 }
