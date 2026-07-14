@@ -747,7 +747,7 @@ def verify_contracts() -> None:
         raise RuntimeError(f"Rank diario separado divergente: {split_rank_state.daily_ranking!r}")
     if [(item.name, item.kills) for item in split_rank_state.global_ranking] != [("Geral", 21)]:
         raise RuntimeError(f"Rank geral separado divergente: {split_rank_state.global_ranking!r}")
-    empty_ack_state = parse_realtime_state({"ok": True, "status": "saved"})
+    empty_ack_state = parse_realtime_state({"ok": True, "status": "saved", "accepted": 2, "count": 2})
     if empty_ack_state.players or empty_ack_state.daily_ranking or empty_ack_state.global_ranking:
         raise RuntimeError(f"ACK vazio do Jarvis virou jogador falso: {empty_ack_state!r}")
     overlay_rank = overlay_rank_players(

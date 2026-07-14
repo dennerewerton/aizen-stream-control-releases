@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.200"
+APP_VERSION = "2.6.201"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4183,6 +4183,13 @@ PLAYER_MAP_METADATA_KEYS = {
     "detail",
     "result",
     "resultado",
+    "accepted",
+    "count",
+    "total_count",
+    "created",
+    "updated",
+    "saved",
+    "synced",
     "error",
     "errors",
     "erro",
@@ -5591,6 +5598,90 @@ def send_kills_snapshot_update(
     )
 
 
+def post_kills_snapshot_once(
+    endpoint_url: str,
+    daily_players: list[PlayerKill],
+    general_players: list[PlayerKill],
+    device_id: str = "",
+    device_name: str = "",
+    room: str = "principal",
+    token: str = "",
+) -> None:
+    daily_players = sorted_player_kills(daily_players)
+    general_players = sorted_player_kills(general_players)
+    daily_payload = player_wire_payload(daily_players)
+    general_payload = player_wire_payload(general_players)
+    payload = {
+        "source": "aizen-stream-control",
+        "mode": "kills_snapshot",
+        "app_version": APP_VERSION,
+        "sync_version": 4,
+        "room": room,
+        "client_id": device_id,
+        "client_name": device_name,
+        "updated_by": device_name,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "revision": int(time.time() * 1000),
+        "action": "replace",
+        "replace": True,
+        "scope": "both",
+        "scopes": ["daily", "general"],
+        "replace_daily": True,
+        "replaceDaily": True,
+        "replace_general": True,
+        "replaceGeneral": True,
+        "players": general_payload,
+        "ranking": general_payload,
+        "global_ranking": general_payload,
+        "globalRanking": general_payload,
+        "general_ranking": general_payload,
+        "generalRanking": general_payload,
+        "geral_ranking": general_payload,
+        "geralRanking": general_payload,
+        "daily_ranking": daily_payload,
+        "dailyRanking": daily_payload,
+        "daily_rank": daily_payload,
+        "dailyRank": daily_payload,
+        "dia_ranking": daily_payload,
+        "diaRanking": daily_payload,
+        "daily": daily_payload,
+        "general": general_payload,
+        "geral": general_payload,
+        "total_players": len(general_players),
+        "total_kills": sum(player.kills for player in general_players),
+        "daily_total_players": len(daily_players),
+        "daily_total_kills": sum(player.kills for player in daily_players),
+        "totals": {
+            "total_players": len(general_players),
+            "total_kills": sum(player.kills for player in general_players),
+            "daily_total_players": len(daily_players),
+            "daily_total_kills": sum(player.kills for player in daily_players),
+        },
+    }
+    headers = {
+        "X-Aizen-Client-Id": device_id,
+        "X-Aizen-Client-Name": device_name,
+        "X-Aizen-Room": room,
+        "X-Aizen-App-Version": APP_VERSION,
+        "X-Aizen-Mode": "kills_snapshot",
+    }
+    if token:
+        headers["X-Aizen-Token"] = token
+    response = requests.post(
+        derive_kills_snapshot_endpoint(endpoint_url),
+        json=payload,
+        headers=headers,
+        timeout=KILLS_POST_TIMEOUT_SECONDS,
+        allow_redirects=False,
+    )
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("Location", "")
+        raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
+    response.raise_for_status()
+    if not response_acknowledges_kills_snapshot(response.text):
+        raise RuntimeError("Jarvis nao confirmou o snapshot leve.")
+
+
 def sync_kills_snapshot_after_scope_save(
     endpoint_url: str,
     confirmed_state: RealtimeState,
@@ -5617,10 +5708,17 @@ def sync_kills_snapshot_after_scope_save(
     if not (daily_players or general_players):
         return confirmed_state
     try:
-        snapshot_state = send_kills_snapshot_update(
+        post_kills_snapshot_once(
             endpoint_url,
             daily_players,
             general_players,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        snapshot_state = fetch_kills_realtime(
+            endpoint_url,
             device_id=device_id,
             device_name=device_name,
             room=room,
