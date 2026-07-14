@@ -78,7 +78,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.183"
+APP_VERSION = "2.6.184"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -11041,8 +11041,7 @@ def run_gui(config_path: Path) -> int:
             "ranking": player_payload(kills_global_ranking),
         }
         try:
-            content = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
-            save_config_text_in_background(config_path, content)
+            save_config_snapshot_in_background(config)
         except Exception as exc:
             log(f"Nao consegui salvar cache do ranking Kills FF: {exc}")
 
@@ -11406,8 +11405,7 @@ def run_gui(config_path: Path) -> int:
             return
         try:
             update_manual_config_snapshot()
-            content = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
-            save_config_text_in_background(config_path, content)
+            save_config_snapshot_in_background(config)
         except Exception as exc:
             log(f"Auto-save leve do Kills FF aguardando configuração válida: {exc}")
 
@@ -17225,14 +17223,32 @@ def run_gui(config_path: Path) -> int:
 
         threading.Thread(target=run, name="AizenConfigAutosave", daemon=True).start()
 
+    def save_config_dict_in_background(path: Path, config_snapshot: dict[str, Any], compact: bool = True) -> None:
+        nonlocal config_auto_save_write_generation
+        config_auto_save_write_generation += 1
+        generation = config_auto_save_write_generation
+        snapshot = dict(config_snapshot)
+
+        def run() -> None:
+            if generation != config_auto_save_write_generation:
+                return
+            try:
+                content = (
+                    json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
+                    if compact
+                    else json.dumps(snapshot, ensure_ascii=False, indent=2)
+                )
+                if generation != config_auto_save_write_generation:
+                    return
+                write_text_if_changed(path, content)
+            except Exception as exc:
+                log(f"Auto-save em segundo plano falhou: {exc}")
+
+        threading.Thread(target=run, name="AizenConfigAutosave", daemon=True).start()
+
     def save_config_snapshot_in_background(config_snapshot: dict[str, Any], compact: bool = True) -> None:
         try:
-            content = (
-                json.dumps(config_snapshot, ensure_ascii=False, separators=(",", ":"))
-                if compact
-                else json.dumps(config_snapshot, ensure_ascii=False, indent=2)
-            )
-            save_config_text_in_background(config_path, content)
+            save_config_dict_in_background(config_path, config_snapshot, compact=compact)
         except Exception as exc:
             log(f"Auto-save em segundo plano aguardando configuração válida: {exc}")
 
@@ -17242,11 +17258,7 @@ def run_gui(config_path: Path) -> int:
             config_auto_save_running = True
             current_config = update_config_from_form()
             if background:
-                if compact:
-                    content = json.dumps(current_config, ensure_ascii=False, separators=(",", ":"))
-                else:
-                    content = json.dumps(current_config, ensure_ascii=False, indent=2)
-                save_config_text_in_background(config_path, content)
+                save_config_dict_in_background(config_path, current_config, compact=compact)
             else:
                 config_auto_save_write_generation += 1
                 if compact:
