@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.253",
-    "notes":  "Corrige salvamento do rank diario do Kills FF no Jarvis: o app agora tenta o payload legado completo apos respostas fracas, confirma painel principal e /rank antes de exibir sincronizado, e envia aliases extras para daily/general.",
+    "version":  "2.6.254",
+    "notes":  "Otimiza o Salvar das Kills FF: leituras internas de preservacao/confirmacao agora usam timeout curto para nao deixar o app preso quando o Jarvis ou a rede oscilam, e o autosave manual evita enfileirar config sem mudancas.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.253/AizenStreamControl.exe",
-                    "sha256":  "6a17e9ac11feb0b30031472311969aa1a68d80c814543c5ae794c9cace35eccf"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.254/AizenStreamControl.exe",
+                    "sha256":  "f5d279ea5624d34480bcbb81b29baff296c6edfe39aaf295c4ee9cad6b70d0c9"
                 }
 }
