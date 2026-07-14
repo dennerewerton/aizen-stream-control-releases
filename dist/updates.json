@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.204",
-    "notes":  "Otimiza o historico Livepix: a aba renderiza eventos em blocos pequenos para abrir sem travar quando houver historico carregado.",
+    "version":  "2.6.205",
+    "notes":  "Otimiza o Salvar das Kills FF: reduz recomputacoes da tabela manual e remove uma leitura extra do Jarvis apos o snapshot leve, mantendo a confirmacao do ranking diario/geral.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.204/AizenStreamControl.exe",
-                    "sha256":  "2b1f09316e4360ea6411d3a781f0f958faba2990ada845953a7fb59230097ad6"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.205/AizenStreamControl.exe",
+                    "sha256":  "ee3694f1b07ae67802784ec22ef012d5fd92db1e7c3fa8e19a1f27c9bceed39d"
                 }
 }

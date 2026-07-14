@@ -79,7 +79,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.204"
+APP_VERSION = "2.6.205"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5718,15 +5718,9 @@ def sync_kills_snapshot_after_scope_save(
             room=room,
             token=token,
         )
-        snapshot_state = fetch_kills_realtime(
-            endpoint_url,
-            device_id=device_id,
-            device_name=device_name,
-            room=room,
-            token=token,
-        )
     except Exception:
         return confirmed_state
+    snapshot_state = local_kills_snapshot_state(daily_players, general_players, updated_by=device_name)
     if kills_scope_matches_state(snapshot_state, clean_scope, players):
         return snapshot_state
     return confirmed_state
@@ -11871,6 +11865,16 @@ def run_gui(config_path: Path) -> int:
             )
         return collect_manual_widget_players(fill_missing_names=fill_missing_names, scope=clean_scope)
 
+    def manual_scope_buffer_snapshot(scope: str | None = None) -> list[PlayerKill]:
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope not in {"daily", "general"}:
+            clean_scope = "daily"
+        players = merge_manual_player_kills(
+            complete_manual_player_names(manual_scope_buffers.get(clean_scope, []), clean_scope)
+        )
+        manual_scope_buffers[clean_scope] = clone_player_list(players)
+        return players
+
     def update_manual_metrics(players: list[PlayerKill] | None = None) -> None:
         if manual_bulk_updating:
             return
@@ -12050,7 +12054,7 @@ def run_gui(config_path: Path) -> int:
             manual_visual_after_id = None
         manual_visual_sort_pending = False
 
-    def capture_visible_manual_scope_for_send(scope: str | None = None) -> None:
+    def capture_visible_manual_scope_for_send(scope: str | None = None, render_pending_table: bool = True) -> None:
         nonlocal manual_table_render_pending, manual_table_render_scope
         clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
         if clean_scope not in {"daily", "general"} or clean_scope != current_manual_scope() or not manual_rows:
@@ -12072,12 +12076,17 @@ def run_gui(config_path: Path) -> int:
                     merged[key] = player
             manual_scope_buffers[clean_scope] = sorted_rank_players(list(merged.values()))
             cancel_manual_table_incremental_render()
-            manual_table_render_pending = False
-            manual_table_render_scope = ""
-            try:
-                set_manual_players(manual_scope_buffers[clean_scope], scope=clean_scope, force_render=True)
-            except NameError:
-                pass
+            if render_pending_table:
+                manual_table_render_pending = False
+                manual_table_render_scope = ""
+                try:
+                    set_manual_players(manual_scope_buffers[clean_scope], scope=clean_scope, force_render=True)
+                except NameError:
+                    pass
+            else:
+                manual_table_render_pending = True
+                manual_table_render_scope = clean_scope
+                update_manual_metrics(manual_scope_buffers[clean_scope])
         else:
             cancel_manual_table_incremental_render()
             manual_table_render_pending = False
@@ -18345,13 +18354,8 @@ def run_gui(config_path: Path) -> int:
         active_scope = normalize_kills_scope_value(local_config.get("kills_manual_scope", "daily"))
         if active_scope not in {"daily", "general"}:
             active_scope = "daily"
-        capture_visible_manual_scope_for_send(active_scope)
-        repair_manual_scope_buffer_names("daily", references=kills_daily_ranking)
-        repair_manual_scope_buffer_names("general", references=kills_global_ranking)
         fill_visible_manual_missing_names_from_rank(active_scope)
-        capture_visible_manual_scope_for_send(active_scope)
-        repair_manual_scope_buffer_names("daily")
-        repair_manual_scope_buffer_names("general")
+        capture_visible_manual_scope_for_send(active_scope, render_pending_table=False)
         if active_scope == current_manual_scope():
             unresolved_rows = [
                 index
@@ -18366,10 +18370,8 @@ def run_gui(config_path: Path) -> int:
                 )
                 messagebox.showinfo("Kills FF", "Preencha o nick dos jogadores que possuem kills antes de salvar.")
                 return
-        manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players(scope=active_scope))
-        repair_manual_scope_buffer_names(active_scope)
-        daily_players = merge_manual_player_kills(complete_manual_player_names(manual_scope_buffers.get("daily", []), "daily"))
-        general_players = merge_manual_player_kills(complete_manual_player_names(manual_scope_buffers.get("general", []), "general"))
+        daily_players = manual_scope_buffer_snapshot("daily")
+        general_players = manual_scope_buffer_snapshot("general")
         apply_local_rank_players("daily", daily_players, schedule_refresh=False)
         apply_local_rank_players("general", general_players, schedule_refresh=False)
         config["kills_realtime_url"] = endpoint_url
