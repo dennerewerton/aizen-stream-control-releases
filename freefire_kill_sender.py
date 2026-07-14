@@ -21781,9 +21781,12 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             return
         update_chat_endpoint_text()
-        apply_chat_overlay_settings()
-        refresh_chat_messages(force=True)
-        refresh_participant_list([])
+        if chat_overlay_window is not None:
+            apply_chat_overlay_settings()
+        if not chat_tab_hidden or chat_monitor_messages_frame is not None or chat_overlay_messages_frame is not None:
+            refresh_chat_messages(force=True)
+        if is_raffle_tab_active():
+            refresh_participant_list([], force=True)
         if not kills_ff_site_sync_hidden:
             if is_kills_ff_tab_active():
                 if not apply_kills_rank_cache():
