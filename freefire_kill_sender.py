@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.232"
+APP_VERSION = "2.6.233"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -5427,6 +5427,10 @@ def send_kills_snapshot_update(
     general_players = sorted_player_kills(general_players)
     daily_payload = player_wire_payload(daily_players)
     general_payload = player_wire_payload(general_players)
+    daily_count = len(daily_players)
+    general_count = len(general_players)
+    daily_kills_total = sum(player.kills for player in daily_players)
+    general_kills_total = sum(player.kills for player in general_players)
     now = datetime.now().isoformat(timespec="seconds")
     base_payload: dict[str, Any] = {
         "source": "aizen-stream-control",
@@ -5448,20 +5452,20 @@ def send_kills_snapshot_update(
         "scopes": ["daily", "general"],
         "replace_daily": True,
         "replace_general": True,
-        "total_players": len(general_players),
-        "total_kills": sum(player.kills for player in general_players),
-        "daily_total_players": len(daily_players),
-        "daily_total_kills": sum(player.kills for player in daily_players),
-        "daily_player_count": len(daily_players),
-        "dailyPlayerCount": len(daily_players),
+        "total_players": general_count,
+        "total_kills": general_kills_total,
+        "daily_total_players": daily_count,
+        "daily_total_kills": daily_kills_total,
+        "daily_player_count": daily_count,
+        "dailyPlayerCount": daily_count,
         "daily_players": daily_payload,
         "dailyPlayers": daily_payload,
-        "daily_kills": sum(player.kills for player in daily_players),
+        "daily_kills": daily_kills_total,
         "totals": {
-            "total_players": len(general_players),
-            "total_kills": sum(player.kills for player in general_players),
-            "daily_total_players": len(daily_players),
-            "daily_total_kills": sum(player.kills for player in daily_players),
+            "total_players": general_count,
+            "total_kills": general_kills_total,
+            "daily_total_players": daily_count,
+            "daily_total_kills": daily_kills_total,
         },
     }
     legacy_payload: dict[str, Any] = {
@@ -5498,10 +5502,31 @@ def send_kills_snapshot_update(
         headers["X-Aizen-Token"] = token
 
     snapshot_cache_key, snapshot_urls = kills_snapshot_url_candidates(endpoint_url)
-    snapshot_action_url = derive_kills_action_endpoint(endpoint_url)
     with requests.Session() as session:
+        def confirmed_persisted_snapshot_state(
+            delays: tuple[float, ...] = KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
+        ) -> RealtimeState | None:
+            try:
+                return fetch_confirmed_kills_snapshot_endpoint_state(
+                    endpoint_url,
+                    daily_players,
+                    general_players,
+                    device_id=device_id,
+                    device_name=device_name,
+                    room=room,
+                    token=token,
+                    session=session,
+                    delays=delays,
+                )
+            except Exception:
+                return None
+
+        def remember_persisted_snapshot_url(snapshot_url: str) -> None:
+            if snapshot_url.rstrip("/").endswith("/action"):
+                return
+            remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
+
         final_state: RealtimeState | None = None
-        unconfirmed_snapshot_ack = False
         latest_rank_state: RealtimeState | None = None
         for snapshot_url in snapshot_urls:
             for payload in payload_candidates:
@@ -5518,6 +5543,7 @@ def send_kills_snapshot_update(
                         raise RuntimeError(f"Endpoint redirecionou para {location}. Use a URL final HTTPS.")
                     response.raise_for_status()
                     state = parse_realtime_state(response.text)
+                    response_acknowledged = response_acknowledges_kills_snapshot(response.text)
                     confirmation_checked = False
                     if kills_snapshot_matches_state(state, daily_players, general_players):
                         confirmation_checked = True
@@ -5536,10 +5562,12 @@ def send_kills_snapshot_update(
                         except Exception:
                             confirmed_state = None
                         if confirmed_state is not None:
-                            remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
-                            return confirmed_state
-                    response_acknowledged = response_acknowledges_kills_snapshot(response.text)
-                    if not confirmation_checked:
+                            persisted_state = confirmed_persisted_snapshot_state()
+                            if persisted_state is not None:
+                                remember_persisted_snapshot_url(snapshot_url)
+                                return persisted_state
+                            latest_rank_state = confirmed_state
+                    if not confirmation_checked and not response_acknowledged:
                         try:
                             confirmed_state, latest_rank_state = fetch_kills_rank_confirmation(
                                 endpoint_url,
@@ -5553,13 +5581,15 @@ def send_kills_snapshot_update(
                                 delays=KILLS_RANK_FAST_CONFIRM_DELAYS_SECONDS,
                             )
                             if confirmed_state is not None:
-                                remember_kills_snapshot_endpoint(snapshot_cache_key, snapshot_url)
-                                return confirmed_state
+                                persisted_state = confirmed_persisted_snapshot_state()
+                                if persisted_state is not None:
+                                    remember_persisted_snapshot_url(snapshot_url)
+                                    return persisted_state
+                                latest_rank_state = confirmed_state
                         except Exception:
                             pass
                     if response_acknowledged:
-                        unconfirmed_snapshot_ack = True
-                        break
+                        continue
                 except requests.HTTPError as exc:
                     status_code = exc.response.status_code if exc.response is not None else 0
                     if status_code in {400, 404, 405, 409, 422}:
@@ -5570,8 +5600,10 @@ def send_kills_snapshot_update(
                     raise
                 except Exception:
                     continue
-            if unconfirmed_snapshot_ack:
-                break
+
+        persisted_state = confirmed_persisted_snapshot_state()
+        if persisted_state is not None:
+            return persisted_state
 
         try:
             current_state = latest_rank_state
@@ -5585,7 +5617,9 @@ def send_kills_snapshot_update(
                     session=session,
                 )
             if kills_snapshot_matches_state(current_state, daily_players, general_players):
-                return current_state
+                persisted_state = confirmed_persisted_snapshot_state()
+                if persisted_state is not None:
+                    return persisted_state
             current_daily = sorted_player_kills(current_state.daily_ranking or [])
             current_general = sorted_player_kills(
                 current_state.global_ranking
@@ -5623,7 +5657,9 @@ def send_kills_snapshot_update(
                         session=session,
                     )
                     if fetched_state is not None:
-                        return fetched_state
+                        persisted_state = confirmed_persisted_snapshot_state()
+                        if persisted_state is not None:
+                            return persisted_state
                 except Exception:
                     pass
         except Exception:
@@ -5690,11 +5726,21 @@ def send_kills_snapshot_update(
             token=token,
         )
         if fetched_state is not None:
-            return fetched_state
+            persisted_state = fetch_confirmed_kills_snapshot_endpoint_state(
+                endpoint_url,
+                daily_players,
+                general_players,
+                device_id=device_id,
+                device_name=device_name,
+                room=room,
+                token=token,
+            )
+            if persisted_state is not None:
+                return persisted_state
     except Exception:
         pass
     raise RuntimeError(
-        "Jarvis respondeu, mas o endpoint /rank nao confirmou o ranking diario/geral enviado. "
+        "Jarvis respondeu, mas o painel principal nao confirmou o ranking diario/geral enviado. "
         "Clique em Atualizar rank e tente Salvar de novo."
     )
 
@@ -5713,6 +5759,10 @@ def post_kills_snapshot_once(
     general_players = sorted_player_kills(general_players)
     daily_payload = player_wire_payload(daily_players)
     general_payload = player_wire_payload(general_players)
+    daily_count = len(daily_players)
+    general_count = len(general_players)
+    daily_kills_total = sum(player.kills for player in daily_players)
+    general_kills_total = sum(player.kills for player in general_players)
     payload = {
         "source": "aizen-stream-control",
         "mode": "kills_snapshot",
@@ -5763,15 +5813,15 @@ def post_kills_snapshot_once(
             "general": general_payload,
             "geral": general_payload,
         },
-        "total_players": len(general_players),
-        "total_kills": sum(player.kills for player in general_players),
-        "daily_total_players": len(daily_players),
-        "daily_total_kills": sum(player.kills for player in daily_players),
+        "total_players": general_count,
+        "total_kills": general_kills_total,
+        "daily_total_players": daily_count,
+        "daily_total_kills": daily_kills_total,
         "totals": {
-            "total_players": len(general_players),
-            "total_kills": sum(player.kills for player in general_players),
-            "daily_total_players": len(daily_players),
-            "daily_total_kills": sum(player.kills for player in daily_players),
+            "total_players": general_count,
+            "total_kills": general_kills_total,
+            "daily_total_players": daily_count,
+            "daily_total_kills": daily_kills_total,
         },
     }
     headers = {
@@ -5865,6 +5915,20 @@ def sync_kills_snapshot_after_scope_save(
         )
     if snapshot_state is not None:
         return snapshot_state
+    try:
+        forced_state = send_kills_snapshot_update(
+            endpoint_url,
+            daily_players,
+            general_players,
+            device_id=device_id,
+            device_name=device_name,
+            room=room,
+            token=token,
+        )
+        return forced_state
+    except Exception as exc:
+        if not post_error_message:
+            post_error_message = str(exc)
     if post_error_message:
         raise RuntimeError(
             "Jarvis confirmou o /rank, mas nao consegui atualizar o painel principal: "
@@ -5938,6 +6002,8 @@ def send_kills_scope_bulk_action_update(
         clean_scope = "daily"
     players = sorted_player_kills(players)
     payload_players = player_wire_payload(players)
+    players_count = len(players)
+    kills_total = sum(player.kills for player in players)
     preserve_scope = "general" if clean_scope == "daily" else "daily"
     preserve_players_snapshot = sorted_player_kills(preserve_players or []) if preserve_players is not None else None
     payload: dict[str, Any] = {
@@ -5963,11 +6029,11 @@ def send_kills_scope_bulk_action_update(
         "scopes": [clean_scope],
         "items": payload_players,
         "data": payload_players,
-        "total_players": len(players),
-        "total_kills": sum(player.kills for player in players),
+        "total_players": players_count,
+        "total_kills": kills_total,
         "totals": {
-            "total_players": len(players),
-            "total_kills": sum(player.kills for player in players),
+            "total_players": players_count,
+            "total_kills": kills_total,
         },
     }
     if clean_scope == "daily":
@@ -5983,14 +6049,14 @@ def send_kills_scope_bulk_action_update(
                 "dia": payload_players,
                 "daily_players": payload_players,
                 "dailyPlayers": payload_players,
-                "daily_player_count": len(players),
-                "dailyPlayerCount": len(players),
-                "daily_total_players": len(players),
-                "dailyTotalPlayers": len(players),
-                "daily_total_kills": sum(player.kills for player in players),
-                "dailyTotalKills": sum(player.kills for player in players),
-                "daily_kills": sum(player.kills for player in players),
-                "dailyKills": sum(player.kills for player in players),
+                "daily_player_count": players_count,
+                "dailyPlayerCount": players_count,
+                "daily_total_players": players_count,
+                "dailyTotalPlayers": players_count,
+                "daily_total_kills": kills_total,
+                "dailyTotalKills": kills_total,
+                "daily_kills": kills_total,
+                "dailyKills": kills_total,
             }
         )
     else:
@@ -18776,12 +18842,37 @@ def run_gui(config_path: Path) -> int:
 
         def run() -> None:
             try:
-                preserve_scope_players = general_players if active_scope == "daily" else daily_players
-                final_state = send_kills_scope_replace_update(
+                snapshot_daily_players = clone_player_list(daily_players)
+                snapshot_general_players = clone_player_list(general_players)
+                if (active_scope == "daily" and not snapshot_general_players) or (
+                    active_scope == "general" and not snapshot_daily_players
+                ):
+                    try:
+                        preserved_state = fetch_kills_rank_realtime(
+                            endpoint_url,
+                            device_id=str(local_config.get("device_id", "")),
+                            device_name=str(local_config.get("device_name", "")),
+                            room=str(local_config.get("kills_sync_room", "principal")),
+                            token=str(local_config.get("jarvis_api_token", "")),
+                        )
+                        if not (preserved_state.daily_ranking or preserved_state.global_ranking or preserved_state.players):
+                            preserved_state = fetch_kills_realtime(
+                                endpoint_url,
+                                device_id=str(local_config.get("device_id", "")),
+                                device_name=str(local_config.get("device_name", "")),
+                                room=str(local_config.get("kills_sync_room", "principal")),
+                                token=str(local_config.get("jarvis_api_token", "")),
+                            )
+                        if active_scope == "daily" and not snapshot_general_players:
+                            snapshot_general_players = kills_scope_players_from_state(preserved_state, "general")
+                        if active_scope == "general" and not snapshot_daily_players:
+                            snapshot_daily_players = kills_scope_players_from_state(preserved_state, "daily")
+                    except Exception:
+                        pass
+                final_state = send_kills_snapshot_update(
                     endpoint_url,
-                    active_scope,
-                    scope_players,
-                    preserve_players=preserve_scope_players or None,
+                    snapshot_daily_players,
+                    snapshot_general_players,
                     device_id=str(local_config.get("device_id", "")),
                     device_name=str(local_config.get("device_name", "")),
                     room=str(local_config.get("kills_sync_room", "principal")),
@@ -18791,13 +18882,13 @@ def run_gui(config_path: Path) -> int:
                     "manual_rank_sent",
                     {
                         "count": len(scope_players),
-                        "signature": signature,
-                        "scope": active_scope,
-                        "scopes": [active_scope],
-                        "daily_count": len(daily_players),
-                        "general_count": len(general_players),
-                        "daily_kills": sum(player.kills for player in daily_players),
-                        "general_kills": sum(player.kills for player in general_players),
+                        "signature": manual_snapshot_signature(snapshot_daily_players, snapshot_general_players),
+                        "scope": "both",
+                        "scopes": ["daily", "general"],
+                        "daily_count": len(snapshot_daily_players),
+                        "general_count": len(snapshot_general_players),
+                        "daily_kills": sum(player.kills for player in snapshot_daily_players),
+                        "general_kills": sum(player.kills for player in snapshot_general_players),
                         "state": final_state,
                     },
                 )

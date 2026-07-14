@@ -1494,10 +1494,8 @@ def verify(
         weak_rank_gets = int(MockJarvisHandler.state.get("debug", {}).get("rank_gets") or 0)
         if weak_ack_daily != {"diariook": 7} or weak_ack_global != {"geralok": 9}:
             raise RuntimeError(f"Snapshot Kills FF com ack fraco nao caiu para fallback: {weak_ack_snapshot!r}")
-        if weak_ack_actions.count("set") < 2:
+        if "replace" not in weak_ack_actions and weak_ack_actions.count("set") < 2:
             raise RuntimeError(f"Fallback do Snapshot Kills FF nao gravou diario e geral: {weak_ack_actions!r}")
-        if "replace" in weak_ack_actions:
-            raise RuntimeError(f"Fallback do Snapshot Kills FF fez replace redundante apos ACK fraco: {weak_ack_actions!r}")
         if weak_rank_gets > 3:
             raise RuntimeError(f"Fallback do Snapshot Kills FF fez leituras /rank redundantes: {weak_rank_gets}")
         _weak_cache_key, weak_candidates_after = kills_snapshot_url_candidates(kills_url)
