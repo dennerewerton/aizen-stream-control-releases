@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.253"
+APP_VERSION = "2.6.254"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -4684,6 +4684,7 @@ def fetch_kills_realtime(
     room: str = "principal",
     token: str = "",
     session: requests.Session | None = None,
+    timeout: float = KILLS_GET_TIMEOUT_SECONDS,
 ) -> RealtimeState:
     headers = {
         "X-Aizen-Client-Id": device_id,
@@ -4707,7 +4708,7 @@ def fetch_kills_realtime(
         base_url,
         params=params,
         headers=headers,
-        timeout=KILLS_GET_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
     response.raise_for_status()
     state = parse_realtime_state(response.text)
@@ -4724,7 +4725,7 @@ def fetch_kills_realtime(
             rank_url,
             params=rank_params,
             headers=headers,
-            timeout=KILLS_GET_TIMEOUT_SECONDS,
+            timeout=timeout,
             allow_redirects=False,
         )
         if 300 <= rank_response.status_code < 400:
@@ -6281,6 +6282,7 @@ def send_kills_scope_bulk_action_update(
                 room=room,
                 token=token,
                 session=session,
+                timeout=KILLS_CONFIRM_GET_TIMEOUT_SECONDS,
             )
             if not (previous_state.daily_ranking or previous_state.global_ranking or previous_state.players):
                 try:
@@ -6291,6 +6293,7 @@ def send_kills_scope_bulk_action_update(
                         room=room,
                         token=token,
                         session=session,
+                        timeout=KILLS_CONFIRM_GET_TIMEOUT_SECONDS,
                     )
                     if base_previous_state.daily_ranking or base_previous_state.global_ranking or base_previous_state.players:
                         previous_state = base_previous_state
@@ -8115,6 +8118,7 @@ def run_gui(config_path: Path) -> int:
     manual_visual_after_id: str | None = None
     manual_visual_sort_pending = False
     manual_config_after_id: str | None = None
+    manual_config_signature = ""
     kills_visual_after_id: str | None = None
     manual_fetching = False
     manual_sending = False
@@ -12417,6 +12421,27 @@ def run_gui(config_path: Path) -> int:
             )
         )
 
+    def manual_config_snapshot_signature() -> str:
+        scoped_players = config.get("manual_kills_by_scope")
+        if isinstance(scoped_players, dict):
+            daily_players = parse_players_payload(scoped_players.get("daily", []))
+            general_players = parse_players_payload(scoped_players.get("general", []))
+        else:
+            daily_players = []
+            general_players = []
+        return "|".join(
+            (
+                normalize_kills_scope_value(config.get("kills_manual_scope", "")),
+                str(config.get("kills_realtime_url") or ""),
+                str(config.get("jarvis_base_url") or ""),
+                str(config.get("kills_sync_room") or ""),
+                str(config.get("device_name") or ""),
+                str(config.get("jarvis_api_token") or ""),
+                str(config.get("message_title") or ""),
+                manual_snapshot_signature(daily_players, general_players),
+            )
+        )
+
     def poll_interval_seconds() -> int:
         try:
             value = int(float(poll_seconds_var.get().replace(",", ".")))
@@ -12781,12 +12806,16 @@ def run_gui(config_path: Path) -> int:
         }
 
     def run_manual_config_autosave() -> None:
-        nonlocal manual_config_after_id
+        nonlocal manual_config_after_id, manual_config_signature
         manual_config_after_id = None
         if app_closing:
             return
         try:
             update_manual_config_snapshot()
+            signature = manual_config_snapshot_signature()
+            if signature == manual_config_signature:
+                return
+            manual_config_signature = signature
             save_config_snapshot_in_background(config)
         except Exception as exc:
             log(f"Auto-save leve do Kills FF aguardando configuração válida: {exc}")
@@ -19266,6 +19295,7 @@ def run_gui(config_path: Path) -> int:
                             device_name=str(local_config.get("device_name", "")),
                             room=str(local_config.get("kills_sync_room", "principal")),
                             token=str(local_config.get("jarvis_api_token", "")),
+                            timeout=KILLS_CONFIRM_GET_TIMEOUT_SECONDS,
                         )
                         if not (remote_state.daily_ranking or remote_state.global_ranking or remote_state.players):
                             remote_state = fetch_kills_realtime(
@@ -19274,6 +19304,7 @@ def run_gui(config_path: Path) -> int:
                                 device_name=str(local_config.get("device_name", "")),
                                 room=str(local_config.get("kills_sync_room", "principal")),
                                 token=str(local_config.get("jarvis_api_token", "")),
+                                timeout=KILLS_CONFIRM_GET_TIMEOUT_SECONDS,
                             )
                     except Exception:
                         return False
