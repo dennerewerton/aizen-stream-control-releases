@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.243"
+APP_VERSION = "2.6.244"
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -149,6 +149,7 @@ UI_PUMP_TIME_BUDGET_SECONDS = 0.035
 SYNC_WORKER_MAX_THREADS = 3
 FF_QUEUE_WORKER_MAX_THREADS = 2
 LIVEPIX_WORKER_MAX_THREADS = 3
+BOT_WORKER_MAX_THREADS = 1
 STALE_MEI_MIN_AGE_SECONDS = 24 * 60 * 60
 STALE_MEI_CLEANUP_LIMIT = 8
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
@@ -8059,6 +8060,7 @@ def run_gui(config_path: Path) -> int:
     sync_executor = ThreadPoolExecutor(max_workers=SYNC_WORKER_MAX_THREADS, thread_name_prefix="AizenSync")
     ff_queue_executor = ThreadPoolExecutor(max_workers=FF_QUEUE_WORKER_MAX_THREADS, thread_name_prefix="AizenFFQueue")
     livepix_executor = ThreadPoolExecutor(max_workers=LIVEPIX_WORKER_MAX_THREADS, thread_name_prefix="AizenLivepix")
+    bot_executor = ThreadPoolExecutor(max_workers=BOT_WORKER_MAX_THREADS, thread_name_prefix="AizenBot")
     sync_pump_after_id: str | None = None
     ff_queue_pump_after_id: str | None = None
     chat_event_pump_after_id: str | None = None
@@ -16930,7 +16932,12 @@ def run_gui(config_path: Path) -> int:
             except Exception as exc:
                 enqueue_bot_send_result(False, str(exc), payload)
 
-        threading.Thread(target=send, name="AizenBotReplySend", daemon=True).start()
+        try:
+            bot_executor.submit(send)
+        except RuntimeError:
+            bot_sending = False
+            if not app_closing:
+                enqueue_bot_send_result(False, "Nao consegui iniciar envio do bot; app esta encerrando.", payload)
         if not app_closing:
             schedule_bot_send_pump(250)
 
@@ -20479,7 +20486,7 @@ def run_gui(config_path: Path) -> int:
             close_chat_monitor_window()
             close_chat_overlay()
             close_livepix_overlay()
-            for executor in (sync_executor, ff_queue_executor, livepix_executor):
+            for executor in (sync_executor, ff_queue_executor, livepix_executor, bot_executor):
                 try:
                     executor.shutdown(wait=False, cancel_futures=True)
                 except Exception:

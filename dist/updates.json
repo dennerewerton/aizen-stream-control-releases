@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.243",
-    "notes":  "Reduz travadinhas ao salvar configuracoes: os botoes Salvar comuns agora enviam o config.json para gravacao em segundo plano, mantendo salvamento sincrono apenas ao fechar ou reabrir o app.",
+    "version":  "2.6.244",
+    "notes":  "Reduz criacao de threads no bot de comandos: respostas automaticas agora usam um worker reutilizavel dedicado, deixando o app mais estavel em lives com muitos comandos.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.243/AizenStreamControl.exe",
-                    "sha256":  "c12572a7701c368cb64388a49697f8002e4ccd0aab483a53e0c0156c3cff12d3"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.244/AizenStreamControl.exe",
+                    "sha256":  "2f9cd4b99c071986a4f1ca80c70f6e401fe15d0b09749a69009b3c06fd30ef3f"
                 }
 }
