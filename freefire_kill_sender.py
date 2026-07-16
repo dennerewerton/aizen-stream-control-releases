@@ -8837,6 +8837,16 @@ def run_gui(config_path: Path) -> int:
     livepix_balance_display_var = tk.StringVar(value="••••")
     livepix_pending_display_var = tk.StringVar(value="••••")
     livepix_count_display_var = tk.StringVar(value="••••")
+    health_tikfinity_var = tk.StringVar(value="Aguardando")
+    health_jarvis_var = tk.StringVar(value="Aguardando")
+    health_livepix_var = tk.StringVar(value="Aguardando")
+    health_chat_var = tk.StringVar(value="Aguardando")
+    health_bot_var = tk.StringVar(value="Aguardando")
+    health_last_chat_var = tk.StringVar(value="-")
+    health_last_bot_var = tk.StringVar(value="-")
+    health_last_sync_var = tk.StringVar(value="-")
+    health_tasks_var = tk.StringVar(value="Sem tarefas pendentes")
+    diagnostic_status_var = tk.StringVar(value="Diagnóstico não executado")
     livepix_checkout_amount_var = tk.StringVar(
         value=str(int(config.get("livepix_checkout_amount", 1000)) / 100).replace(".", ",")
     )
@@ -9533,8 +9543,70 @@ def run_gui(config_path: Path) -> int:
     if not ff_dashboard_panels:
         ff_dashboard_card.grid_remove()
 
+    system_health_card = card(
+        general_tab,
+        "Saúde do sistema",
+        "Resumo rápido das conexões, últimas ações e tarefas em andamento.",
+    )
+    system_health_card.grid(row=4, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    for column in range(5):
+        system_health_card.columnconfigure(column, weight=1)
+    health_items = [
+        ("TikFinity", health_tikfinity_var),
+        ("Jarvis", health_jarvis_var),
+        ("Livepix", health_livepix_var),
+        ("Chat", health_chat_var),
+        ("Bot", health_bot_var),
+    ]
+    for column, (label_text, value_var) in enumerate(health_items):
+        item = ctk.CTkFrame(system_health_card, fg_color=field, corner_radius=8, border_width=1, border_color=border)
+        item.grid(row=2, column=column, sticky="nsew", padx=(18 if column == 0 else 5, 18 if column == 4 else 5), pady=(8, 10))
+        item.columnconfigure(0, weight=1)
+        ctk.CTkLabel(item, text=label_text, text_color=muted, font=("Segoe UI", 11), anchor="w").grid(
+            row=0, column=0, sticky="ew", padx=12, pady=(10, 0)
+        )
+        ctk.CTkLabel(item, textvariable=value_var, text_color=accent, font=("Segoe UI Semibold", 13), anchor="w").grid(
+            row=1, column=0, sticky="ew", padx=12, pady=(0, 10)
+        )
+
+    for column, (label_text, value_var) in enumerate(
+        (
+            ("Último chat", health_last_chat_var),
+            ("Último bot", health_last_bot_var),
+            ("Última sync", health_last_sync_var),
+        )
+    ):
+        detail = ctk.CTkFrame(system_health_card, fg_color=panel, corner_radius=8, border_width=1, border_color=border)
+        detail.grid(row=3, column=column, sticky="nsew", padx=(18 if column == 0 else 5, 5), pady=(0, 14))
+        detail.columnconfigure(0, weight=1)
+        ctk.CTkLabel(detail, text=label_text, text_color=muted, font=("Segoe UI", 11), anchor="w").grid(
+            row=0, column=0, sticky="ew", padx=12, pady=(8, 0)
+        )
+        ctk.CTkLabel(detail, textvariable=value_var, text_color=fg, font=("Segoe UI Semibold", 12), anchor="w", wraplength=260).grid(
+            row=1, column=0, sticky="ew", padx=12, pady=(0, 8)
+        )
+    task_box = ctk.CTkFrame(system_health_card, fg_color=panel, corner_radius=8, border_width=1, border_color=border)
+    task_box.grid(row=3, column=3, columnspan=2, sticky="nsew", padx=(5, 18), pady=(0, 14))
+    task_box.columnconfigure(0, weight=1)
+    ctk.CTkLabel(task_box, text="Fila de tarefas", text_color=muted, font=("Segoe UI", 11), anchor="w").grid(
+        row=0, column=0, sticky="ew", padx=12, pady=(8, 0)
+    )
+    ctk.CTkLabel(task_box, textvariable=health_tasks_var, text_color=fg, font=("Segoe UI Semibold", 12), anchor="w", wraplength=360).grid(
+        row=1, column=0, sticky="ew", padx=12, pady=(0, 8)
+    )
+    health_actions = ctk.CTkFrame(system_health_card, fg_color=panel, corner_radius=0)
+    health_actions.grid(row=4, column=0, columnspan=5, sticky="ew", padx=18, pady=(0, 18))
+    button(health_actions, "Diagnosticar app", lambda: start_app_diagnostic(), "accent", width=142).pack(side=tk.LEFT, padx=(0, 8))
+    ctk.CTkLabel(
+        health_actions,
+        textvariable=diagnostic_status_var,
+        text_color=muted,
+        font=("Segoe UI", 11),
+        anchor="w",
+    ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
     general_info_card = ctk.CTkFrame(general_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    general_info_card.grid(row=4, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    general_info_card.grid(row=5, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
     for column in range(3):
         general_info_card.columnconfigure(column, weight=1)
     for col, label in enumerate(("Versão", "Pasta do app", "Atualização")):
@@ -9560,7 +9632,7 @@ def run_gui(config_path: Path) -> int:
     ).grid(row=1, column=2, sticky="w", padx=18, pady=(4, 14))
 
     general_actions = ctk.CTkFrame(general_tab, fg_color=bg, corner_radius=0)
-    general_actions.grid(row=5, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
+    general_actions.grid(row=6, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
 
     sync_card = card(general_tab, "Lançamento de Kills FF", "Digite as kills no app e lance manualmente no painel Jarvis quando a partida acabar.")
     sync_card.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
@@ -15924,6 +15996,7 @@ def run_gui(config_path: Path) -> int:
         chat_user_count_var.set(str(len(chat_users)))
         chat_platform_var.set(message.platform or "-")
         chat_status_var.set("Recebendo chat")
+        health_last_chat_var.set(f"{message.received_at} {message.username}: {message.comment[:70]}")
 
         confirm_bot_reply_from_chat(message)
         if raffle_worker is not None and getattr(raffle_worker, "source_mode", "browser") == "events":
@@ -17046,6 +17119,7 @@ def run_gui(config_path: Path) -> int:
         if enqueue_bot_reply_payload(payload):
             update_bot_queue_count()
             bot_status_var.set("Na fila")
+            health_last_bot_var.set(f"{datetime.now().strftime('%H:%M:%S')} {command}: {response_text[:70]}")
             log(f"Resposta do bot enfileirada: {response_text[:120]}")
             schedule_bot_send_pump(0)
         else:
@@ -18838,6 +18912,7 @@ def run_gui(config_path: Path) -> int:
                     livepix_status_var.set(f"{status_prefix} (+{added})")
                     if isinstance(errors, list) and errors:
                         log(f"Livepix sincronizado com avisos opcionais: {'; '.join(str(item) for item in errors[:6])}")
+                health_last_sync_var.set(f"{datetime.now().strftime('%H:%M:%S')} Livepix")
                 schedule_livepix_dashboard_refresh()
                 if livepix_full_sync_pending:
                     maybe_start_livepix_full_sync_when_visible()
@@ -19692,12 +19767,29 @@ def run_gui(config_path: Path) -> int:
         nonlocal ff_overlay_applying_remote
         nonlocal manual_last_fetch_error, manual_remote_count_override, manual_remote_total_override
         nonlocal manual_dns_retry_after_id
+        if kind == "diagnostic_done":
+            start_app_diagnostic._running = False  # type: ignore[attr-defined]
+            summary = str(payload.get("summary") or "Atenção") if isinstance(payload, dict) else "Atenção"
+            results = payload.get("results", []) if isinstance(payload, dict) else []
+            if not isinstance(results, list):
+                results = [str(results)]
+            diagnostic_status_var.set(f"Diagnóstico: {summary}")
+            for item in results[:18]:
+                log(f"Diagnóstico: {item}")
+            try:
+                messagebox.showinfo("Diagnóstico do app", "\n".join(str(item) for item in results[:18]) or summary)
+            except tk.TclError:
+                pass
+            update_system_health()
+            return
+
         if kind == "sent":
             manual_sending = False
             manual_last_signature = payload["signature"]
             manual_poll_quiet_cycles = 0
             set_text_var(manual_status_var, "Sincronizado")
             set_text_var(manual_source_var, device_name_var.get().strip() or default_device_name())
+            health_last_sync_var.set(f"{datetime.now().strftime('%H:%M:%S')} Kills FF enviado")
             response_text = str(payload.get("response", "")).strip()
             if response_text:
                 log(f"Kills enviadas para o painel ({payload['count']} jogador(es)). Resposta: {response_text[:200]}")
@@ -19734,6 +19826,10 @@ def run_gui(config_path: Path) -> int:
                 set_text_var(manual_source_var, device_name_var.get().strip() or default_device_name())
             update_manual_metrics()
             set_text_var(manual_status_var, "Sincronizado")
+            health_last_sync_var.set(
+                f"{datetime.now().strftime('%H:%M:%S')} Kills FF salvo "
+                f"({payload.get('daily_count', 0)} dia/{payload.get('general_count', 0)} geral)"
+            )
             sent_scope = normalize_kills_scope_value(payload.get("scope"))
             logged_scopes: list[str] = []
             if isinstance(sent_scopes, list):
@@ -19778,6 +19874,7 @@ def run_gui(config_path: Path) -> int:
             if state.updated_by:
                 set_text_var(manual_source_var, state.updated_by)
             set_text_var(manual_status_var, "Ranking atualizado")
+            health_last_sync_var.set(f"{datetime.now().strftime('%H:%M:%S')} Kills FF ação")
             label = str(payload.get("label") or payload.get("action") or "acao")
             log(f"Ranking Kills FF atualizado pelo Jarvis: {label}.")
             return
@@ -19851,6 +19948,7 @@ def run_gui(config_path: Path) -> int:
                         f"Ranking Kills FF atualizado ({len(state.daily_ranking or [])} diario, "
                         f"{display_count} geral, {display_total} kills){source_suffix}."
                     )
+                    health_last_sync_var.set(f"{datetime.now().strftime('%H:%M:%S')} Jarvis lido")
                 return
             if force:
                 set_text_var(kills_overlay_status_var, "Jarvis respondeu sem rank do dia/geral")
@@ -19876,6 +19974,7 @@ def run_gui(config_path: Path) -> int:
                 display_count = state.total_players if state.total_players is not None else len(players)
                 display_total = state.total_kills if state.total_kills is not None else sum(player.kills for player in players)
                 log(f"Painel lido em tempo real ({display_count} jogador(es), {display_total} kills){source_suffix}.")
+                health_last_sync_var.set(f"{datetime.now().strftime('%H:%M:%S')} Jarvis lido")
             elif force:
                 manual_poll_quiet_cycles = min(manual_poll_quiet_cycles + 1, 8)
                 manual_remote_count_override = state.total_players
@@ -19884,6 +19983,7 @@ def run_gui(config_path: Path) -> int:
                 if state.updated_by:
                     set_text_var(manual_source_var, state.updated_by)
                 log("Painel lido, sem mudanças na lista de kills.")
+                health_last_sync_var.set(f"{datetime.now().strftime('%H:%M:%S')} Jarvis sem mudanças")
             else:
                 manual_poll_quiet_cycles = min(manual_poll_quiet_cycles + 1, 8)
             return
@@ -21534,6 +21634,304 @@ def run_gui(config_path: Path) -> int:
                 delay_ms = LOG_INACTIVE_IDLE_PUMP_MS
             root.after(delay_ms, pump_log)
 
+    def health_preview(value: Any, limit: int = 24) -> str:
+        text = re.sub(r"\s+", " ", str(value or "").strip())
+        if not text:
+            return "-"
+        return text if len(text) <= limit else text[: max(0, limit - 1)].rstrip() + "…"
+
+    def classify_health_status(
+        value: Any,
+        ok_words: tuple[str, ...],
+        *,
+        enabled: bool = True,
+        idle_label: str = "desligado",
+    ) -> str:
+        text = str(value or "").strip()
+        folded = unicodedata.normalize("NFKD", text.casefold())
+        folded = "".join(character for character in folded if not unicodedata.combining(character))
+        error_words = ("erro", "falhou", "falha", "desconect", "recus", "sem confirm", "sem leitura")
+        if not enabled:
+            return f"Atenção - {idle_label}"
+        if any(word in folded for word in error_words):
+            return f"Erro - {health_preview(text)}"
+        if any(word in folded for word in ok_words):
+            return f"OK - {health_preview(text)}"
+        return f"Atenção - {health_preview(text)}"
+
+    def safe_queue_size(target_queue: queue.Queue[Any]) -> int:
+        try:
+            return int(target_queue.qsize())
+        except Exception:
+            return 0
+
+    def update_system_health() -> None:
+        if app_closing:
+            return
+        chat_listener_active = False
+        try:
+            chat_listener_active = bool(
+                chat_webhook_server is not None
+                or (chat_websocket_worker is not None and chat_websocket_worker.thread is not None and chat_websocket_worker.thread.is_alive())
+            )
+        except Exception:
+            chat_listener_active = False
+        bridge_active = False
+        try:
+            bridge_active = bool(bot_bridge_server is not None and bot_bridge_server.client_count() > 0)
+        except Exception:
+            bridge_active = False
+
+        health_tikfinity_var.set(
+            "OK - ponte direta"
+            if bridge_active
+            else classify_health_status(
+                chat_status_var.get(),
+                ("recebendo", "conectado", "ativo", "aguardando"),
+                enabled=chat_listener_active or chat_commands_enabled_var.get() or chat_timers_enabled_var.get(),
+            )
+        )
+        health_chat_var.set(
+            classify_health_status(
+                chat_status_var.get(),
+                ("recebendo", "conectado", "ativo", "aguardando"),
+                enabled=chat_listener_active or not chat_tab_hidden,
+            )
+        )
+        health_jarvis_var.set(
+            classify_health_status(
+                manual_status_var.get(),
+                ("sincronizado", "manual", "ranking atualizado", "jarvis conectado", "atualizado"),
+                enabled=bool(normalize_endpoint_url(sync_url_var.get()) or normalize_endpoint_url(jarvis_base_url_var.get())),
+                idle_label="sem endpoint",
+            )
+        )
+        health_livepix_var.set(
+            classify_health_status(
+                livepix_status_var.get(),
+                ("sincronizado", "sync leve", "webhook ativo", "teste adicionado", "checkout", "plano"),
+                enabled=livepix_enabled_var.get(),
+            )
+        )
+        health_bot_var.set(
+            classify_health_status(
+                bot_status_var.get(),
+                ("aguardando", "enviado", "confirmado", "na fila", "comando", "timer", "rodando"),
+                enabled=chat_commands_enabled_var.get() or chat_timers_enabled_var.get() or bool(bot_pending_confirmations),
+            )
+        )
+
+        tasks: list[str] = []
+        if manual_sending:
+            tasks.append("salvando kills")
+        if manual_fetching:
+            tasks.append("lendo Jarvis")
+        if ff_overlay_sending or ff_overlay_fetching:
+            tasks.append("overlay FF")
+        if ff_queue_sending or ff_queue_fetching:
+            tasks.append("fila FF")
+        if livepix_sync_running:
+            tasks.append("sincronizando Livepix")
+        if livepix_events_loading:
+            tasks.append("carregando histórico")
+        if bot_sending:
+            tasks.append("enviando bot")
+        queue_counts = {
+            "sync": safe_queue_size(sync_queue),
+            "chat": safe_queue_size(chat_event_queue),
+            "bot": safe_queue_size(bot_reply_queue) + safe_queue_size(bot_send_result_queue),
+            "livepix": safe_queue_size(livepix_queue),
+        }
+        active_queues = [f"{name}:{count}" for name, count in queue_counts.items() if count > 0]
+        if active_queues:
+            tasks.append("filas " + ", ".join(active_queues))
+        if not tasks:
+            health_tasks_var.set("Sem tarefas pendentes")
+        else:
+            health_tasks_var.set("; ".join(tasks[:5]))
+
+    def schedule_system_health_update(delay_ms: int = 1500) -> None:
+        if app_closing:
+            return
+        update_system_health()
+        root.after(delay_ms, schedule_system_health_update)
+
+    def diagnostic_result_line(level: str, label: str, detail: str, action: str = "") -> str:
+        suffix = f" | {action}" if action else ""
+        return f"{level}: {label}: {detail}{suffix}"
+
+    def diagnostic_check_dns(host: str, label: str, required: bool, results: list[str]) -> None:
+        if not host:
+            if required:
+                results.append(diagnostic_result_line("Atenção", label, "host não configurado", "preencha a URL/token e teste de novo"))
+            return
+        try:
+            socket.getaddrinfo(host, None)
+        except OSError as exc:
+            level = "Erro" if required else "Atenção"
+            results.append(diagnostic_result_line(level, label, f"DNS falhou para {host}", str(exc)[:120]))
+        else:
+            results.append(diagnostic_result_line("OK", label, f"DNS resolveu {host}"))
+
+    def diagnostic_check_local_port(host: str, port: int, label: str, expected_active: bool, results: list[str]) -> None:
+        host = str(host or "127.0.0.1").strip() or "127.0.0.1"
+        try:
+            port = int(port)
+        except Exception:
+            results.append(diagnostic_result_line("Atenção", label, "porta inválida", "confira a configuração"))
+            return
+        if port <= 0 or port > 65535:
+            results.append(diagnostic_result_line("Atenção", label, "porta fora do intervalo", "use 1 a 65535"))
+            return
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((host, port))
+        except OSError:
+            level = "OK" if expected_active else "Atenção"
+            detail = "porta em uso" if expected_active else "porta já está ocupada"
+            action = "" if expected_active else "feche o outro programa ou troque a porta"
+            results.append(diagnostic_result_line(level, label, f"{detail} ({host}:{port})", action))
+        else:
+            level = "Atenção" if expected_active else "OK"
+            detail = "porta livre, mas serviço não está ativo" if expected_active else "porta livre"
+            action = "inicie o recurso pelo app" if expected_active else ""
+            results.append(diagnostic_result_line(level, label, f"{detail} ({host}:{port})", action))
+        finally:
+            probe.close()
+
+    def diagnostic_check_local_connect(url: str, label: str, results: list[str]) -> None:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        port = parsed.port
+        if not host or port is None:
+            results.append(diagnostic_result_line("Atenção", label, "URL local incompleta", "confira host e porta"))
+            return
+        try:
+            with socket.create_connection((host, port), timeout=2):
+                pass
+        except OSError as exc:
+            results.append(diagnostic_result_line("Atenção", label, f"não conectou em {host}:{port}", str(exc)[:120]))
+        else:
+            results.append(diagnostic_result_line("OK", label, f"conectou em {host}:{port}"))
+
+    def start_app_diagnostic() -> None:
+        if bool(getattr(start_app_diagnostic, "_running", False)):
+            diagnostic_status_var.set("Diagnóstico já está rodando")
+            return
+        endpoint_url = normalize_endpoint_url(sync_url_var.get()) or derive_jarvis_endpoint(jarvis_base_url_var.get(), "kills")
+        settings = {
+            "endpoint_url": endpoint_url,
+            "token": jarvis_token_var.get().strip(),
+            "chat_ws_url": chat_websocket_url_var.get().strip(),
+            "chat_host": chat_webhook_host_var.get().strip() or "127.0.0.1",
+            "chat_port": normalize_kill_value(chat_webhook_port_var.get()),
+            "chat_active": chat_webhook_server is not None,
+            "livepix_enabled": bool(livepix_enabled_var.get()),
+            "livepix_host": livepix_webhook_host_var.get().strip() or "127.0.0.1",
+            "livepix_port": normalize_kill_value(livepix_webhook_port_var.get()),
+            "livepix_active": livepix_webhook_server is not None,
+            "livepix_creds": bool(livepix_client_id_var.get().strip() and livepix_client_secret_var.get().strip()),
+            "bot_ws_url": normalize_streamerbot_websocket_url(bot_streamerbot_ws_url_var.get()),
+        }
+        start_app_diagnostic._running = True  # type: ignore[attr-defined]
+        diagnostic_status_var.set("Diagnóstico rodando...")
+        log("Diagnóstico do app iniciado.")
+
+        def run() -> None:
+            results: list[str] = []
+            try:
+                writable = os.access(APP_DIR, os.W_OK) and os.access(DEFAULT_CONFIG.parent, os.W_OK)
+                if writable:
+                    results.append(diagnostic_result_line("OK", "Permissões", "pasta do app permite salvar configurações"))
+                else:
+                    results.append(
+                        diagnostic_result_line(
+                            "Erro",
+                            "Permissões",
+                            "pasta do app sem escrita",
+                            "reinstale fora de pasta protegida ou execute com permissão correta",
+                        )
+                    )
+
+                endpoint = str(settings["endpoint_url"])
+                if endpoint:
+                    parsed_endpoint = urlparse(endpoint)
+                    diagnostic_check_dns(parsed_endpoint.hostname or "", "Jarvis DNS", True, results)
+                    try:
+                        headers = {"X-Aizen-Token": str(settings["token"])} if settings.get("token") else {}
+                        response = requests.get(
+                            derive_kills_rank_endpoint(endpoint),
+                            headers=headers,
+                            timeout=4,
+                            allow_redirects=False,
+                        )
+                        if 200 <= response.status_code < 300:
+                            results.append(diagnostic_result_line("OK", "Jarvis", f"rank respondeu HTTP {response.status_code}"))
+                        elif response.status_code in {401, 403, 503}:
+                            results.append(
+                                diagnostic_result_line(
+                                    "Erro",
+                                    "Jarvis",
+                                    f"HTTP {response.status_code}",
+                                    "confira token Jarvis e endpoint",
+                                )
+                            )
+                        else:
+                            results.append(diagnostic_result_line("Atenção", "Jarvis", f"HTTP {response.status_code}"))
+                    except Exception as exc:
+                        results.append(diagnostic_result_line("Erro", "Jarvis", "falha no GET /rank", str(exc)[:160]))
+                else:
+                    results.append(diagnostic_result_line("Atenção", "Jarvis", "endpoint não configurado", "preencha a URL base"))
+
+                chat_url = str(settings["chat_ws_url"])
+                parsed_chat = urlparse(chat_url)
+                chat_host = parsed_chat.hostname or ""
+                if chat_host and chat_host not in {"127.0.0.1", "localhost", "::1"}:
+                    diagnostic_check_dns(chat_host, "TikFinity DNS", True, results)
+                elif chat_host:
+                    diagnostic_check_local_connect(chat_url, "TikFinity Event API", results)
+                else:
+                    results.append(diagnostic_result_line("Atenção", "TikFinity", "URL WebSocket não configurada"))
+                diagnostic_check_local_connect(str(settings["bot_ws_url"]), "Ponte direta TikFinity", results)
+                diagnostic_check_local_port(
+                    str(settings["chat_host"]),
+                    int(settings["chat_port"]),
+                    "Porta Chat local",
+                    bool(settings["chat_active"]),
+                    results,
+                )
+
+                if bool(settings["livepix_enabled"]):
+                    diagnostic_check_dns("oauth.livepix.gg", "Livepix OAuth", bool(settings["livepix_creds"]), results)
+                    if not bool(settings["livepix_creds"]):
+                        results.append(
+                            diagnostic_result_line(
+                                "Atenção",
+                                "Livepix credenciais",
+                                "client_id/client_secret ausentes",
+                                "preencha a aba Livepix",
+                            )
+                        )
+                    diagnostic_check_local_port(
+                        str(settings["livepix_host"]),
+                        int(settings["livepix_port"]),
+                        "Porta Livepix webhook",
+                        bool(settings["livepix_active"]),
+                        results,
+                    )
+                else:
+                    results.append(diagnostic_result_line("Atenção", "Livepix", "integração desativada"))
+            except Exception as exc:
+                results.append(diagnostic_result_line("Erro", "Diagnóstico", "falhou durante execução", str(exc)[:180]))
+
+            has_error = any(item.startswith("Erro:") for item in results)
+            has_warning = any(item.startswith("Atenção:") for item in results)
+            summary = "Erro" if has_error else "Atenção" if has_warning else "OK"
+            enqueue_sync_event("diagnostic_done", {"summary": summary, "results": results})
+
+        start_sync_worker(run, name="AizenDiagnostic")
+
     saved_manual_players = parse_players_payload(config.get("manual_kills", []))
     saved_manual_by_scope = config.get("manual_kills_by_scope")
     if isinstance(saved_manual_by_scope, dict):
@@ -21850,6 +22248,7 @@ def run_gui(config_path: Path) -> int:
     livepix_enabled_var.trace_add("write", lambda *_args: start_livepix_history_load(force=livepix_enabled_var.get()))
     bot_delivery_method_var.trace_add("write", refresh_tikfinity_direct_bridge)
     pump_log()
+    schedule_system_health_update(0)
     if not sync_queue.empty():
         schedule_sync_queue_pump(0)
     if not ff_queue_sync_queue.empty():
