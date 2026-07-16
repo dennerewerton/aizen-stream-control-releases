@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.259"
+APP_VERSION = "2.6.260"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -2122,7 +2122,13 @@ def chat_command_token(message_text: str) -> tuple[str, str]:
     return "", ""
 
 
-def render_chat_command_response(template: str, message: LiveChatMessage, command: str, args: str) -> str:
+def render_chat_command_response(
+    template: str,
+    message: LiveChatMessage,
+    command: str,
+    args: str,
+    extra_replacements: dict[str, Any] | None = None,
+) -> str:
     replacements = {
         "{user}": message.username,
         "{username}": message.username,
@@ -2132,7 +2138,16 @@ def render_chat_command_response(template: str, message: LiveChatMessage, comman
         "{message}": message.comment,
         "{platform}": message.platform or "Live",
         "{time}": datetime.now().strftime("%H:%M:%S"),
+        "{hora}": datetime.now().strftime("%H:%M:%S"),
     }
+    if extra_replacements:
+        for marker, value in extra_replacements.items():
+            marker_text = str(marker)
+            if not marker_text.startswith("{"):
+                marker_text = "{" + marker_text
+            if not marker_text.endswith("}"):
+                marker_text = marker_text + "}"
+            replacements[marker_text] = value
     output = str(template or "")
     for marker, value in replacements.items():
         output = output.replace(marker, str(value))
@@ -8926,6 +8941,9 @@ def run_gui(config_path: Path) -> int:
     bot_status_var = tk.StringVar(value="Desligado")
     bot_queue_count_var = tk.StringVar(value="0")
     bot_last_sent_var = tk.StringVar(value="-")
+    command_simulator_message_var = tk.StringVar(value="!boa")
+    command_simulator_user_var = tk.StringVar(value="AizenTeste")
+    command_simulator_result_var = tk.StringVar(value="Digite um comando para simular")
     livepix_enabled_var = tk.BooleanVar(value=bool(config.get("livepix_enabled", False)))
     livepix_client_id_var = tk.StringVar(value=str(config.get("livepix_client_id", "")))
     livepix_client_secret_var = tk.StringVar(value=str(config.get("livepix_client_secret", "")))
@@ -10992,7 +11010,7 @@ def run_gui(config_path: Path) -> int:
     commands_settings_col = ctk.CTkFrame(commands_tab, fg_color=bg, corner_radius=0)
     commands_settings_col.grid(row=0, column=0, sticky="nsew", padx=(12, 8), pady=12)
     commands_settings_col.columnconfigure(0, weight=1)
-    commands_settings_col.rowconfigure(2, weight=1)
+    commands_settings_col.rowconfigure(3, weight=1)
     commands_list_col = ctk.CTkFrame(commands_tab, fg_color=bg, corner_radius=0)
     commands_list_col.grid(row=0, column=1, sticky="nsew", padx=(8, 12), pady=12)
     commands_list_col.columnconfigure(0, weight=1)
@@ -11048,6 +11066,35 @@ def run_gui(config_path: Path) -> int:
     button(streamerbot_actions, "Testar envio", lambda: test_bot_send(), "accent", width=120).pack(side=tk.LEFT, padx=(0, 8))
     button(streamerbot_actions, "Salvar", lambda: save_form(), "ghost", width=86).pack(side=tk.LEFT, padx=(0, 8))
 
+    command_simulator_card = card(
+        commands_settings_col,
+        "Simulador de comandos",
+        "Teste comandos e variaveis sem precisar enviar mensagem no chat real.",
+    )
+    command_simulator_card.grid(row=2, column=0, sticky="ew", pady=8)
+    command_simulator_card.columnconfigure(1, weight=1)
+    section_label(command_simulator_card, "Mensagem", 2)
+    entry(command_simulator_card, command_simulator_message_var).grid(row=2, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    section_label(command_simulator_card, "Usuario", 3)
+    entry(command_simulator_card, command_simulator_user_var).grid(row=3, column=1, columnspan=3, sticky="ew", padx=18, pady=5)
+    ctk.CTkLabel(
+        command_simulator_card,
+        textvariable=command_simulator_result_var,
+        text_color=teal,
+        font=("Segoe UI Semibold", 12),
+        anchor="w",
+        justify="left",
+        wraplength=360,
+    ).grid(row=4, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 4))
+    command_simulator_actions = ctk.CTkFrame(command_simulator_card, fg_color=panel, corner_radius=0)
+    command_simulator_actions.grid(row=5, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 18))
+    button(command_simulator_actions, "Simular", lambda: simulate_custom_command(send=False), "accent", width=100).pack(
+        side=tk.LEFT, padx=(0, 8)
+    )
+    button(command_simulator_actions, "Enviar teste", lambda: simulate_custom_command(send=True), "default", width=116).pack(
+        side=tk.LEFT, padx=(0, 8)
+    )
+
     bot_status_card = ctk.CTkFrame(
         commands_settings_col,
         fg_color=panel_alt,
@@ -11055,7 +11102,7 @@ def run_gui(config_path: Path) -> int:
         border_width=1,
         border_color=border,
     )
-    bot_status_card.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
+    bot_status_card.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
     for column in range(3):
         bot_status_card.columnconfigure(column, weight=1)
     for col, label in enumerate(("Fila", "Ultimo envio", "Status")):
@@ -11075,7 +11122,7 @@ def run_gui(config_path: Path) -> int:
     commands_card = card(
         commands_list_col,
         "Comandos personalizados",
-        "Use variaveis como {user}, {args}, {command}, {platform} e {time}.",
+        "Use variaveis como {user}, {args}, {command}, {platform}, {hora}, {valor_livepix}, {ultimo_doador}, {kills_top1} e {meta_percentual}.",
     )
     commands_card.grid(row=0, column=0, sticky="nsew")
     commands_card.columnconfigure(0, weight=1)
@@ -17197,6 +17244,37 @@ def run_gui(config_path: Path) -> int:
             return
         set_chat_timers(chat_timer_cache or default_chat_timers(), render=True)
 
+    def latest_livepix_donor_event() -> LivepixEvent | None:
+        for event in livepix_events:
+            if event.amount > 0 and event.kind in {"payment", "message", "subscription"}:
+                return event
+        return None
+
+    def command_kills_top1_text() -> str:
+        players = sorted_player_kills(
+            kills_global_ranking
+            or kills_daily_ranking
+            or read_manual_players_light(fill_missing_names=False, scope=current_manual_scope())
+        )
+        if not players:
+            return "-"
+        top_player = players[0]
+        return f"{top_player.name} ({top_player.kills})"
+
+    def chat_command_extra_replacements() -> dict[str, Any]:
+        donor_event = latest_livepix_donor_event()
+        currency = livepix_currency_var.get().strip().upper() or "BRL"
+        return {
+            "valor_livepix": format_livepix_amount(donor_event.amount, donor_event.currency or currency) if donor_event else "-",
+            "ultimo_doador": (donor_event.username.strip() or donor_event.reference or "-") if donor_event else "-",
+            "kills_top1": command_kills_top1_text(),
+            "meta_percentual": livepix_goal_var.get().strip() or "0%",
+            "hora": datetime.now().strftime("%H:%M:%S"),
+        }
+
+    def render_bot_template(template: str, message: LiveChatMessage, command: str, args: str) -> str:
+        return render_chat_command_response(template, message, command, args, chat_command_extra_replacements())
+
     def chat_timer_cache_id(timer: ChatTimer) -> str:
         source = (
             f"{timer.name.casefold()}\0{timer.message}\0"
@@ -17217,7 +17295,7 @@ def run_gui(config_path: Path) -> int:
             message_id=f"timer-{timer_id or uuid.uuid4().hex}-{time.time()}",
             source="timer",
         )
-        response = render_chat_command_response(template, message, f"timer:{clean_name}", "")
+        response = render_bot_template(template, message, f"timer:{clean_name}", "")
         queue_bot_reply(response, message, f"timer:{clean_name}", "", test=test)
         return True
 
@@ -17480,11 +17558,55 @@ def run_gui(config_path: Path) -> int:
                 bot_command_last_missed[f"cooldown:{token}"] = now
                 log(f"Comando {token} recebido, aguardando cooldown ({remaining}s).")
             return
-        response = render_chat_command_response(command.response, message, command.command, args)
+        response = render_bot_template(command.response, message, command.command, args)
         bot_command_last_sent[command.command] = now
         bot_status_var.set(f"Comando {token}")
         log(f"Comando do chat reconhecido: {message.username}: {token}")
         queue_bot_reply(response, message, command.command, args)
+
+    def simulate_custom_command(send: bool = False) -> None:
+        ensure_custom_command_rows_rendered()
+        raw_message = command_simulator_message_var.get().strip()
+        username = re.sub(r"\s+", " ", command_simulator_user_var.get().strip()) or "AizenTeste"
+        token, args = chat_command_token(raw_message)
+        if not token:
+            command_simulator_result_var.set("Nao reconheci um comando. Use algo como !boa ou !pix.")
+            bot_status_var.set("Simulador sem comando")
+            return
+        command = runtime_custom_command(token)
+        if command is None:
+            command_simulator_result_var.set(f"{token} nao existe nos comandos ativos.")
+            bot_status_var.set(f"{token} sem cadastro")
+            return
+        if not command.enabled:
+            command_simulator_result_var.set(f"{token} existe, mas esta desativado.")
+            bot_status_var.set(f"{token} desativado")
+            return
+        cooldown = max(0, int(command.cooldown_seconds or 0))
+        last_sent = bot_command_last_sent.get(command.command, 0.0)
+        remaining = int(cooldown - (time.time() - last_sent)) if cooldown else 0
+        if remaining > 0:
+            command_simulator_result_var.set(f"{token} reconhecido, mas ficaria em cooldown por {remaining}s.")
+            bot_status_var.set(f"Simulador cooldown {remaining}s")
+            return
+        message = LiveChatMessage(
+            username=username,
+            comment=raw_message,
+            platform="Simulador",
+            received_at=datetime.now().strftime("%H:%M:%S"),
+            message_id=f"command-sim-{time.time()}",
+            source="simulator",
+        )
+        response = render_bot_template(command.response, message, command.command, args)
+        if not response:
+            command_simulator_result_var.set(f"{token} reconhecido, mas a resposta ficou vazia.")
+            bot_status_var.set("Simulador vazio")
+            return
+        command_simulator_result_var.set(f"{token} reconhecido -> {response}")
+        bot_status_var.set("Simulador OK")
+        if send:
+            queue_bot_reply(response, message, command.command, args, test=True)
+            command_simulator_result_var.set(f"Teste enfileirado -> {response}")
 
     def test_custom_command_row(row: dict[str, Any]) -> None:
         command = normalize_chat_command(row["command"].get()) or "!teste"
@@ -17496,7 +17618,7 @@ def run_gui(config_path: Path) -> int:
             message_id=f"command-test-{time.time()}",
             source="local",
         )
-        response = render_chat_command_response(row["response"].get(), message, command, "teste")
+        response = render_bot_template(row["response"].get(), message, command, "teste")
         queue_bot_reply(response, message, command, "teste", test=True)
 
     def test_bot_send() -> None:

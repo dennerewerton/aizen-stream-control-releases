@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.259",
-    "notes":  "Adiciona importacao em lote de jogadores no Kills FF com soma ou substituicao dos rankings.",
+    "version":  "2.6.260",
+    "notes":  "Adiciona simulador de comandos e variaveis dinamicas de Livepix, Kills FF e meta.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.259/AizenStreamControl.exe",
-                    "sha256":  "256a69635bb5eb038a76300e05b792ded5ed9e272209d42abb254eb986e009af"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.260/AizenStreamControl.exe",
+                    "sha256":  "216417d28857de867dd8ef00a1f2ddfce2fbf0b89c1d573ffb9da1c79027466c"
                 }
 }
