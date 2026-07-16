@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.255",
-    "notes":  "Reduz carga na abertura: adia carregamento do historico Livepix, posterga a limpeza de pastas temporarias PyInstaller para 30s apos abrir e limita a limpeza por lote, evitando disputa de disco nos primeiros segundos do app.",
+    "version":  "2.6.257",
+    "notes":  "Adiciona backup automatico de configuracao, criacao manual e restauracao pelo app.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.255/AizenStreamControl.exe",
-                    "sha256":  "8336a4a2eb95089eb68dbf746ff3f70f315ff57997309774cd2f6c478ab60738"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.257/AizenStreamControl.exe",
+                    "sha256":  "a15a576af353299ba8bbc383a85d2a9fa9f7e40a1d2034f0f2157101fcffbc50"
                 }
 }

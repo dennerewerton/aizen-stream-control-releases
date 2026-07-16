@@ -80,7 +80,8 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.256"
+APP_VERSION = "2.6.257"
+CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
 )
@@ -725,11 +726,80 @@ def write_text_if_changed(path: Path, content: str) -> None:
                 WRITE_TEXT_CACHE[cache_key] = (current_signature, content)
 
 
+def config_backup_stamp(timestamp: bool = False) -> str:
+    return datetime.now().strftime("%Y-%m-%d-%H%M%S" if timestamp else "%Y-%m-%d")
+
+
+def sanitize_backup_suffix(suffix: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in suffix.strip("-_ "))
+
+
+def config_backup_path(config_path: Path, timestamp: bool = False, suffix: str = "") -> Path:
+    stamp = config_backup_stamp(timestamp=timestamp)
+    safe_suffix = sanitize_backup_suffix(suffix)
+    if safe_suffix:
+        stamp = f"{stamp}-{safe_suffix}"
+    return config_path.with_name(f"{config_path.stem}-backup-{stamp}.json")
+
+
+def list_config_backups(config_path: Path) -> list[Path]:
+    try:
+        backups = list(config_path.parent.glob(f"{config_path.stem}-backup-*.json"))
+    except OSError:
+        return []
+    return sorted(backups, key=lambda item: file_signature(item) or (0, 0), reverse=True)
+
+
+def prune_config_backups(config_path: Path, keep: int = CONFIG_BACKUP_KEEP) -> None:
+    for backup in list_config_backups(config_path)[keep:]:
+        try:
+            backup.unlink()
+        except OSError:
+            pass
+
+
+def normalize_config_backup_content(content: str) -> str:
+    payload = json.loads(content)
+    if not isinstance(payload, dict):
+        raise ValueError("o backup precisa ser um objeto JSON de configuracao")
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def create_config_backup(
+    config_path: Path,
+    content: str | None = None,
+    *,
+    force: bool = False,
+    timestamp: bool = False,
+    suffix: str = "",
+) -> Path | None:
+    if content is None:
+        if not config_path.exists():
+            return None
+        content = config_path.read_text(encoding="utf-8-sig")
+    normalized = normalize_config_backup_content(content)
+    backup_path = config_backup_path(config_path, timestamp=timestamp, suffix=suffix)
+    if backup_path.exists() and not force:
+        return backup_path
+    write_text_if_changed(backup_path, normalized)
+    prune_config_backups(config_path)
+    return backup_path
+
+
+def create_config_backup_if_possible(config_path: Path) -> Path | None:
+    try:
+        return create_config_backup(config_path)
+    except Exception:
+        return None
+
+
 def save_config(path: Path, config: dict[str, Any]) -> None:
+    create_config_backup_if_possible(path)
     write_text_if_changed(path, json.dumps(config, ensure_ascii=False, indent=2))
 
 
 def save_config_compact(path: Path, config: dict[str, Any]) -> None:
+    create_config_backup_if_possible(path)
     write_text_if_changed(path, json.dumps(config, ensure_ascii=False, separators=(",", ":")))
 
 
@@ -8247,6 +8317,7 @@ def run_gui(config_path: Path) -> int:
     config_auto_save_lock = threading.Lock()
     config_auto_save_event = threading.Event()
     config_auto_save_pending: tuple[int, Path, str | dict[str, Any], bool, str] | None = None
+    config_restore_pending_restart = False
     livepix_events: list[LivepixEvent] = []
     livepix_events_loaded = False
     livepix_events_loading = False
@@ -8847,6 +8918,7 @@ def run_gui(config_path: Path) -> int:
     health_last_sync_var = tk.StringVar(value="-")
     health_tasks_var = tk.StringVar(value="Sem tarefas pendentes")
     diagnostic_status_var = tk.StringVar(value="Diagnóstico não executado")
+    config_backup_status_var = tk.StringVar(value="Backup não verificado")
     livepix_checkout_amount_var = tk.StringVar(
         value=str(int(config.get("livepix_checkout_amount", 1000)) / 100).replace(".", ",")
     )
@@ -9607,9 +9679,9 @@ def run_gui(config_path: Path) -> int:
 
     general_info_card = ctk.CTkFrame(general_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
     general_info_card.grid(row=5, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
-    for column in range(3):
+    for column in range(4):
         general_info_card.columnconfigure(column, weight=1)
-    for col, label in enumerate(("Versão", "Pasta do app", "Atualização")):
+    for col, label in enumerate(("Versão", "Pasta do app", "Atualização", "Backup")):
         ctk.CTkLabel(general_info_card, text=label, text_color=muted, font=("Segoe UI", 11)).grid(
             row=0, column=col, sticky="w", padx=18, pady=(14, 0)
         )
@@ -9630,6 +9702,14 @@ def run_gui(config_path: Path) -> int:
         text_color=accent,
         font=("Segoe UI Semibold", 14),
     ).grid(row=1, column=2, sticky="w", padx=18, pady=(4, 14))
+    ctk.CTkLabel(
+        general_info_card,
+        textvariable=config_backup_status_var,
+        text_color=teal,
+        font=("Segoe UI Semibold", 12),
+        wraplength=220,
+        justify="left",
+    ).grid(row=1, column=3, sticky="w", padx=18, pady=(4, 14))
 
     general_actions = ctk.CTkFrame(general_tab, fg_color=bg, corner_radius=0)
     general_actions.grid(row=6, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
@@ -19147,6 +19227,86 @@ def run_gui(config_path: Path) -> int:
         config["ui_theme"] = appearance_config_from_vars()
         return config
 
+    def update_config_backup_status() -> None:
+        backups = list_config_backups(config_path)
+        if not backups:
+            config_backup_status_var.set("Sem backup")
+            return
+        latest = backups[0]
+        try:
+            updated_at = datetime.fromtimestamp(latest.stat().st_mtime).strftime("%d/%m %H:%M")
+        except OSError:
+            updated_at = "data indisponível"
+        config_backup_status_var.set(f"{latest.name}\n{updated_at}")
+
+    def launch_new_app_instance_and_close() -> None:
+        if IS_FROZEN:
+            command = [sys.executable]
+            cwd = APP_DIR
+        else:
+            command = [sys.executable, str(Path(__file__).resolve()), "--config", str(config_path), "--gui"]
+            cwd = ROOT
+        creationflags = 0x08000000 if os.name == "nt" else 0
+        subprocess.Popen(command, cwd=str(cwd), creationflags=creationflags)
+        root.destroy()
+
+    def create_config_backup_now() -> None:
+        try:
+            snapshot = update_config_from_form()
+            content = json.dumps(snapshot, ensure_ascii=False, indent=2)
+            backup = create_config_backup(config_path, content, force=True, timestamp=True, suffix="manual")
+            update_config_backup_status()
+            if backup is None:
+                messagebox.showinfo("Backup", "Ainda nao existe configuracao para salvar em backup.")
+                return
+            log(f"Backup manual criado em {backup}")
+            messagebox.showinfo("Backup", f"Backup criado:\n{backup.name}")
+        except Exception as exc:
+            messagebox.showerror("Backup", f"Nao consegui criar o backup:\n{exc}")
+
+    def restore_config_backup() -> None:
+        nonlocal config_restore_pending_restart
+        backups = list_config_backups(config_path)
+        if not backups:
+            update_config_backup_status()
+            messagebox.showinfo("Backup", "Nenhum backup encontrado nesta pasta ainda.")
+            return
+        selected = filedialog.askopenfilename(
+            title="Restaurar backup de configuracao",
+            initialdir=str(config_path.parent),
+            initialfile=backups[0].name,
+            filetypes=(("Backups de configuracao", f"{config_path.stem}-backup-*.json"), ("JSON", "*.json")),
+        )
+        if not selected:
+            return
+        backup_path = Path(selected)
+        try:
+            restored_content = normalize_config_backup_content(backup_path.read_text(encoding="utf-8-sig"))
+        except Exception as exc:
+            messagebox.showerror("Backup", f"Este backup nao parece valido:\n{exc}")
+            return
+        if not messagebox.askyesno(
+            "Restaurar backup",
+            f"Restaurar este backup?\n\n{backup_path.name}\n\nO app vai guardar uma copia da configuracao atual antes de trocar.",
+        ):
+            return
+        try:
+            try:
+                create_config_backup(config_path, force=True, timestamp=True, suffix="antes-restaurar")
+            except Exception as backup_exc:
+                log(f"Backup antes da restauracao falhou: {backup_exc}")
+            write_text_if_changed(config_path, restored_content)
+            config_restore_pending_restart = True
+            update_config_backup_status()
+            log(f"Configuracao restaurada do backup {backup_path}")
+        except Exception as exc:
+            messagebox.showerror("Backup", f"Nao consegui restaurar o backup:\n{exc}")
+            return
+        if messagebox.askyesno("Backup", "Backup restaurado. Reabrir o app agora para carregar essa configuracao?"):
+            launch_new_app_instance_and_close()
+        else:
+            messagebox.showinfo("Backup", "Backup restaurado. Feche e abra o app para carregar essa configuracao.")
+
     def ensure_config_autosave_worker() -> None:
         nonlocal config_auto_save_worker_started, config_auto_save_pending
         if config_auto_save_worker_started:
@@ -19179,7 +19339,12 @@ def run_gui(config_path: Path) -> int:
                             )
                         if generation != config_auto_save_write_generation:
                             continue
+                        try:
+                            create_config_backup(path)
+                        except Exception as backup_exc:
+                            log(f"Backup automatico ignorado: {backup_exc}")
                         write_text_if_changed(path, content)
+                        root.after(0, update_config_backup_status)
                     except Exception as exc:
                         log(f"Auto-save em segundo plano falhou: {exc}")
 
@@ -19208,6 +19373,9 @@ def run_gui(config_path: Path) -> int:
 
     def save_current_config_silent(compact: bool = False, background: bool = False) -> bool:
         nonlocal config_auto_save_running, config_auto_save_write_generation
+        if config_restore_pending_restart:
+            log("Configuracao restaurada aguardando reabertura; salvamento pausado para nao sobrescrever o backup.")
+            return False
         try:
             config_auto_save_running = True
             current_config = update_config_from_form()
@@ -19219,6 +19387,7 @@ def run_gui(config_path: Path) -> int:
                     save_config_compact(config_path, current_config)
                 else:
                     save_config(config_path, current_config)
+                update_config_backup_status()
             return True
         except Exception as exc:
             log(f"Auto-save aguardando configuração válida: {exc}")
@@ -19235,7 +19404,7 @@ def run_gui(config_path: Path) -> int:
 
     def schedule_config_autosave(delay_ms: int = 1800) -> None:
         nonlocal config_auto_save_after_id
-        if app_closing or config_auto_save_running:
+        if app_closing or config_auto_save_running or config_restore_pending_restart:
             return
         if config_auto_save_after_id is not None:
             try:
@@ -19256,15 +19425,7 @@ def run_gui(config_path: Path) -> int:
 
     def restart_app() -> None:
         save_config(config_path, update_config_from_form())
-        if IS_FROZEN:
-            command = [sys.executable]
-            cwd = APP_DIR
-        else:
-            command = [sys.executable, str(Path(__file__).resolve()), "--config", str(config_path), "--gui"]
-            cwd = ROOT
-        creationflags = 0x08000000 if os.name == "nt" else 0
-        subprocess.Popen(command, cwd=str(cwd), creationflags=creationflags)
-        root.destroy()
+        launch_new_app_instance_and_close()
 
     def save_appearance(restart: bool = False) -> None:
         try:
@@ -21434,6 +21595,8 @@ def run_gui(config_path: Path) -> int:
     logo_preview_label.configure(image=None, text="A")
 
     button(general_actions, "Salvar configurações", save_form, "accent", width=150).pack(side=tk.LEFT, padx=(0, 8))
+    button(general_actions, "Criar backup", create_config_backup_now, "default", width=116).pack(side=tk.LEFT, padx=(0, 8))
+    button(general_actions, "Restaurar backup", restore_config_backup, "ghost", width=136).pack(side=tk.LEFT, padx=(0, 8))
     button(general_actions, "Minimizar", hide_window, "default", width=96).pack(side=tk.LEFT, padx=(0, 8))
     button(general_actions, "Sair", close_app, "danger", width=76).pack(side=tk.LEFT, padx=(0, 8))
 
@@ -22248,6 +22411,7 @@ def run_gui(config_path: Path) -> int:
     livepix_enabled_var.trace_add("write", lambda *_args: start_livepix_history_load(force=livepix_enabled_var.get()))
     bot_delivery_method_var.trace_add("write", refresh_tikfinity_direct_bridge)
     pump_log()
+    update_config_backup_status()
     schedule_system_health_update(0)
     if not sync_queue.empty():
         schedule_sync_queue_pump(0)
