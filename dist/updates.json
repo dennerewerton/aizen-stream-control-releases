@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.257",
-    "notes":  "Adiciona backup automatico de configuracao, criacao manual e restauracao pelo app.",
+    "version":  "2.6.258",
+    "notes":  "Adiciona historico local de partidas Kills FF e confirmacao visual Diario/Geral salvo no Jarvis.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.257/AizenStreamControl.exe",
-                    "sha256":  "a15a576af353299ba8bbc383a85d2a9fa9f7e40a1d2034f0f2157101fcffbc50"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.258/AizenStreamControl.exe",
+                    "sha256":  "9d203623a701d0b3d80c6863ba484c2baacf785deb5d73fd2afa39362a32f402"
                 }
 }

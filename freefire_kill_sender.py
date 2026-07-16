@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.257"
+APP_VERSION = "2.6.258"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -545,6 +545,7 @@ def load_config(path: Path) -> dict[str, Any]:
     data.setdefault("ignored_players", [])
     data.setdefault("jarvis_api_token", "")
     data.setdefault("manual_kills", [])
+    data.setdefault("kills_history_file", "kills_matches_history.json")
     data.setdefault("kills_manual_scope", "daily")
     data.setdefault("kills_realtime_url", data.get("jarvis_endpoint_url", ""))
     data.setdefault("kills_realtime_auto_sync", False)
@@ -817,6 +818,31 @@ def append_raffle_history(path: Path, record: dict[str, Any]) -> None:
     history.append(record)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def kills_matches_history_path(config_path: Path, config: dict[str, Any]) -> Path:
+    raw_path = str(config.get("kills_history_file", "kills_matches_history.json")).strip() or "kills_matches_history.json"
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = config_path.parent / path
+    return path
+
+
+def append_kills_match_history(path: Path, record: dict[str, Any], limit: int = 300) -> None:
+    history: list[dict[str, Any]] = []
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(loaded, list):
+                history = loaded
+        except json.JSONDecodeError:
+            backup = path.with_suffix(f".invalid_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+            path.replace(backup)
+
+    history.insert(0, record)
+    if limit > 0:
+        history = history[:limit]
+    write_text_if_changed(path, json.dumps(history, ensure_ascii=False, indent=2))
 
 
 def _dict_value(data: Any, *path: str) -> Any:
@@ -19694,6 +19720,11 @@ def run_gui(config_path: Path) -> int:
                         "general_count": len(final_general_players),
                         "daily_kills": sum(player.kills for player in final_daily_players),
                         "general_kills": sum(player.kills for player in final_general_players),
+                        "daily_players": player_payload(final_daily_players),
+                        "general_players": player_payload(final_general_players),
+                        "jarvis_endpoint": endpoint_url,
+                        "room": str(local_config.get("kills_sync_room", "principal")),
+                        "device_name": str(local_config.get("device_name") or ""),
                         "state": final_state,
                     },
                 )
@@ -19920,6 +19951,47 @@ def run_gui(config_path: Path) -> int:
         if not ff_overlay_site_sync_hidden:
             schedule_ff_overlay_poll()
 
+    def record_kills_match_history(payload: dict[str, Any], saved_scopes: list[str]) -> None:
+        scopes_payload: dict[str, Any] = {}
+        state = payload.get("state")
+        for scope_key in saved_scopes:
+            if scope_key not in {"daily", "general"}:
+                continue
+            raw_players = payload.get(f"{scope_key}_players")
+            if not isinstance(raw_players, list) and isinstance(state, RealtimeState):
+                raw_players = player_payload(kills_scope_players_from_state(state, scope_key))
+            cleaned_players: list[dict[str, Any]] = []
+            if isinstance(raw_players, list):
+                for item in raw_players:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("name") or item.get("nick") or item.get("nickname") or "").strip()
+                    kills = normalize_kill_value(item.get("kills", 0))
+                    if name or kills:
+                        cleaned_players.append({"name": name, "kills": kills})
+            count_key = "daily_count" if scope_key == "daily" else "general_count"
+            kills_key = "daily_kills" if scope_key == "daily" else "general_kills"
+            scopes_payload[scope_key] = {
+                "label": "Diário" if scope_key == "daily" else "Geral",
+                "player_count": len(cleaned_players) if cleaned_players else normalize_kill_value(payload.get(count_key, 0)),
+                "kills_total": sum(item["kills"] for item in cleaned_players) if cleaned_players else normalize_kill_value(payload.get(kills_key, 0)),
+                "players": cleaned_players,
+            }
+        if not scopes_payload:
+            return
+        record = {
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+            "active_scope": normalize_kills_scope_value(payload.get("scope")),
+            "scopes_saved": list(scopes_payload.keys()),
+            "room": str(payload.get("room") or sync_room_var.get().strip() or "principal"),
+            "device_name": str(payload.get("device_name") or device_name_var.get().strip() or default_device_name()),
+            "jarvis_endpoint": str(payload.get("jarvis_endpoint") or sync_url_var.get().strip()),
+            "scopes": scopes_payload,
+        }
+        history_path = kills_matches_history_path(config_path, config)
+        append_kills_match_history(history_path, record)
+        log(f"Historico Kills FF registrado em {history_path.name}.")
+
     def handle_sync_event(kind: str, payload: Any) -> None:
         nonlocal manual_sending, manual_fetching, manual_last_signature, manual_last_remote_signature
         nonlocal manual_last_rank_signature, manual_poll_quiet_cycles
@@ -19986,7 +20058,6 @@ def run_gui(config_path: Path) -> int:
             else:
                 set_text_var(manual_source_var, device_name_var.get().strip() or default_device_name())
             update_manual_metrics()
-            set_text_var(manual_status_var, "Sincronizado")
             health_last_sync_var.set(
                 f"{datetime.now().strftime('%H:%M:%S')} Kills FF salvo "
                 f"({payload.get('daily_count', 0)} dia/{payload.get('general_count', 0)} geral)"
@@ -20001,6 +20072,11 @@ def run_gui(config_path: Path) -> int:
             elif sent_scope in {"daily", "general"}:
                 logged_scopes.append(sent_scope)
             if logged_scopes:
+                status_parts = [
+                    "Diário salvo no Jarvis" if clean_sent_scope == "daily" else "Geral salvo no Jarvis"
+                    for clean_sent_scope in logged_scopes
+                ]
+                set_text_var(manual_status_var, " / ".join(status_parts))
                 summary_parts = []
                 for clean_sent_scope in logged_scopes:
                     label = kills_scope_label(clean_sent_scope)
@@ -20010,7 +20086,12 @@ def run_gui(config_path: Path) -> int:
                         f"{label}: {payload.get(count_key, 0)} jogador(es), {payload.get(kills_key, 0)} kills"
                     )
                 log(f"Kills FF salvas no Jarvis ({' / '.join(summary_parts)}).")
+                try:
+                    record_kills_match_history(payload, logged_scopes)
+                except Exception as history_exc:
+                    log(f"Nao consegui registrar historico Kills FF: {history_exc}")
             else:
+                set_text_var(manual_status_var, "Salvo no Jarvis")
                 log(
                     "Kills FF salvas no Jarvis exatamente como no app "
                     f"({payload.get('daily_count', 0)} diario, {payload.get('daily_kills', 0)} kills / "
