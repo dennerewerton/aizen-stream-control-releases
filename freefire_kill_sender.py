@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.258"
+APP_VERSION = "2.6.259"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -3713,6 +3713,27 @@ def merged_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
 
 def sorted_player_kills(players: list[PlayerKill]) -> list[PlayerKill]:
     return sorted(merged_player_kills(players), key=lambda item: (-item.kills, normalize_player_key(item.name)))
+
+
+def parse_kills_import_lines(raw_text: str) -> tuple[list[PlayerKill], list[str]]:
+    players: list[PlayerKill] = []
+    errors: list[str] = []
+    for line_number, raw_line in enumerate(str(raw_text or "").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^\s*(?:[-*]+|\d+[.)-])\s*", "", line).strip()
+        match = re.match(r"^(?P<name>.+?)(?:\s+|[,;:|=/\\-]+)\s*(?P<kills>\d+)\s*$", line)
+        if not match:
+            errors.append(f"Linha {line_number}: {raw_line.strip()}")
+            continue
+        name = re.sub(r"\s+", " ", match.group("name").strip(" ,;:|=/\\-"))
+        kills = normalize_kill_value(match.group("kills"))
+        if not name:
+            errors.append(f"Linha {line_number}: nome vazio")
+            continue
+        players.append(PlayerKill(name=name, kills=kills, key=normalize_player_key(name)))
+    return merged_player_kills(players), errors
 
 
 def complete_player_names_from_references(players: list[PlayerKill], references: list[PlayerKill] | None) -> list[PlayerKill]:
@@ -13554,6 +13575,145 @@ def run_gui(config_path: Path) -> int:
         name_entry.bind("<FocusOut>", lambda _event: root.after(140, hide_dialog_suggestions))
         name_entry.bind("<Return>", lambda _event: "break" if select_first_dialog_suggestion() else (add_and_close(), "break")[-1])
 
+    def apply_imported_manual_players(players: list[PlayerKill], replace: bool = False) -> None:
+        nonlocal manual_bulk_updating, manual_last_local_edit_at
+        imported_players = merge_manual_player_kills(players)
+        if not imported_players:
+            return
+        active_scope = current_manual_scope()
+        if active_scope not in {"daily", "general"}:
+            active_scope = "daily"
+        manual_scope_buffers[active_scope] = merge_manual_player_kills(collect_manual_players(scope=active_scope))
+        clear_manual_reference_cache()
+
+        previous_bulk_updating = manual_bulk_updating
+        manual_bulk_updating = True
+        try:
+            for scope_key in ("daily", "general"):
+                if replace:
+                    next_players = clone_player_list(imported_players)
+                else:
+                    existing_players = (
+                        clone_player_list(manual_scope_buffers.get(scope_key, []))
+                        if scope_key == active_scope
+                        else manual_scope_display_players(scope_key, prefer_remote=True)
+                    )
+                    next_players = merge_manual_player_kills(existing_players + imported_players)
+                manual_scope_buffers[scope_key] = next_players
+                manual_scope_dirty.add(scope_key)
+                refresh_local_rank_from_manual_scope(scope_key)
+        finally:
+            manual_bulk_updating = previous_bulk_updating
+
+        set_manual_players(manual_scope_buffers[active_scope], scope=active_scope, force_render=True)
+        sync_kills_rank_tab_with_manual_scope(active_scope)
+        clear_manual_metric_overrides()
+        manual_last_local_edit_at = time.monotonic()
+        schedule_kills_visual_refresh(delay_ms=80)
+        update_manual_metrics()
+        action_text = "substituídos" if replace else "importados"
+        manual_status_var.set(f"{len(imported_players)} jogador(es) {action_text} no diario e geral")
+        try:
+            schedule_manual_config_autosave()
+        except NameError:
+            pass
+
+    def open_manual_import_dialog() -> None:
+        dialog = ctk.CTkToplevel(root)
+        dialog.title("Importar lista Kills FF")
+        dialog.geometry("640x560")
+        dialog.minsize(520, 440)
+        dialog.configure(fg_color=bg)
+        try:
+            dialog.transient(root)
+            dialog.grab_set()
+            dialog.lift()
+            dialog.focus_force()
+        except tk.TclError:
+            pass
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(0, weight=1)
+
+        preview_var = tk.StringVar(value="Cole uma lista no formato: Pedro 10")
+        import_card = card(
+            dialog,
+            "Importar jogadores",
+            "Cole um jogador por linha. O ultimo numero da linha vira a quantidade de kills.",
+        )
+        import_card.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
+        import_card.columnconfigure(0, weight=1)
+        import_card.rowconfigure(2, weight=1)
+
+        import_text = ctk.CTkTextbox(
+            import_card,
+            height=260,
+            fg_color=field,
+            border_color=border,
+            border_width=1,
+            text_color=fg,
+            corner_radius=8,
+            font=("Segoe UI", 13),
+        )
+        import_text.grid(row=2, column=0, columnspan=4, sticky="nsew", padx=18, pady=(4, 8))
+        import_text.insert("1.0", "Pedro 10\nJoao 7\nMaria 5")
+
+        ctk.CTkLabel(
+            import_card,
+            textvariable=preview_var,
+            text_color=muted,
+            font=("Segoe UI Semibold", 12),
+            anchor="w",
+            justify="left",
+        ).grid(row=3, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 8))
+
+        import_actions = ctk.CTkFrame(import_card, fg_color=panel, corner_radius=0)
+        import_actions.grid(row=4, column=0, columnspan=4, sticky="ew", padx=18, pady=(8, 18))
+
+        def read_import() -> tuple[list[PlayerKill], list[str]]:
+            return parse_kills_import_lines(import_text.get("1.0", "end-1c"))
+
+        def refresh_import_preview(*_args: Any) -> None:
+            players, errors = read_import()
+            kills_total = sum(player.kills for player in players)
+            text = f"{len(players)} jogador(es) reconhecido(s), {kills_total} kills"
+            if errors:
+                text += f" | {len(errors)} linha(s) ignorada(s)"
+            preview_var.set(text)
+
+        def import_and_close(replace: bool = False) -> None:
+            players, errors = read_import()
+            if not players:
+                messagebox.showinfo("Kills FF", "Nao encontrei nenhuma linha valida para importar.")
+                return
+            if errors:
+                details = "\n".join(errors[:6])
+                if not messagebox.askyesno(
+                    "Kills FF",
+                    f"{len(errors)} linha(s) nao foram reconhecidas:\n{details}\n\nImportar mesmo assim?",
+                ):
+                    return
+            if replace and not messagebox.askyesno(
+                "Kills FF",
+                "Substituir os jogadores do Diario e do Geral pela lista importada?",
+            ):
+                return
+            apply_imported_manual_players(players, replace=replace)
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass
+
+        button(import_actions, "Importar somando", lambda: import_and_close(False), "accent", width=150).pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        button(import_actions, "Substituir rankings", lambda: import_and_close(True), "default", width=150).pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        button(import_actions, "Cancelar", dialog.destroy, "ghost", width=100).pack(side=tk.LEFT, padx=(0, 8))
+        import_text.bind("<KeyRelease>", refresh_import_preview)
+        refresh_import_preview()
+        import_text.focus_set()
+
     def remove_manual_row(row: dict[str, Any]) -> None:
         if row not in manual_rows:
             return
@@ -21743,10 +21903,11 @@ def run_gui(config_path: Path) -> int:
         manual_actions,
         [
             ("Adicionar jogador", open_manual_kill_dialog, "accent"),
+            ("Importar lista", open_manual_import_dialog, "default"),
             ("Salvar", lambda: send_manual_kills(force=True), "accent"),
             ("Zerar", reset_manual_kills, "ghost"),
         ],
-        columns=3,
+        columns=4,
     )
 
     if ff_queue_actions is not None:
