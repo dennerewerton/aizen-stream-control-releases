@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.262"
+APP_VERSION = "2.6.263"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -2164,6 +2164,96 @@ def render_chat_command_response(
     for marker, value in replacements.items():
         output = output.replace(marker, str(value))
     return re.sub(r"\s+", " ", output).strip()
+
+
+def normalize_bot_confirmation_text_value(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def is_timer_countable_chat_message(
+    message: LiveChatMessage,
+    pending_bot_messages: Iterable[Any] = (),
+    ignored_usernames: Iterable[str] = (),
+) -> bool:
+    platform = str(message.platform or "").strip().casefold()
+    source = str(message.source or "").strip().casefold()
+    if platform in {"aizen", "timer", "livepix", "teste", "simulador"}:
+        return False
+    if source in {"timer", "livepix", "local", "simulator"}:
+        return False
+    received = normalize_bot_confirmation_text_value(message.comment)
+    if received:
+        for expected_message in pending_bot_messages:
+            expected = normalize_bot_confirmation_text_value(expected_message)
+            if expected and expected == received:
+                return False
+    ignored = {str(item or "").strip().casefold() for item in ignored_usernames if str(item or "").strip()}
+    if ignored and message.username.strip().casefold() in ignored:
+        return False
+    return bool(message.comment.strip())
+
+
+def bot_cooldown_release_key(payload: dict[str, Any], last_sent: dict[str, float], tolerance_seconds: float = 2.0) -> str:
+    key = normalize_chat_command(payload.get("commandCooldownKey") or "")
+    if not key or not key.startswith("!"):
+        return ""
+    try:
+        started_at = float(payload.get("commandCooldownStartedAt") or 0.0)
+    except (TypeError, ValueError):
+        started_at = 0.0
+    current = float(last_sent.get(key, 0.0) or 0.0)
+    if current <= 0:
+        return ""
+    if started_at and abs(current - started_at) > tolerance_seconds:
+        return ""
+    return key
+
+
+def livepix_event_identity(event: LivepixEvent) -> tuple[str, str]:
+    return (event.kind, event.event_id or event.reference)
+
+
+def livepix_event_is_fresh_for_alert_rule(
+    event: LivepixEvent,
+    session_started_at: datetime,
+    now: datetime | None = None,
+) -> bool:
+    if str(event.source or "").casefold() == "test":
+        return True
+    current_time = now or datetime.now()
+    created_at = livepix_parse_datetime(event.created_at)
+    session_floor = session_started_at - timedelta(seconds=LIVEPIX_ALERT_STARTUP_GRACE_SECONDS)
+    if created_at < session_floor:
+        return False
+    age_seconds = (current_time - created_at).total_seconds()
+    return -300 <= age_seconds <= LIVEPIX_ALERT_MAX_AGE_SECONDS
+
+
+def livepix_should_announce_event_rule(
+    event: LivepixEvent,
+    *,
+    was_known: bool,
+    announce_enabled: bool,
+    session_started_at: datetime,
+    recent_alerts: dict[tuple[str, str], float],
+    now: datetime | None = None,
+    monotonic_now: float | None = None,
+) -> bool:
+    if not announce_enabled:
+        return False
+    key = livepix_event_identity(event)
+    if not key[1]:
+        return False
+    current_monotonic = time.monotonic() if monotonic_now is None else float(monotonic_now)
+    for old_key, last_seen in list(recent_alerts.items()):
+        if current_monotonic - last_seen > LIVEPIX_ALERT_REPEAT_SUPPRESS_SECONDS:
+            recent_alerts.pop(old_key, None)
+    if was_known or key in recent_alerts:
+        return False
+    if not livepix_event_is_fresh_for_alert_rule(event, session_started_at, now=now):
+        return False
+    recent_alerts[key] = current_monotonic
+    return True
 
 
 WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -15982,7 +16072,7 @@ def run_gui(config_path: Path) -> int:
                 chat_users[user_key] = recent_message
 
     def normalize_bot_confirmation_text(value: Any) -> str:
-        return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+        return normalize_bot_confirmation_text_value(value)
 
     def bot_reply_seen_in_chat(text: str, start_index: int = 0) -> bool:
         expected = normalize_bot_confirmation_text(text)
@@ -16353,24 +16443,11 @@ def run_gui(config_path: Path) -> int:
         refresh_chat_messages(force=True)
 
     def is_real_chat_message_for_timer(message: LiveChatMessage) -> bool:
-        platform = str(message.platform or "").strip().casefold()
-        source = str(message.source or "").strip().casefold()
-        if platform in {"aizen", "timer", "livepix", "teste", "simulador"}:
-            return False
-        if source in {"timer", "livepix", "local", "simulator"}:
-            return False
-        received = normalize_bot_confirmation_text(message.comment)
-        if received:
-            for pending in bot_pending_confirmations.values():
-                expected = normalize_bot_confirmation_text(pending.get("message"))
-                if expected and expected == received:
-                    return False
-        try:
-            if message.username.strip().casefold() in bot_ignored_usernames():
-                return False
-        except NameError:
-            pass
-        return bool(message.comment.strip())
+        return is_timer_countable_chat_message(
+            message,
+            pending_bot_messages=[pending.get("message") for pending in bot_pending_confirmations.values()],
+            ignored_usernames=bot_ignored_usernames(),
+        )
 
     def add_live_chat_message(message: LiveChatMessage) -> None:
         nonlocal chat_timer_message_count
@@ -17575,17 +17652,8 @@ def run_gui(config_path: Path) -> int:
             release_bot_command_cooldown(payload, "fila cheia")
 
     def release_bot_command_cooldown(payload: dict[str, Any], reason: str = "") -> None:
-        key = normalize_chat_command(payload.get("commandCooldownKey") or "")
-        if not key or not key.startswith("!"):
-            return
-        try:
-            started_at = float(payload.get("commandCooldownStartedAt") or 0.0)
-        except (TypeError, ValueError):
-            started_at = 0.0
-        current = float(bot_command_last_sent.get(key, 0.0) or 0.0)
-        if current <= 0:
-            return
-        if started_at and abs(current - started_at) > 2.0:
+        key = bot_cooldown_release_key(payload, bot_command_last_sent)
+        if not key:
             return
         bot_command_last_sent.pop(key, None)
         if reason:
@@ -18000,33 +18068,20 @@ def run_gui(config_path: Path) -> int:
         livepix_events_loaded = True
 
     def livepix_event_is_fresh_for_alert(event: LivepixEvent) -> bool:
-        if str(event.source or "").casefold() == "test":
-            return True
-        now = datetime.now()
-        created_at = livepix_parse_datetime(event.created_at)
-        session_floor = livepix_alert_session_started_at - timedelta(seconds=LIVEPIX_ALERT_STARTUP_GRACE_SECONDS)
-        if created_at < session_floor:
-            return False
-        age_seconds = (now - created_at).total_seconds()
-        return -300 <= age_seconds <= LIVEPIX_ALERT_MAX_AGE_SECONDS
+        return livepix_event_is_fresh_for_alert_rule(event, livepix_alert_session_started_at)
 
     def should_announce_livepix_event(event: LivepixEvent, was_known: bool = False) -> bool:
-        if not livepix_announce_in_chat_var.get():
-            return False
         key = livepix_event_identity(event)
-        if not key[1]:
-            return False
-        now = time.monotonic()
-        for old_key, last_seen in list(livepix_recent_alerts.items()):
-            if now - last_seen > LIVEPIX_ALERT_REPEAT_SUPPRESS_SECONDS:
-                livepix_recent_alerts.pop(old_key, None)
-        if was_known or key in livepix_recent_alerts:
-            return False
-        if not livepix_event_is_fresh_for_alert(event):
+        should_announce = livepix_should_announce_event_rule(
+            event,
+            was_known=was_known,
+            announce_enabled=livepix_announce_in_chat_var.get(),
+            session_started_at=livepix_alert_session_started_at,
+            recent_alerts=livepix_recent_alerts,
+        )
+        if not should_announce and key[1] and not was_known and livepix_announce_in_chat_var.get() and not livepix_event_is_fresh_for_alert(event):
             log(f"Livepix antigo salvo sem alerta: {event.username or event.reference or key[1]}")
-            return False
-        livepix_recent_alerts[key] = now
-        return True
+        return should_announce
 
     def livepix_event_title(event: LivepixEvent) -> str:
         kind_label = {
