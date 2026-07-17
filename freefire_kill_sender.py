@@ -26,7 +26,7 @@ import webbrowser
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.260"
+APP_VERSION = "2.6.262"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -97,6 +97,14 @@ LOG_TEXT_MAX_LINES = 1200
 LOG_PUMP_BATCH_LIMIT = 60
 LOG_FULL_RENDER_CHUNK_LINES = 160
 LOG_INACTIVE_IDLE_PUMP_MS = 8000
+PERFORMANCE_LOG_TEXT_MAX_LINES = 450
+PERFORMANCE_LOG_PUMP_BATCH_LIMIT = 24
+PERFORMANCE_LOG_FULL_RENDER_CHUNK_LINES = 80
+PERFORMANCE_HEALTH_UPDATE_MS = 3000
+PERFORMANCE_MEMORY_WARNING_MB = 800
+PERFORMANCE_THREAD_WARNING_COUNT = 80
+PERFORMANCE_QUEUE_WARNING_COUNT = 420
+PERFORMANCE_WARNING_INTERVAL_SECONDS = 60
 CHAT_USER_CACHE_LIMIT = 600
 CHAT_EVENT_QUEUE_LIMIT = 800
 CHAT_EVENT_BATCH_LIMIT = 32
@@ -132,6 +140,9 @@ LIVEPIX_LIGHT_COLLECTION_LIMIT = 30
 LIVEPIX_LIGHT_COLLECTION_MAX_PAGES = 1
 LIVEPIX_FULL_COLLECTION_LIMIT = 100
 LIVEPIX_FULL_COLLECTION_MAX_PAGES = 12
+LIVEPIX_ALERT_MAX_AGE_SECONDS = 30 * 60
+LIVEPIX_ALERT_STARTUP_GRACE_SECONDS = 90
+LIVEPIX_ALERT_REPEAT_SUPPRESS_SECONDS = 60 * 60
 KILLS_VISUAL_REFRESH_DELAY_MS = 220
 KILLS_RANK_RENDER_LIMIT = 100
 KILLS_OVERLAY_RENDER_LIMIT = 50
@@ -575,6 +586,7 @@ def load_config(path: Path) -> dict[str, Any]:
     data.setdefault("auto_update_enabled", True)
     if not str(data.get("updates_manifest_url", "")).strip():
         data["updates_manifest_url"] = DEFAULT_UPDATES_MANIFEST_URL
+    data.setdefault("performance_mode_enabled", False)
     apply_theme_defaults(data)
     data.setdefault("tikfinity_chat_url", "")
     data.setdefault("chat_event_source", "websocket")
@@ -8344,9 +8356,11 @@ def run_gui(config_path: Path) -> int:
     bot_reply_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=BOT_REPLY_QUEUE_LIMIT)
     bot_send_result_queue: queue.Queue[tuple[bool, str, dict[str, Any]]] = queue.Queue(maxsize=BOT_RESULT_QUEUE_LIMIT)
     chat_event_quiet_cycles = 0
+    chat_timer_message_count = 0
     bot_command_last_sent: dict[str, float] = {}
     bot_command_last_missed: dict[str, float] = {}
     bot_pending_confirmations: dict[str, dict[str, Any]] = {}
+    last_bot_runtime_repair_at = 0.0
     queue_drop_counts: dict[str, int] = {}
     queue_drop_last_log_at: dict[str, float] = {}
     bot_sending = False
@@ -8380,6 +8394,7 @@ def run_gui(config_path: Path) -> int:
     config_auto_save_event = threading.Event()
     config_auto_save_pending: tuple[int, Path, str | dict[str, Any], bool, str] | None = None
     config_restore_pending_restart = False
+    performance_last_warning_at = 0.0
     livepix_events: list[LivepixEvent] = []
     livepix_events_loaded = False
     livepix_events_loading = False
@@ -8394,6 +8409,8 @@ def run_gui(config_path: Path) -> int:
     livepix_render_after_id: str | None = None
     livepix_render_generation = 0
     livepix_dashboard_after_id: str | None = None
+    livepix_alert_session_started_at = datetime.now()
+    livepix_recent_alerts: dict[tuple[str, str], float] = {}
     appearance_preview_pending = True
 
     def drop_old_log_queue_items(target_size: int) -> int:
@@ -8885,6 +8902,11 @@ def run_gui(config_path: Path) -> int:
     auto_update_var = tk.BooleanVar(value=bool(config.get("auto_update_enabled", True)))
     general_update_state_var = tk.StringVar(value="Ativa" if auto_update_var.get() else "Desativada")
     updates_manifest_url_var = tk.StringVar(value=config.get("updates_manifest_url", ""))
+    performance_mode_var = tk.BooleanVar(value=bool(config.get("performance_mode_enabled", False)))
+    performance_status_var = tk.StringVar(value="Modo desempenho ativo" if performance_mode_var.get() else "Modo normal")
+    performance_memory_var = tk.StringVar(value="-")
+    performance_threads_var = tk.StringVar(value="-")
+    performance_queues_var = tk.StringVar(value="-")
     manual_status_var = tk.StringVar(value="Manual")
     manual_count_var = tk.StringVar(value="0")
     manual_total_var = tk.StringVar(value="0")
@@ -9742,8 +9764,50 @@ def run_gui(config_path: Path) -> int:
         anchor="w",
     ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+    performance_card = card(
+        general_tab,
+        "Desempenho",
+        "Modo leve e monitor de peso do app durante a live.",
+    )
+    performance_card.grid(row=5, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    for column in range(4):
+        performance_card.columnconfigure(column, weight=1)
+    performance_items = [
+        ("Memória", performance_memory_var),
+        ("Threads", performance_threads_var),
+        ("Filas internas", performance_queues_var),
+        ("Status", performance_status_var),
+    ]
+    for column, (label_text, value_var) in enumerate(performance_items):
+        item = ctk.CTkFrame(performance_card, fg_color=field, corner_radius=8, border_width=1, border_color=border)
+        item.grid(row=2, column=column, sticky="nsew", padx=(18 if column == 0 else 5, 18 if column == 3 else 5), pady=(8, 12))
+        item.columnconfigure(0, weight=1)
+        ctk.CTkLabel(item, text=label_text, text_color=muted, font=("Segoe UI", 11), anchor="w").grid(
+            row=0, column=0, sticky="ew", padx=12, pady=(10, 0)
+        )
+        ctk.CTkLabel(item, textvariable=value_var, text_color=teal if column < 3 else accent, font=("Segoe UI Semibold", 13), anchor="w", wraplength=180).grid(
+            row=1, column=0, sticky="ew", padx=12, pady=(0, 10)
+        )
+    performance_actions = ctk.CTkFrame(performance_card, fg_color=panel, corner_radius=0)
+    performance_actions.grid(row=3, column=0, columnspan=4, sticky="ew", padx=18, pady=(0, 18))
+    performance_toggle_button = button(
+        performance_actions,
+        "Desativar modo desempenho" if performance_mode_var.get() else "Ativar modo desempenho",
+        lambda: toggle_performance_mode(),
+        "accent" if not performance_mode_var.get() else "default",
+        width=176,
+    )
+    performance_toggle_button.pack(side=tk.LEFT, padx=(0, 8))
+    ctk.CTkLabel(
+        performance_actions,
+        text="Reduz logs visuais e espaça atualizações escondidas sem desligar chat, bot, Jarvis ou Livepix.",
+        text_color=muted,
+        font=("Segoe UI", 11),
+        anchor="w",
+    ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
     general_info_card = ctk.CTkFrame(general_tab, fg_color=panel_alt, corner_radius=12, border_width=1, border_color=border)
-    general_info_card.grid(row=5, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
+    general_info_card.grid(row=6, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
     for column in range(4):
         general_info_card.columnconfigure(column, weight=1)
     for col, label in enumerate(("Versão", "Pasta do app", "Atualização", "Backup")):
@@ -9777,7 +9841,7 @@ def run_gui(config_path: Path) -> int:
     ).grid(row=1, column=3, sticky="w", padx=18, pady=(4, 14))
 
     general_actions = ctk.CTkFrame(general_tab, fg_color=bg, corner_radius=0)
-    general_actions.grid(row=6, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
+    general_actions.grid(row=7, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
 
     sync_card = card(general_tab, "Lançamento de Kills FF", "Digite as kills no app e lance manualmente no painel Jarvis quando a partida acabar.")
     sync_card.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
@@ -16288,12 +16352,35 @@ def run_gui(config_path: Path) -> int:
         window.protocol("WM_DELETE_WINDOW", close_chat_monitor_window)
         refresh_chat_messages(force=True)
 
+    def is_real_chat_message_for_timer(message: LiveChatMessage) -> bool:
+        platform = str(message.platform or "").strip().casefold()
+        source = str(message.source or "").strip().casefold()
+        if platform in {"aizen", "timer", "livepix", "teste", "simulador"}:
+            return False
+        if source in {"timer", "livepix", "local", "simulator"}:
+            return False
+        received = normalize_bot_confirmation_text(message.comment)
+        if received:
+            for pending in bot_pending_confirmations.values():
+                expected = normalize_bot_confirmation_text(pending.get("message"))
+                if expected and expected == received:
+                    return False
+        try:
+            if message.username.strip().casefold() in bot_ignored_usernames():
+                return False
+        except NameError:
+            pass
+        return bool(message.comment.strip())
+
     def add_live_chat_message(message: LiveChatMessage) -> None:
+        nonlocal chat_timer_message_count
         key = live_chat_key(message)
         if key in chat_seen_messages:
             return
         chat_seen_messages.add(key)
         chat_messages.append(message)
+        if is_real_chat_message_for_timer(message):
+            chat_timer_message_count += 1
         user_key = message.user_id or normalize_player_key(message.username)
         chat_users[user_key] = message
         limit = chat_max_messages()
@@ -16745,6 +16832,10 @@ def run_gui(config_path: Path) -> int:
             refresh_chat_messages()
         if app_closing:
             return
+        try:
+            maybe_repair_chat_listener_for_bot()
+        except NameError:
+            pass
         if processed:
             chat_event_quiet_cycles = 0
         else:
@@ -17398,7 +17489,7 @@ def run_gui(config_path: Path) -> int:
                 timer_id,
                 {
                     "next_at": now + interval,
-                    "last_chat_count": len(chat_messages),
+                    "last_chat_count": chat_timer_message_count,
                     "interval": interval,
                     "min_messages": min_messages,
                 },
@@ -17407,10 +17498,10 @@ def run_gui(config_path: Path) -> int:
                 runtime["interval"] = interval
                 runtime["min_messages"] = min_messages
                 runtime["next_at"] = now + interval
-                runtime["last_chat_count"] = len(chat_messages)
+                runtime["last_chat_count"] = chat_timer_message_count
 
             if now >= float(runtime.get("next_at", now + interval)):
-                new_messages = len(chat_messages) - int(runtime.get("last_chat_count", len(chat_messages)))
+                new_messages = chat_timer_message_count - int(runtime.get("last_chat_count", chat_timer_message_count))
                 if new_messages >= min_messages:
                     if queue_chat_timer_payload(
                         timer_id,
@@ -17418,7 +17509,7 @@ def run_gui(config_path: Path) -> int:
                         str(row.get("message") or ""),
                     ):
                         queued += 1
-                    runtime["last_chat_count"] = len(chat_messages)
+                    runtime["last_chat_count"] = chat_timer_message_count
                     runtime["next_at"] = now + interval
                 else:
                     waiting_for_chat = True
@@ -17442,7 +17533,15 @@ def run_gui(config_path: Path) -> int:
         if not app_closing:
             schedule_chat_timer_pump(1000)
 
-    def queue_bot_reply(text: str, message: LiveChatMessage, command: str, args: str, test: bool = False) -> None:
+    def queue_bot_reply(
+        text: str,
+        message: LiveChatMessage,
+        command: str,
+        args: str,
+        test: bool = False,
+        cooldown_key: str = "",
+        cooldown_started_at: float = 0.0,
+    ) -> None:
         response_text = re.sub(r"\s+", " ", text).strip()
         if not response_text:
             return
@@ -17460,6 +17559,10 @@ def run_gui(config_path: Path) -> int:
             "fromAizen": True,
             "test": bool(test),
         }
+        clean_cooldown_key = normalize_chat_command(cooldown_key)
+        if clean_cooldown_key and clean_cooldown_key.startswith("!"):
+            payload["commandCooldownKey"] = clean_cooldown_key
+            payload["commandCooldownStartedAt"] = float(cooldown_started_at or time.time())
         if enqueue_bot_reply_payload(payload):
             update_bot_queue_count()
             bot_status_var.set("Na fila")
@@ -17469,6 +17572,24 @@ def run_gui(config_path: Path) -> int:
         else:
             update_bot_queue_count()
             bot_status_var.set("Fila cheia")
+            release_bot_command_cooldown(payload, "fila cheia")
+
+    def release_bot_command_cooldown(payload: dict[str, Any], reason: str = "") -> None:
+        key = normalize_chat_command(payload.get("commandCooldownKey") or "")
+        if not key or not key.startswith("!"):
+            return
+        try:
+            started_at = float(payload.get("commandCooldownStartedAt") or 0.0)
+        except (TypeError, ValueError):
+            started_at = 0.0
+        current = float(bot_command_last_sent.get(key, 0.0) or 0.0)
+        if current <= 0:
+            return
+        if started_at and abs(current - started_at) > 2.0:
+            return
+        bot_command_last_sent.pop(key, None)
+        if reason:
+            log(f"Cooldown de {key} liberado: {reason}.")
 
     def schedule_bot_delivery_confirmation(payload: dict[str, Any]) -> None:
         delivery_id = str(payload.get("deliveryId") or f"bot-{uuid.uuid4().hex}")
@@ -17510,6 +17631,7 @@ def run_gui(config_path: Path) -> int:
             else:
                 update_bot_queue_count()
                 bot_status_var.set("Fila cheia")
+                release_bot_command_cooldown(payload, "fila cheia no reenvio")
                 return
             log(
                 "TikFinity recebeu o pacote do bot, mas a mensagem nao apareceu no chat em 7s; "
@@ -17518,6 +17640,7 @@ def run_gui(config_path: Path) -> int:
             schedule_bot_send_pump(200)
             return
         bot_status_var.set("Sem confirmação")
+        release_bot_command_cooldown(payload, "sem confirmacao do TikFinity")
         log(
             "TikFinity recebeu o pacote do bot, mas o app nao viu a mensagem voltar no chat. "
             "No TikFinity, desconecte/conecte Setup > Streamer.bot Connection e teste novamente."
@@ -17562,7 +17685,14 @@ def run_gui(config_path: Path) -> int:
         bot_command_last_sent[command.command] = now
         bot_status_var.set(f"Comando {token}")
         log(f"Comando do chat reconhecido: {message.username}: {token}")
-        queue_bot_reply(response, message, command.command, args)
+        queue_bot_reply(
+            response,
+            message,
+            command.command,
+            args,
+            cooldown_key=command.command,
+            cooldown_started_at=now,
+        )
 
     def simulate_custom_command(send: bool = False) -> None:
         ensure_custom_command_rows_rendered()
@@ -17681,6 +17811,7 @@ def run_gui(config_path: Path) -> int:
                     root.after(1200, ensure_chat_listener_for_bot)
             else:
                 bot_status_var.set("Erro")
+                release_bot_command_cooldown(payload, "erro no envio")
                 log(f"Erro ao enviar resposta do bot: {detail}")
         if not bot_send_result_queue.empty():
             schedule_bot_send_pump(50)
@@ -17853,6 +17984,49 @@ def run_gui(config_path: Path) -> int:
         if refresh:
             schedule_livepix_dashboard_refresh()
         return added
+
+    def prime_livepix_history_for_alert() -> None:
+        nonlocal livepix_events_loaded, livepix_events_loading
+        if livepix_events_loaded or livepix_events_loading:
+            return
+        try:
+            loaded_events = load_livepix_events(livepix_events_path(config_path))
+        except Exception as exc:
+            livepix_events_loaded = True
+            log(f"Nao consegui conferir historico Livepix antes do alerta: {exc}")
+            return
+        if loaded_events:
+            merge_livepix_events(loaded_events, refresh=False, persist=False)
+        livepix_events_loaded = True
+
+    def livepix_event_is_fresh_for_alert(event: LivepixEvent) -> bool:
+        if str(event.source or "").casefold() == "test":
+            return True
+        now = datetime.now()
+        created_at = livepix_parse_datetime(event.created_at)
+        session_floor = livepix_alert_session_started_at - timedelta(seconds=LIVEPIX_ALERT_STARTUP_GRACE_SECONDS)
+        if created_at < session_floor:
+            return False
+        age_seconds = (now - created_at).total_seconds()
+        return -300 <= age_seconds <= LIVEPIX_ALERT_MAX_AGE_SECONDS
+
+    def should_announce_livepix_event(event: LivepixEvent, was_known: bool = False) -> bool:
+        if not livepix_announce_in_chat_var.get():
+            return False
+        key = livepix_event_identity(event)
+        if not key[1]:
+            return False
+        now = time.monotonic()
+        for old_key, last_seen in list(livepix_recent_alerts.items()):
+            if now - last_seen > LIVEPIX_ALERT_REPEAT_SUPPRESS_SECONDS:
+                livepix_recent_alerts.pop(old_key, None)
+        if was_known or key in livepix_recent_alerts:
+            return False
+        if not livepix_event_is_fresh_for_alert(event):
+            log(f"Livepix antigo salvo sem alerta: {event.username or event.reference or key[1]}")
+            return False
+        livepix_recent_alerts[key] = now
+        return True
 
     def livepix_event_title(event: LivepixEvent) -> str:
         kind_label = {
@@ -19206,8 +19380,14 @@ def run_gui(config_path: Path) -> int:
                     log(f"Livepix webhook recebido. Use sincronizar para buscar detalhes: {compact_json_preview(payload)}")
             elif kind == "webhook_detail":
                 if isinstance(payload, LivepixEvent):
+                    prime_livepix_history_for_alert()
+                    was_known = livepix_event_identity(payload) in {
+                        livepix_event_identity(event)
+                        for event in livepix_events
+                    }
                     merge_livepix_events([payload])
-                    announce_livepix_event(payload)
+                    if should_announce_livepix_event(payload, was_known=was_known):
+                        announce_livepix_event(payload)
                     livepix_status_var.set("Webhook detalhado")
             elif kind == "api_synced":
                 livepix_sync_running = False
@@ -19430,6 +19610,7 @@ def run_gui(config_path: Path) -> int:
         config["jarvis_api_token"] = jarvis_token_var.get().strip()
         config["auto_update_enabled"] = bool(auto_update_var.get())
         config["updates_manifest_url"] = updates_manifest_url_var.get().strip()
+        config["performance_mode_enabled"] = bool(performance_mode_var.get())
         config["message_title"] = title_var.get().strip() or "Kills da partida"
         manual_scope = normalize_kills_scope_value(manual_scope_var.get())
         if manual_scope not in {"daily", "general"}:
@@ -22088,13 +22269,116 @@ def run_gui(config_path: Path) -> int:
 
     root.protocol("WM_DELETE_WINDOW", close_app)
 
+    def performance_mode_enabled() -> bool:
+        try:
+            return bool(performance_mode_var.get())
+        except tk.TclError:
+            return False
+
+    def process_memory_mb() -> float | None:
+        if os.name == "nt":
+            try:
+                class ProcessMemoryCounters(ctypes.Structure):
+                    _fields_ = [
+                        ("cb", ctypes.wintypes.DWORD),
+                        ("PageFaultCount", ctypes.wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t),
+                        ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t),
+                        ("PeakPagefileUsage", ctypes.c_size_t),
+                    ]
+
+                counters = ProcessMemoryCounters()
+                counters.cb = ctypes.sizeof(ProcessMemoryCounters)
+                handle = ctypes.windll.kernel32.GetCurrentProcess()
+                ok = ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
+                if ok:
+                    return float(counters.WorkingSetSize) / (1024 * 1024)
+            except Exception:
+                return None
+        try:
+            import resource
+
+            value = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+            if sys.platform == "darwin":
+                value = value / (1024 * 1024)
+            else:
+                value = value / 1024
+            return value
+        except Exception:
+            return None
+
+    def performance_queue_snapshot() -> dict[str, int]:
+        return {
+            "logs": safe_queue_size(log_queue),
+            "jarvis": safe_queue_size(sync_queue),
+            "fila": safe_queue_size(ff_queue_sync_queue),
+            "chat": safe_queue_size(chat_event_queue),
+            "livepix": safe_queue_size(livepix_queue),
+            "bot": safe_queue_size(bot_reply_queue) + safe_queue_size(bot_send_result_queue),
+            "avatar": safe_queue_size(avatar_request_queue) + safe_queue_size(avatar_result_queue),
+        }
+
+    def refresh_performance_button() -> None:
+        try:
+            performance_toggle_button.configure(
+                text="Desativar modo desempenho" if performance_mode_enabled() else "Ativar modo desempenho",
+                fg_color=chip_bg if performance_mode_enabled() else accent,
+                hover_color="#272129" if performance_mode_enabled() else accent_hover,
+            )
+        except Exception:
+            pass
+
+    def toggle_performance_mode() -> None:
+        performance_mode_var.set(not performance_mode_enabled())
+        refresh_performance_button()
+        update_performance_monitor()
+        schedule_config_autosave(200)
+        log("Modo desempenho ativado." if performance_mode_enabled() else "Modo desempenho desativado.")
+
+    def update_performance_monitor() -> None:
+        nonlocal performance_last_warning_at
+        memory_mb = process_memory_mb()
+        thread_count = len(threading.enumerate())
+        queue_counts = performance_queue_snapshot()
+        total_queues = sum(queue_counts.values())
+        if memory_mb is None:
+            performance_memory_var.set("-")
+        else:
+            performance_memory_var.set(f"{memory_mb:.0f} MB")
+        performance_threads_var.set(str(thread_count))
+        busiest = max(queue_counts.items(), key=lambda item: item[1]) if queue_counts else ("-", 0)
+        performance_queues_var.set(f"{total_queues} total | {busiest[0]}:{busiest[1]}")
+
+        warnings: list[str] = []
+        if memory_mb is not None and memory_mb >= PERFORMANCE_MEMORY_WARNING_MB:
+            warnings.append(f"memória {memory_mb:.0f} MB")
+        if thread_count >= PERFORMANCE_THREAD_WARNING_COUNT:
+            warnings.append(f"{thread_count} threads")
+        if total_queues >= PERFORMANCE_QUEUE_WARNING_COUNT:
+            warnings.append(f"{total_queues} itens em filas")
+
+        mode_text = "Modo desempenho ativo" if performance_mode_enabled() else "Modo normal"
+        if warnings:
+            performance_status_var.set("Atenção: " + ", ".join(warnings[:3]))
+            now = time.monotonic()
+            if now - performance_last_warning_at >= PERFORMANCE_WARNING_INTERVAL_SECONDS:
+                performance_last_warning_at = now
+                log("Monitor de desempenho: " + performance_status_var.get())
+        else:
+            performance_status_var.set(mode_text)
+
     def pump_log() -> None:
         nonlocal log_rendered_count, log_needs_full_render, log_full_render_cursor
         if app_closing:
             return
         messages: list[str] = []
         processed_count = 0
-        batch_limit = LOG_PUMP_BATCH_LIMIT
+        batch_limit = PERFORMANCE_LOG_PUMP_BATCH_LIMIT if performance_mode_enabled() else LOG_PUMP_BATCH_LIMIT
         deadline = time.monotonic() + UI_PUMP_TIME_BUDGET_SECONDS
         while processed_count < batch_limit:
             if processed_count and time.monotonic() >= deadline:
@@ -22107,7 +22391,8 @@ def run_gui(config_path: Path) -> int:
             messages.append(message)
         if messages:
             log_render_buffer.extend(messages)
-            overflow = len(log_render_buffer) - LOG_TEXT_MAX_LINES
+            max_lines = PERFORMANCE_LOG_TEXT_MAX_LINES if performance_mode_enabled() else LOG_TEXT_MAX_LINES
+            overflow = len(log_render_buffer) - max_lines
             if overflow > 0:
                 del log_render_buffer[:overflow]
                 log_rendered_count = max(0, log_rendered_count - overflow)
@@ -22125,9 +22410,14 @@ def run_gui(config_path: Path) -> int:
                     if log_full_render_cursor <= 0:
                         log_text.delete("1.0", tk.END)
                         log_rendered_count = 0
+                    chunk_size = (
+                        PERFORMANCE_LOG_FULL_RENDER_CHUNK_LINES
+                        if performance_mode_enabled()
+                        else LOG_FULL_RENDER_CHUNK_LINES
+                    )
                     end_index = min(
                         len(log_render_buffer),
-                        log_full_render_cursor + LOG_FULL_RENDER_CHUNK_LINES,
+                        log_full_render_cursor + chunk_size,
                     )
                     chunk = log_render_buffer[log_full_render_cursor:end_index]
                     if chunk:
@@ -22148,17 +22438,17 @@ def run_gui(config_path: Path) -> int:
                 pass
         if not app_closing:
             if logs_active and log_needs_full_render:
-                delay_ms = 35
+                delay_ms = 80 if performance_mode_enabled() else 35
             elif not log_queue.empty():
-                delay_ms = 30
+                delay_ms = 90 if performance_mode_enabled() else 30
             elif logs_active and messages:
-                delay_ms = 150
+                delay_ms = 350 if performance_mode_enabled() else 150
             elif messages:
-                delay_ms = 450
+                delay_ms = 900 if performance_mode_enabled() else 450
             elif logs_active:
-                delay_ms = 900
+                delay_ms = 1600 if performance_mode_enabled() else 900
             else:
-                delay_ms = LOG_INACTIVE_IDLE_PUMP_MS
+                delay_ms = LOG_INACTIVE_IDLE_PUMP_MS * 2 if performance_mode_enabled() else LOG_INACTIVE_IDLE_PUMP_MS
             root.after(delay_ms, pump_log)
 
     def health_preview(value: Any, limit: int = 24) -> str:
@@ -22276,12 +22566,14 @@ def run_gui(config_path: Path) -> int:
             health_tasks_var.set("Sem tarefas pendentes")
         else:
             health_tasks_var.set("; ".join(tasks[:5]))
+        update_performance_monitor()
 
     def schedule_system_health_update(delay_ms: int = 1500) -> None:
         if app_closing:
             return
         update_system_health()
-        root.after(delay_ms, schedule_system_health_update)
+        next_delay = PERFORMANCE_HEALTH_UPDATE_MS if performance_mode_enabled() else delay_ms
+        root.after(next_delay, schedule_system_health_update)
 
     def diagnostic_result_line(level: str, label: str, detail: str, action: str = "") -> str:
         suffix = f" | {action}" if action else ""
@@ -22527,6 +22819,7 @@ def run_gui(config_path: Path) -> int:
         manual_scope_var,
         auto_update_var,
         updates_manifest_url_var,
+        performance_mode_var,
         tikfinity_url_var,
         chat_source_var,
         chat_webhook_host_var,
@@ -22612,7 +22905,14 @@ def run_gui(config_path: Path) -> int:
         if not (chat_commands_enabled_var.get() or chat_timers_enabled_var.get()):
             return
         if chat_webhook_server is not None:
-            return
+            server_thread = chat_webhook_server.thread
+            if server_thread is not None and server_thread.is_alive():
+                return
+            log("Webhook do chat parou; reiniciando automaticamente.")
+            try:
+                chat_webhook_server.stop()
+            except Exception:
+                pass
         if chat_websocket_worker is not None:
             worker_thread = chat_websocket_worker.thread
             if worker_thread is not None and worker_thread.is_alive():
@@ -22624,6 +22924,23 @@ def run_gui(config_path: Path) -> int:
                 pass
             chat_websocket_worker = None
         start_chat_listener(open_monitor=False)
+
+    def maybe_repair_chat_listener_for_bot() -> None:
+        nonlocal last_bot_runtime_repair_at
+        if app_closing or not (chat_commands_enabled_var.get() or chat_timers_enabled_var.get()):
+            return
+        now = time.monotonic()
+        if now - last_bot_runtime_repair_at < 5.0:
+            return
+        last_bot_runtime_repair_at = now
+        if chat_source_key() == "webhook":
+            server_thread = chat_webhook_server.thread if chat_webhook_server is not None else None
+            if chat_webhook_server is None or server_thread is None or not server_thread.is_alive():
+                ensure_chat_listener_for_bot()
+            return
+        worker_thread = chat_websocket_worker.thread if chat_websocket_worker is not None else None
+        if chat_websocket_worker is None or worker_thread is None or not worker_thread.is_alive():
+            ensure_chat_listener_for_bot()
 
     def ensure_bot_runtime(*_args: Any) -> None:
         if not (chat_commands_enabled_var.get() or chat_timers_enabled_var.get() or bot_pending_confirmations):
@@ -22638,6 +22955,12 @@ def run_gui(config_path: Path) -> int:
             schedule_chat_event_pump(0)
         if chat_timers_enabled_var.get():
             schedule_chat_timer_pump(0)
+
+    def on_chat_timers_enabled_change(*_args: Any) -> None:
+        chat_timer_runtime.clear()
+        timer_next_send_var.set("-")
+        timer_status_var.set("Reiniciado" if chat_timers_enabled_var.get() else "Desligado")
+        ensure_bot_runtime()
 
     def schedule_deferred_render_pump(delay_ms: int = 0) -> None:
         nonlocal deferred_render_after_id
@@ -22771,11 +23094,13 @@ def run_gui(config_path: Path) -> int:
 
     device_name_var.trace_add("write", update_local_source_labels)
     chat_commands_enabled_var.trace_add("write", ensure_bot_runtime)
-    chat_timers_enabled_var.trace_add("write", ensure_bot_runtime)
+    chat_timers_enabled_var.trace_add("write", on_chat_timers_enabled_change)
     livepix_enabled_var.trace_add("write", lambda *_args: start_livepix_history_load(force=livepix_enabled_var.get()))
     bot_delivery_method_var.trace_add("write", refresh_tikfinity_direct_bridge)
     pump_log()
     update_config_backup_status()
+    refresh_performance_button()
+    update_performance_monitor()
     schedule_system_health_update(0)
     if not sync_queue.empty():
         schedule_sync_queue_pump(0)
