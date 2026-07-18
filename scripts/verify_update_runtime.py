@@ -10,10 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import freefire_kill_sender as app_runtime
+
 from freefire_kill_sender import (
     APP_EXE_NAME,
     is_newer_version,
     resolve_downloaded_exe,
+    safe_extract_update_zip,
     update_asset_from_manifest,
     version_tuple,
 )
@@ -75,6 +78,22 @@ def verify_zip_resolution() -> None:
         with zipfile.ZipFile(bad_zip, "w") as archive:
             archive.writestr("../evil.exe", b"MZ")
         expect_error(lambda: resolve_downloaded_exe(bad_zip), "ZIP com caminho ../ deve ser bloqueado")
+
+    with tempfile.TemporaryDirectory(prefix="aizen_update_verify_") as tmp:
+        base = Path(tmp)
+        large_zip = base / "large.zip"
+        with zipfile.ZipFile(large_zip, "w") as archive:
+            archive.writestr("release/AizenStreamControl.exe", b"MZ")
+            archive.writestr("release/payload.bin", b"12345")
+        previous_limit = app_runtime.UPDATE_MAX_EXTRACTED_BYTES
+        app_runtime.UPDATE_MAX_EXTRACTED_BYTES = 4
+        try:
+            expect_error(
+                lambda: safe_extract_update_zip(large_zip, base / "too_large"),
+                "ZIP com tamanho extraido acima do limite deve ser bloqueado",
+            )
+        finally:
+            app_runtime.UPDATE_MAX_EXTRACTED_BYTES = previous_limit
 
 
 def verify_build_scripts_include_runtime_assets() -> None:

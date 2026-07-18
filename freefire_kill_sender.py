@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.270"
+APP_VERSION = "2.6.271"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -92,6 +92,7 @@ UPDATE_MANIFEST_TIMEOUT_SECONDS = 4
 UPDATE_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 12
 UPDATE_DOWNLOAD_READ_TIMEOUT_SECONDS = 18
 UPDATE_MAX_DOWNLOAD_BYTES = 220 * 1024 * 1024
+UPDATE_MAX_EXTRACTED_BYTES = 260 * 1024 * 1024
 LOG_QUEUE_SOFT_LIMIT = 1500
 LOG_QUEUE_HARD_LIMIT = 2200
 LOG_TEXT_MAX_LINES = 1200
@@ -7540,6 +7541,7 @@ def download_update_asset(url: str, sha256: str = "", progress_callback: Any | N
 
 def safe_extract_update_zip(downloaded: Path, extract_dir: Path) -> None:
     base = extract_dir.resolve()
+    total_uncompressed = 0
     with zipfile.ZipFile(downloaded) as archive:
         for member in archive.infolist():
             member_name = str(member.filename or "").replace("\\", "/")
@@ -7548,6 +7550,11 @@ def safe_extract_update_zip(downloaded: Path, extract_dir: Path) -> None:
             target = (extract_dir / member_name).resolve()
             if target != base and base not in target.parents:
                 raise RuntimeError("ZIP da atualizacao contem caminho inseguro.")
+            total_uncompressed += max(0, int(getattr(member, "file_size", 0) or 0))
+            if total_uncompressed > UPDATE_MAX_EXTRACTED_BYTES:
+                raise RuntimeError(
+                    f"ZIP da atualizacao extrai mais que {UPDATE_MAX_EXTRACTED_BYTES / (1024 * 1024):.0f} MB."
+                )
         archive.extractall(extract_dir)
 
 
