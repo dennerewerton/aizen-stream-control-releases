@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.265",
-    "notes":  "Melhora leitura de valores Livepix numericos e preserva campos em centavos, reduzindo totais exibidos incorretamente no dashboard.",
+    "version":  "2.6.266",
+    "notes":  "Reduz chamadas extras quando a Livepix retorna limite 429 e melhora aviso de espera para sincronizacao.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.265/AizenStreamControl.exe",
-                    "sha256":  "6850cee3b5a87351a691d728f1ed0de98bd725655e685b9e50ac4e3a91c8aa62"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.266/AizenStreamControl.exe",
+                    "sha256":  "f579b82d8ed3b0772b8f91806e5cf6f924bb3fd836669043179b07ff30663644"
                 }
 }

@@ -16,6 +16,7 @@ from freefire_kill_sender import (
     is_timer_countable_chat_message,
     livepix_amount_cents,
     livepix_amount_cents_from_paths,
+    livepix_is_rate_limit_detail,
     livepix_should_announce_event_rule,
     parse_livepix_event,
     normalize_chat_command,
@@ -208,6 +209,13 @@ def verify_livepix_amount_parsing() -> None:
     check(cents_event is not None and cents_event.amount == 400, "evento com amountCents deve preservar centavos")
 
 
+def verify_livepix_rate_limit_detection() -> None:
+    check(livepix_is_rate_limit_detail("429 limite de requisicoes da Livepix"), "429 deve ser rate limit")
+    check(livepix_is_rate_limit_detail("Too Many Requests"), "too many requests deve ser rate limit")
+    check(livepix_is_rate_limit_detail("rate limit exceeded"), "rate limit em ingles deve ser reconhecido")
+    check(not livepix_is_rate_limit_detail("401 credenciais invalidas"), "401 nao deve ser tratado como rate limit")
+
+
 def main() -> int:
     verify_commands()
     verify_timer_counting()
@@ -215,6 +223,7 @@ def main() -> int:
     verify_tikfinity_chatbot_payload()
     verify_livepix_alerts()
     verify_livepix_amount_parsing()
+    verify_livepix_rate_limit_detection()
     print("Runtime chat/Livepix OK: comandos, temporizador e alertas antigos validados.")
     return 0
 

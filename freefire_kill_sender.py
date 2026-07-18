@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.265"
+APP_VERSION = "2.6.266"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -140,6 +140,7 @@ LIVEPIX_LIGHT_COLLECTION_LIMIT = 30
 LIVEPIX_LIGHT_COLLECTION_MAX_PAGES = 1
 LIVEPIX_FULL_COLLECTION_LIMIT = 100
 LIVEPIX_FULL_COLLECTION_MAX_PAGES = 12
+LIVEPIX_RATE_LIMIT_SKIP_DETAIL = "pulado para respeitar limite 429 da Livepix; aguarde um pouco e sincronize de novo"
 LIVEPIX_ALERT_MAX_AGE_SECONDS = 30 * 60
 LIVEPIX_ALERT_STARTUP_GRACE_SECONDS = 90
 LIVEPIX_ALERT_REPEAT_SUPPRESS_SECONDS = 60 * 60
@@ -1561,6 +1562,11 @@ def format_livepix_amount(amount: int, currency: str = "BRL") -> str:
     if symbol == "R$":
         return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"{value:.2f} {symbol}"
+
+
+def livepix_is_rate_limit_detail(value: Any) -> bool:
+    text = str(value or "").casefold()
+    return any(marker in text for marker in ("429", "rate limit", "too many requests", "limite de requis"))
 
 
 LIVEPIX_DNS_FALLBACK_IPS = {
@@ -18008,7 +18014,9 @@ def run_gui(config_path: Path) -> int:
             if response.status_code == 403:
                 return "403 escopos/permissoes insuficientes"
             if response.status_code == 429:
-                return "429 limite de requisicoes da Livepix; aguarde um pouco e teste de novo"
+                retry_after = str(response.headers.get("Retry-After") or "").strip()
+                wait_hint = f" aguarde {retry_after}s" if retry_after.isdigit() else " aguarde um pouco"
+                return f"429 limite de requisicoes da Livepix;{wait_hint} e teste de novo"
             return f"{response.status_code} {body or response.reason}".strip()
         return error_text[:220]
 
@@ -18884,14 +18892,30 @@ def run_gui(config_path: Path) -> int:
         def run() -> None:
             try:
                 sync_errors: list[str] = []
+                rate_limited = False
                 collection_limit = LIVEPIX_FULL_COLLECTION_LIMIT if is_full_sync else LIVEPIX_LIGHT_COLLECTION_LIMIT
                 collection_pages = LIVEPIX_FULL_COLLECTION_MAX_PAGES if is_full_sync else LIVEPIX_LIGHT_COLLECTION_MAX_PAGES
 
+                def mark_livepix_rate_limit(detail: Any) -> None:
+                    nonlocal rate_limited
+                    if livepix_is_rate_limit_detail(detail):
+                        rate_limited = True
+
+                def skip_livepix_after_rate_limit(label: str) -> bool:
+                    if not rate_limited:
+                        return False
+                    sync_errors.append(f"{label}: {LIVEPIX_RATE_LIMIT_SKIP_DETAIL}")
+                    return True
+
                 def try_livepix(label: str, getter: callable, fallback: Any) -> Any:
+                    if skip_livepix_after_rate_limit(label):
+                        return fallback
                     try:
                         return getter()
                     except Exception as exc:
-                        sync_errors.append(f"{label}: {livepix_error_detail(exc)}")
+                        detail = livepix_error_detail(exc)
+                        mark_livepix_rate_limit(detail)
+                        sync_errors.append(f"{label}: {detail}")
                         return fallback
 
                 def fetch_livepix_collection(label: str, path: str, limit: int = 100, max_pages: int = 12) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -18903,7 +18927,7 @@ def run_gui(config_path: Path) -> int:
                     seen = {livepix_collection_item_key(item, index) for index, item in enumerate(items)}
                     cursor = livepix_next_cursor(first_payload)
                     page = 1
-                    while page < max_pages and livepix_payload_has_more(pages[-1], len(items), limit, page):
+                    while not rate_limited and page < max_pages and livepix_payload_has_more(pages[-1], len(items), limit, page):
                         page += 1
                         params = {"limit": limit}
                         if cursor:
@@ -18913,7 +18937,9 @@ def run_gui(config_path: Path) -> int:
                         try:
                             page_payload = client.request("GET", path, params=params)
                         except Exception as exc:
-                            sync_errors.append(f"{label}: pagina {page} falhou: {livepix_error_detail(exc)}")
+                            detail = livepix_error_detail(exc)
+                            mark_livepix_rate_limit(detail)
+                            sync_errors.append(f"{label}: pagina {page} falhou: {detail}")
                             break
                         page_items = livepix_payload_items(page_payload)
                         fresh_items: list[dict[str, Any]] = []
@@ -18934,8 +18960,8 @@ def run_gui(config_path: Path) -> int:
                                         continue
                                     seen.add(key)
                                     fresh_items.append(item)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                mark_livepix_rate_limit(livepix_error_detail(exc))
                         if not fresh_items:
                             expected_total = livepix_payload_count_hint(pages[0])
                             expected_pages = livepix_payload_total_pages(pages[0])
@@ -18997,11 +19023,15 @@ def run_gui(config_path: Path) -> int:
                         ("rewards", client.rewards),
                         ("webhooks", client.webhooks),
                     ):
+                        if skip_livepix_after_rate_limit(name):
+                            extras[name] = f"pulado: {LIVEPIX_RATE_LIMIT_SKIP_DETAIL}"
+                            continue
                         try:
                             result = getter()
                             extras[name] = result
                         except Exception as exc:
                             detail = livepix_error_detail(exc)
+                            mark_livepix_rate_limit(detail)
                             extras[name] = f"erro: {detail}"
                             sync_errors.append(f"{name}: {detail}")
                     transactions_payload, transaction_items = fetch_livepix_collection(
@@ -19023,6 +19053,8 @@ def run_gui(config_path: Path) -> int:
                 reward_grants: list[dict[str, Any]] = []
                 if is_full_sync and isinstance(extras.get("rewards"), list):
                     for reward in extras["rewards"]:
+                        if skip_livepix_after_rate_limit("reward_grants"):
+                            break
                         reward_id = str(reward.get("id", "")).strip() if isinstance(reward, dict) else ""
                         if not reward_id:
                             continue
@@ -19030,6 +19062,7 @@ def run_gui(config_path: Path) -> int:
                             reward_grants.extend(client.reward_grants(reward_id))
                         except Exception as exc:
                             detail = livepix_error_detail(exc)
+                            mark_livepix_rate_limit(detail)
                             reward_grants.append({"rewardId": reward_id, "error": detail})
                             sync_errors.append(f"reward_grants: {detail}")
                 extras["reward_grants"] = reward_grants
