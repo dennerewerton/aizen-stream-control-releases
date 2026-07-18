@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.273",
-    "notes":  "Corrige o envio direto de comandos e temporizadores para o TikFinity usando evento Streamer.bot General.Custom, evitando conexao OK sem mensagem no chat; inclui limpeza segura de pastas antigas de atualizacao.",
+    "version":  "2.6.274",
+    "notes":  "Fortalece comandos e temporizadores no TikFinity: primeira tentativa usa evento Streamer.bot General.Custom e o reenvio automatico usa pacote direto sendChatbotMessage como fallback; adiciona teste real de ponte WebSocket local.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.273/AizenStreamControl.exe",
-                    "sha256":  "aaf2293f5a4d063cf6fc96c1b1580c41986ff6fd85430a480ebfe4c651c34c8e"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.274/AizenStreamControl.exe",
+                    "sha256":  "8818b98da47010d454a7b9108d1ce203e14d0be7d40c03d655b5f537304d3f69"
                 }
 }

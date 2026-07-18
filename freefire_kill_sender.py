@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.273"
+APP_VERSION = "2.6.274"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -3009,10 +3009,21 @@ def streamerbot_custom_event_payload(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def tikfinity_direct_delivery_payload(args: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    chatbot_payload = tikfinity_chatbot_message_payload(args)
+    try:
+        attempt = int(args.get("attempt") or 1)
+    except (TypeError, ValueError):
+        attempt = 1
+    if bool(args.get("retry")) and attempt >= 2:
+        return chatbot_payload, "pacote direto sendChatbotMessage"
+    return streamerbot_custom_event_payload(chatbot_payload), "evento General.Custom sendChatbotMessage"
+
+
 def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> str:
     if bridge_server is None:
         raise RuntimeError("A ponte direta do TikFinity nao foi iniciada.")
-    payload = streamerbot_custom_event_payload(tikfinity_chatbot_message_payload(args))
+    payload, delivery_label = tikfinity_direct_delivery_payload(args)
     client_count_getter = getattr(bridge_server, "client_count", None)
     ready_count_getter = getattr(bridge_server, "ready_client_count", None)
     ready_deadline = time.time() + TIKFINITY_DIRECT_READY_WAIT_SECONDS
@@ -3051,7 +3062,7 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
             ready_detail = f" Conexao assinada: {clients_ready}."
         elif clients_connected > 0:
             ready_detail = " A conexao ainda nao confirmou Subscribe."
-    return f"TikFinity recebeu evento General.Custom sendChatbotMessage ({delivered} {suffix}).{ready_detail} {TIKFINITY_DIRECT_CHATBOT_HINT}"
+    return f"TikFinity recebeu {delivery_label} ({delivered} {suffix}).{ready_detail} {TIKFINITY_DIRECT_CHATBOT_HINT}"
 
 
 def send_chatbot_message_via_streamerbot(settings: dict[str, Any], args: dict[str, Any]) -> str:
@@ -17858,7 +17869,7 @@ def run_gui(config_path: Path) -> int:
                 return
             log(
                 f"TikFinity recebeu o pacote do bot, mas a mensagem nao apareceu no chat em {BOT_DELIVERY_CONFIRMATION_WAIT_MS // 1000}s; "
-                "reiniciando a ponte direta e reenviando uma vez."
+                "reiniciando a ponte direta e reenviando uma vez em formato alternativo."
             )
             schedule_bot_send_pump(200)
             return

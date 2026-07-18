@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import socket
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -23,9 +25,14 @@ from freefire_kill_sender import (
     livepix_should_announce_event_rule,
     parse_livepix_event,
     normalize_chat_command,
+    connect_plain_websocket_client,
+    read_websocket_frame,
     send_tikfinity_direct_message,
     streamerbot_custom_event_payload,
+    tikfinity_direct_delivery_payload,
+    TikfinityDirectBridgeServer,
     tikfinity_chatbot_message_payload,
+    websocket_frame,
 )
 
 
@@ -136,6 +143,16 @@ def verify_tikfinity_chatbot_payload() -> None:
         json.loads(event_payload["data"]) == payload,
         "data do General.Custom deve conter o pacote sendChatbotMessage serializado",
     )
+    first_attempt_payload, first_attempt_label = tikfinity_direct_delivery_payload(
+        {"message": "Boa tarde", "username": "Jarvis", "attempt": 1}
+    )
+    check(first_attempt_label.startswith("evento General.Custom"), "primeira tentativa deve usar General.Custom")
+    check(first_attempt_payload.get("event") == {"source": "General", "type": "Custom"}, "primeira tentativa deve envelopar evento")
+    retry_payload, retry_label = tikfinity_direct_delivery_payload(
+        {"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True}
+    )
+    check(retry_label.startswith("pacote direto"), "reenvio deve usar fallback direto")
+    check(set(retry_payload) == {"action", "args"}, "fallback direto deve manter o pacote TikFinity cru")
     bridge = Bridge()
     detail = send_tikfinity_direct_message(bridge, {"message": "Boa tarde", "username": "Jarvis"})
     check(detail.startswith("TikFinity recebeu evento General.Custom sendChatbotMessage"), "envio direto deve relatar evento correto")
@@ -145,6 +162,16 @@ def verify_tikfinity_chatbot_payload() -> None:
         json.loads(str(sent_payload.get("data") or "{}"))
         == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis"}),
         "envio direto deve transmitir pacote oficial dentro de data",
+    )
+    retry_bridge = Bridge()
+    retry_detail = send_tikfinity_direct_message(
+        retry_bridge,
+        {"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True},
+    )
+    check(retry_detail.startswith("TikFinity recebeu pacote direto sendChatbotMessage"), "retry deve relatar fallback direto")
+    check(
+        retry_bridge.payloads == [tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True})],
+        "retry deve transmitir pacote direto oficial",
     )
 
     waiting_bridge = Bridge()
@@ -160,6 +187,77 @@ def verify_tikfinity_chatbot_payload() -> None:
     finally:
         app_runtime.TIKFINITY_DIRECT_READY_WAIT_SECONDS = previous_ready_wait
     check(waiting_bridge.payloads == [], "ponte sem Subscribe nao deve receber pacote do bot")
+
+
+def read_json_frame_until(sock: socket.socket, predicate: callable, timeout: float = 4.0) -> dict[str, object]:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            opcode, payload = read_websocket_frame(sock)
+        except socket.timeout:
+            continue
+        check(opcode == 0x1, f"frame websocket inesperado: opcode {opcode}")
+        try:
+            message = json.loads(payload.decode("utf-8"))
+        except Exception as exc:
+            raise AssertionError(f"frame websocket sem JSON valido: {exc}") from exc
+        if isinstance(message, dict) and predicate(message):
+            return message
+    raise AssertionError("frame websocket esperado nao chegou na ponte direta")
+
+
+def verify_tikfinity_direct_bridge_socket_delivery() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_socket:
+        port_socket.bind(("127.0.0.1", 0))
+        port = port_socket.getsockname()[1]
+    url = f"ws://127.0.0.1:{port}/"
+    logs: list[str] = []
+    server = TikfinityDirectBridgeServer(url, logs.append)
+    server.start()
+    sock: socket.socket | None = None
+    try:
+        sock = connect_plain_websocket_client(url, timeout=3)
+        hello = read_json_frame_until(sock, lambda item: item.get("request") == "Hello")
+        check(hello.get("info", {}).get("name") == app_runtime.APP_NAME, "ponte deve enviar Hello compativel com Streamer.bot")
+        subscribe_id = "verify-subscribe"
+        sock.sendall(
+            websocket_frame(
+                0x1,
+                json.dumps(
+                    {"request": "Subscribe", "id": subscribe_id, "events": {"General": ["Custom"]}},
+                    ensure_ascii=False,
+                ),
+                mask=True,
+            )
+        )
+        subscribe_response = read_json_frame_until(sock, lambda item: item.get("id") == subscribe_id)
+        check(subscribe_response.get("status") == "ok", "ponte deve aceitar Subscribe do TikFinity")
+        detail = send_tikfinity_direct_message(server, {"message": "Boa tarde", "username": "Jarvis"})
+        check("General.Custom" in detail, "envio direto deve relatar General.Custom")
+        event = read_json_frame_until(
+            sock,
+            lambda item: isinstance(item.get("event"), dict)
+            and item["event"].get("source") == "General"
+            and item["event"].get("type") == "Custom",
+        )
+        data = json.loads(str(event.get("data") or "{}"))
+        check(data.get("action") == "sendChatbotMessage", "evento real da ponte deve carregar sendChatbotMessage")
+        check(data.get("args", {}).get("message") == "Boa tarde", "evento real da ponte deve carregar a mensagem")
+        check(data.get("args", {}).get("username") == "Jarvis", "evento real da ponte deve carregar o usuario")
+        retry_detail = send_tikfinity_direct_message(
+            server,
+            {"message": "Boa noite", "username": "Jarvis", "attempt": 2, "retry": True},
+        )
+        check("pacote direto" in retry_detail, "retry real da ponte deve usar pacote direto")
+        raw_message = read_json_frame_until(sock, lambda item: item.get("action") == "sendChatbotMessage")
+        check(raw_message.get("args", {}).get("message") == "Boa noite", "retry real deve carregar a mensagem direta")
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        server.stop()
 
 
 def verify_livepix_alerts() -> None:
@@ -258,6 +356,7 @@ def main() -> int:
     verify_timer_counting()
     verify_cooldown_release()
     verify_tikfinity_chatbot_payload()
+    verify_tikfinity_direct_bridge_socket_delivery()
     verify_livepix_alerts()
     verify_livepix_amount_parsing()
     verify_livepix_rate_limit_detection()
