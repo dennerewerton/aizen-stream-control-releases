@@ -77,10 +77,24 @@ def verify_zip_resolution() -> None:
         expect_error(lambda: resolve_downloaded_exe(bad_zip), "ZIP com caminho ../ deve ser bloqueado")
 
 
+def verify_build_scripts_include_runtime_assets() -> None:
+    build_exe = (ROOT / "build_exe.ps1").read_text(encoding="utf-8-sig")
+    build_manifest = (ROOT / "build_update_manifest.ps1").read_text(encoding="utf-8-sig")
+    check(
+        "scripts/windows_ocr.ps1;scripts" in build_exe.replace("\\", "/"),
+        "build_exe.ps1 deve empacotar scripts/windows_ocr.ps1 para OCR no executavel",
+    )
+    check(
+        "scripts\\windows_ocr.ps1" in build_manifest or "scripts/windows_ocr.ps1" in build_manifest,
+        "build_update_manifest.ps1 deve reconstruir quando o OCR auxiliar mudar",
+    )
+
+
 def main() -> int:
     verify_manifest_validation()
     verify_version_comparison()
     verify_zip_resolution()
+    verify_build_scripts_include_runtime_assets()
     print("Runtime update OK: manifesto, versoes e ZIP de atualizacao validados.")
     return 0
 

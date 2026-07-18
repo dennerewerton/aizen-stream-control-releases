@@ -37,6 +37,7 @@ function Test-BuildArtifactStale {
     "freefire_kill_sender.py",
     "config.example.json",
     "requirements.txt",
+    "scripts\windows_ocr.ps1",
     "assets"
   )
 

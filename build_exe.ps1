@@ -16,6 +16,7 @@ $pyInstallerArgs = @(
   "--collect-data", "selenium",
   "--collect-data", "customtkinter",
   "--add-data", "assets;assets",
+  "--add-data", "scripts/windows_ocr.ps1;scripts",
   "--add-data", "config.example.json;."
 )
 
