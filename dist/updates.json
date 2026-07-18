@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.267",
-    "notes":  "Endurece o atualizador com validacao de manifesto, limite de download e extracao segura de ZIP.",
+    "version":  "2.6.268",
+    "notes":  "Fortalece a ponte direta do TikFinity para comandos e temporizadores, esperando a assinatura Streamer.bot antes do envio e confirmando a mensagem no chat por mais tempo.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.267/AizenStreamControl.exe",
-                    "sha256":  "a7f4eea40fd88543bf0e7acf1dac80aa6effbf4e1efa1ea99408b28ce27cb036"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.268/AizenStreamControl.exe",
+                    "sha256":  "41541b8a1b6c1867acb081249c4a410b2fbf4b34bb229c26d6b58f078efb0214"
                 }
 }

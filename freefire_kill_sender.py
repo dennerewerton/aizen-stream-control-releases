@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.267"
+APP_VERSION = "2.6.268"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -186,6 +186,8 @@ DEFAULT_STREAMERBOT_WEBSOCKET_URL = "ws://127.0.0.1:8080/"
 DEFAULT_STREAMERBOT_HTTP_URL = "http://127.0.0.1:7474"
 WINSOCK_CLEAN_RESTART_ENV = "AIZEN_WINSOCK_CLEAN_RESTARTED"
 TIKFINITY_DIRECT_SEND_WAIT_SECONDS = 12.0
+TIKFINITY_DIRECT_READY_WAIT_SECONDS = 8.0
+BOT_DELIVERY_CONFIRMATION_WAIT_MS = 12000
 TIKFINITY_DIRECT_CHATBOT_HINT = (
     "Se nao aparecer na live, confirme no TikFinity: Chatbot > Settings > "
     "Allow Streamer.bot to push messages to TikFinity. Se ja estiver ativo, desconecte e conecte "
@@ -2521,6 +2523,7 @@ class TikfinityDirectBridgeServer:
         self.server_socket: socket.socket | None = None
         self.thread: threading.Thread | None = None
         self.clients: set[socket.socket] = set()
+        self.client_states: dict[socket.socket, dict[str, Any]] = {}
         self.clients_lock = threading.Lock()
 
     def start(self) -> None:
@@ -2569,6 +2572,7 @@ class TikfinityDirectBridgeServer:
         with self.clients_lock:
             clients = list(self.clients)
             self.clients.clear()
+            self.client_states.clear()
         for client in clients:
             try:
                 client.close()
@@ -2581,6 +2585,10 @@ class TikfinityDirectBridgeServer:
     def client_count(self) -> int:
         with self.clients_lock:
             return len(self.clients)
+
+    def ready_client_count(self) -> int:
+        with self.clients_lock:
+            return sum(1 for client in self.clients if self.client_states.get(client, {}).get("subscribed"))
 
     def send_json_to_client(self, client: socket.socket, payload: dict[str, Any]) -> None:
         client.sendall(websocket_frame(0x1, json.dumps(payload, ensure_ascii=False)))
@@ -2636,7 +2644,12 @@ class TikfinityDirectBridgeServer:
         message = json.dumps(payload, ensure_ascii=False)
         frame = websocket_frame(0x1, message)
         with self.clients_lock:
-            clients = list(self.clients)
+            ready_clients = [
+                client
+                for client in self.clients
+                if self.client_states.get(client, {}).get("subscribed")
+            ]
+            clients = ready_clients or list(self.clients)
         delivered = 0
         stale_clients: list[socket.socket] = []
         for client in clients:
@@ -2649,6 +2662,7 @@ class TikfinityDirectBridgeServer:
             with self.clients_lock:
                 for client in stale_clients:
                     self.clients.discard(client)
+                    self.client_states.pop(client, None)
             for client in stale_clients:
                 try:
                     client.close()
@@ -2679,6 +2693,13 @@ class TikfinityDirectBridgeServer:
             client.settimeout(1.0)
             with self.clients_lock:
                 self.clients.add(client)
+                self.client_states[client] = {
+                    "connected_at": connected_at,
+                    "received_messages": 0,
+                    "last_request": "",
+                    "subscribed": False,
+                    "subscribed_at": 0.0,
+                }
                 client_total = len(self.clients)
             connected = True
             self._log(f"TikFinity conectado na ponte direta ({client_total} conexao).")
@@ -2711,6 +2732,7 @@ class TikfinityDirectBridgeServer:
             if connected:
                 with self.clients_lock:
                     self.clients.discard(client)
+                    self.client_states.pop(client, None)
                 lifetime = time.time() - connected_at
                 if lifetime < 8 and received_messages == 0:
                     self._log(
@@ -2733,9 +2755,18 @@ class TikfinityDirectBridgeServer:
             return
         request_id = str(message.get("id") or message.get("requestId") or "")
         request = str(message.get("request") or message.get("event") or message.get("action") or "").strip()
+        request_key = request.casefold()
+        with self.clients_lock:
+            state = self.client_states.get(client)
+            if state is not None:
+                state["received_messages"] = int(state.get("received_messages") or 0) + 1
+                state["last_request"] = request
+                if request_key == "subscribe":
+                    state["subscribed"] = True
+                    state["subscribed_at"] = time.time()
         if request:
             self._log(f"TikFinity ponte recebeu request Streamer.bot: {request}.")
-            if request.casefold() == "subscribe":
+            if request_key == "subscribe":
                 self._log(f"TikFinity assinou eventos Streamer.bot: {compact_json_preview(message.get('events') or message, 260)}")
         if request_id:
             try:
@@ -2919,20 +2950,45 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
     if bridge_server is None:
         raise RuntimeError("A ponte direta do TikFinity nao foi iniciada.")
     payload = tikfinity_chatbot_message_payload(args)
+    client_count_getter = getattr(bridge_server, "client_count", None)
+    ready_count_getter = getattr(bridge_server, "ready_client_count", None)
+    ready_deadline = time.time() + TIKFINITY_DIRECT_READY_WAIT_SECONDS
+    clients_connected = 0
+    clients_ready = 0
+    while time.time() < ready_deadline:
+        clients_connected = client_count_getter() if callable(client_count_getter) else 1
+        clients_ready = ready_count_getter() if callable(ready_count_getter) else clients_connected
+        if clients_ready > 0 or (clients_connected > 0 and not callable(ready_count_getter)):
+            break
+        time.sleep(0.25)
     delivered = bridge_server.broadcast_json(payload)
     deadline = time.time() + TIKFINITY_DIRECT_SEND_WAIT_SECONDS
     while delivered <= 0 and time.time() < deadline:
         time.sleep(0.25)
+        clients_connected = client_count_getter() if callable(client_count_getter) else clients_connected
+        clients_ready = ready_count_getter() if callable(ready_count_getter) else clients_connected
         delivered = bridge_server.broadcast_json(payload)
     if delivered <= 0:
         bridge_url = getattr(bridge_server, "url", DEFAULT_STREAMERBOT_WEBSOCKET_URL)
+        if clients_connected > 0 and callable(ready_count_getter) and clients_ready <= 0:
+            raise RuntimeError(
+                f"TikFinity conectou na ponte {bridge_url}, mas ainda nao assinou os eventos do Streamer.bot. "
+                "No TikFinity, clique em Conexao de teste ou desconecte/conecte Setup > Streamer.bot Connection."
+            )
         raise RuntimeError(
             f"TikFinity ainda nao conectou na ponte direta em {bridge_url}. "
             "A ponte esta aberta, mas o TikFinity nao manteve a conexao a tempo; "
             "no TikFinity, confira Setup > Streamer.bot Connection apontando para esse endereco."
         )
     suffix = "conexao" if delivered == 1 else "conexoes"
-    return f"TikFinity recebeu pacote sendChatbotMessage ({delivered} {suffix}). {TIKFINITY_DIRECT_CHATBOT_HINT}"
+    ready_detail = ""
+    if callable(ready_count_getter):
+        clients_ready = ready_count_getter()
+        if clients_ready > 0:
+            ready_detail = f" Conexao assinada: {clients_ready}."
+        elif clients_connected > 0:
+            ready_detail = " A conexao ainda nao confirmou Subscribe."
+    return f"TikFinity recebeu pacote sendChatbotMessage ({delivered} {suffix}).{ready_detail} {TIKFINITY_DIRECT_CHATBOT_HINT}"
 
 
 def send_chatbot_message_via_streamerbot(settings: dict[str, Any], args: dict[str, Any]) -> str:
@@ -17699,7 +17755,7 @@ def run_gui(config_path: Path) -> int:
             "attempt": int(payload.get("attempt") or 1),
             "chat_index": int(payload.get("sendChatIndex") or len(chat_messages)),
         }
-        root.after(7000, lambda current_id=delivery_id: check_bot_delivery_confirmation(current_id))
+        root.after(BOT_DELIVERY_CONFIRMATION_WAIT_MS, lambda current_id=delivery_id: check_bot_delivery_confirmation(current_id))
 
     def check_bot_delivery_confirmation(delivery_id: str) -> None:
         nonlocal bot_next_allowed_at
