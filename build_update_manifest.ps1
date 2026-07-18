@@ -2,14 +2,31 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$DownloadUrl,
 
-  [string]$Version = "2.6.52",
+  [string]$Version = "",
 
   [string]$Output = "dist\updates.json",
 
-  [string]$Notes = "Faz o seletor Diario/Geral do Kills FF trocar a tabela manual e o overlay de ranking juntos."
+  [string]$Notes = ""
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Read-AppVersion {
+  $source = Get-Content "freefire_kill_sender.py" -Raw
+  $match = [regex]::Match($source, 'APP_VERSION\s*=\s*"([^"]+)"')
+  if (!$match.Success) {
+    throw "Nao consegui ler APP_VERSION em freefire_kill_sender.py."
+  }
+  return $match.Groups[1].Value
+}
+
+if (!$Version) {
+  $Version = Read-AppVersion
+}
+
+if (!$Notes) {
+  $Notes = "Atualizacao v$Version do Aizen Stream Control."
+}
 
 if (!(Test-Path "dist\AizenStreamControl.exe")) {
   .\build_exe.ps1
