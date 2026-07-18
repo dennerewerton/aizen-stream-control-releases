@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.266"
+APP_VERSION = "2.6.267"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -91,6 +91,7 @@ UPDATE_DOWNLOAD_CHUNK_BYTES = 256 * 1024
 UPDATE_MANIFEST_TIMEOUT_SECONDS = 4
 UPDATE_DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 12
 UPDATE_DOWNLOAD_READ_TIMEOUT_SECONDS = 18
+UPDATE_MAX_DOWNLOAD_BYTES = 220 * 1024 * 1024
 LOG_QUEUE_SOFT_LIMIT = 1500
 LOG_QUEUE_HARD_LIMIT = 2200
 LOG_TEXT_MAX_LINES = 1200
@@ -7369,6 +7370,11 @@ def update_asset_from_manifest(manifest: dict[str, Any]) -> dict[str, str]:
     notes = str(source.get("notes") or manifest.get("notes") or "").strip()
     if not version or not url:
         raise ValueError("Manifesto precisa ter version e url/exe_url/portable_url.")
+    parsed_url = urlparse(url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        raise ValueError("URL da atualizacao invalida no manifesto.")
+    if sha256 and not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise ValueError("SHA256 da atualizacao invalido no manifesto.")
     return {"version": version, "url": url, "sha256": sha256, "notes": notes}
 
 
@@ -7410,6 +7416,11 @@ def download_update_asset(url: str, sha256: str = "", progress_callback: Any | N
             ) as response:
                 response.raise_for_status()
                 total = int(response.headers.get("content-length") or 0)
+                if total > UPDATE_MAX_DOWNLOAD_BYTES:
+                    raise RuntimeError(
+                        f"Atualizacao muito grande ({total / (1024 * 1024):.1f} MB); limite "
+                        f"{UPDATE_MAX_DOWNLOAD_BYTES / (1024 * 1024):.0f} MB."
+                    )
                 last_percent = -1
                 last_report_at = 0.0
                 with target.open("wb") as handle:
@@ -7418,6 +7429,10 @@ def download_update_asset(url: str, sha256: str = "", progress_callback: Any | N
                             continue
                         handle.write(chunk)
                         downloaded += len(chunk)
+                        if downloaded > UPDATE_MAX_DOWNLOAD_BYTES:
+                            raise RuntimeError(
+                                f"Atualizacao excedeu o limite de {UPDATE_MAX_DOWNLOAD_BYTES / (1024 * 1024):.0f} MB."
+                            )
                         if total:
                             percent = min(99, int(downloaded * 100 / total))
                             now = time.monotonic()
@@ -7467,12 +7482,24 @@ def download_update_asset(url: str, sha256: str = "", progress_callback: Any | N
     raise RuntimeError(f"Download da atualizacao falhou apos {UPDATE_DOWNLOAD_ATTEMPTS} tentativas: {last_error}")
 
 
+def safe_extract_update_zip(downloaded: Path, extract_dir: Path) -> None:
+    base = extract_dir.resolve()
+    with zipfile.ZipFile(downloaded) as archive:
+        for member in archive.infolist():
+            member_name = str(member.filename or "").replace("\\", "/")
+            if not member_name or member_name.startswith("/") or re.match(r"^[A-Za-z]:", member_name):
+                raise RuntimeError("ZIP da atualizacao contem caminho inseguro.")
+            target = (extract_dir / member_name).resolve()
+            if target != base and base not in target.parents:
+                raise RuntimeError("ZIP da atualizacao contem caminho inseguro.")
+        archive.extractall(extract_dir)
+
+
 def resolve_downloaded_exe(downloaded: Path) -> Path:
     if downloaded.suffix.lower() == ".zip":
         extract_dir = downloaded.parent / "extracted"
         extract_dir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(downloaded) as archive:
-            archive.extractall(extract_dir)
+        safe_extract_update_zip(downloaded, extract_dir)
         preferred = list(extract_dir.rglob(APP_EXE_NAME))
         candidates = preferred or list(extract_dir.rglob("*.exe"))
         if not candidates:

@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.266",
-    "notes":  "Reduz chamadas extras quando a Livepix retorna limite 429 e melhora aviso de espera para sincronizacao.",
+    "version":  "2.6.267",
+    "notes":  "Endurece o atualizador com validacao de manifesto, limite de download e extracao segura de ZIP.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.266/AizenStreamControl.exe",
-                    "sha256":  "f579b82d8ed3b0772b8f91806e5cf6f924bb3fd836669043179b07ff30663644"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.267/AizenStreamControl.exe",
+                    "sha256":  "a7f4eea40fd88543bf0e7acf1dac80aa6effbf4e1efa1ea99408b28ce27cb036"
                 }
 }
