@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import freefire_kill_sender as app_runtime
+
 from freefire_kill_sender import (
     LiveChatMessage,
     LivepixEvent,
@@ -100,10 +102,17 @@ def verify_tikfinity_chatbot_payload() -> None:
     class Bridge:
         def __init__(self) -> None:
             self.payloads: list[dict[str, object]] = []
+            self.ready_clients = 1
 
         def broadcast_json(self, payload: dict[str, object]) -> int:
             self.payloads.append(payload)
             return 1
+
+        def client_count(self) -> int:
+            return 1
+
+        def ready_client_count(self) -> int:
+            return self.ready_clients
 
     payload = tikfinity_chatbot_message_payload(
         {
@@ -123,6 +132,20 @@ def verify_tikfinity_chatbot_payload() -> None:
     detail = send_tikfinity_direct_message(bridge, {"message": "Boa tarde", "username": "Jarvis"})
     check(detail.startswith("TikFinity recebeu pacote sendChatbotMessage"), "envio direto deve relatar action correta")
     check(bridge.payloads == [tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis"})], "envio direto deve transmitir pacote oficial")
+
+    waiting_bridge = Bridge()
+    waiting_bridge.ready_clients = 0
+    previous_ready_wait = app_runtime.TIKFINITY_DIRECT_READY_WAIT_SECONDS
+    app_runtime.TIKFINITY_DIRECT_READY_WAIT_SECONDS = 0.01
+    try:
+        send_tikfinity_direct_message(waiting_bridge, {"message": "Nao enviar ainda", "username": "Jarvis"})
+    except RuntimeError as exc:
+        check("ainda nao assinou" in str(exc), "ponte sem Subscribe deve explicar a assinatura pendente")
+    else:
+        raise AssertionError("ponte conectada sem Subscribe nao deveria aceitar envio como sucesso")
+    finally:
+        app_runtime.TIKFINITY_DIRECT_READY_WAIT_SECONDS = previous_ready_wait
+    check(waiting_bridge.payloads == [], "ponte sem Subscribe nao deve receber pacote do bot")
 
 
 def verify_livepix_alerts() -> None:

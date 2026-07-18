@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.268"
+APP_VERSION = "2.6.269"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -2961,6 +2961,12 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
         if clients_ready > 0 or (clients_connected > 0 and not callable(ready_count_getter)):
             break
         time.sleep(0.25)
+    bridge_url = getattr(bridge_server, "url", DEFAULT_STREAMERBOT_WEBSOCKET_URL)
+    if callable(ready_count_getter) and clients_connected > 0 and clients_ready <= 0:
+        raise RuntimeError(
+            f"TikFinity conectou na ponte {bridge_url}, mas ainda nao assinou os eventos do Streamer.bot. "
+            "No TikFinity, clique em Conexao de teste ou desconecte/conecte Setup > Streamer.bot Connection."
+        )
     delivered = bridge_server.broadcast_json(payload)
     deadline = time.time() + TIKFINITY_DIRECT_SEND_WAIT_SECONDS
     while delivered <= 0 and time.time() < deadline:
@@ -2969,12 +2975,6 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
         clients_ready = ready_count_getter() if callable(ready_count_getter) else clients_connected
         delivered = bridge_server.broadcast_json(payload)
     if delivered <= 0:
-        bridge_url = getattr(bridge_server, "url", DEFAULT_STREAMERBOT_WEBSOCKET_URL)
-        if clients_connected > 0 and callable(ready_count_getter) and clients_ready <= 0:
-            raise RuntimeError(
-                f"TikFinity conectou na ponte {bridge_url}, mas ainda nao assinou os eventos do Streamer.bot. "
-                "No TikFinity, clique em Conexao de teste ou desconecte/conecte Setup > Streamer.bot Connection."
-            )
         raise RuntimeError(
             f"TikFinity ainda nao conectou na ponte direta em {bridge_url}. "
             "A ponte esta aberta, mas o TikFinity nao manteve a conexao a tempo; "
