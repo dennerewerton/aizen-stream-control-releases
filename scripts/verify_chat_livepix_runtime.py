@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -23,6 +24,7 @@ from freefire_kill_sender import (
     parse_livepix_event,
     normalize_chat_command,
     send_tikfinity_direct_message,
+    streamerbot_custom_event_payload,
     tikfinity_chatbot_message_payload,
 )
 
@@ -128,10 +130,22 @@ def verify_tikfinity_chatbot_payload() -> None:
     check(payload["args"]["text"] == "tudo bem e vc?", "args.text deve acompanhar a mensagem")
     check(payload["args"]["username"] == "AIZEN OFC", "username deve ser preservado")
     check(payload["args"]["command"] == "!boa", "argumentos extras do comando devem continuar no pacote")
+    event_payload = streamerbot_custom_event_payload(payload)
+    check(event_payload["event"] == {"source": "General", "type": "Custom"}, "ponte direta deve emitir General.Custom")
+    check(
+        json.loads(event_payload["data"]) == payload,
+        "data do General.Custom deve conter o pacote sendChatbotMessage serializado",
+    )
     bridge = Bridge()
     detail = send_tikfinity_direct_message(bridge, {"message": "Boa tarde", "username": "Jarvis"})
-    check(detail.startswith("TikFinity recebeu pacote sendChatbotMessage"), "envio direto deve relatar action correta")
-    check(bridge.payloads == [tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis"})], "envio direto deve transmitir pacote oficial")
+    check(detail.startswith("TikFinity recebeu evento General.Custom sendChatbotMessage"), "envio direto deve relatar evento correto")
+    sent_payload = bridge.payloads[0] if bridge.payloads else {}
+    check(sent_payload.get("event") == {"source": "General", "type": "Custom"}, "envio direto deve transmitir evento General.Custom")
+    check(
+        json.loads(str(sent_payload.get("data") or "{}"))
+        == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis"}),
+        "envio direto deve transmitir pacote oficial dentro de data",
+    )
 
     waiting_bridge = Bridge()
     waiting_bridge.ready_clients = 0

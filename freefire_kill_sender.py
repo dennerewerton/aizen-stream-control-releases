@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.271"
+APP_VERSION = "2.6.273"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -177,6 +177,8 @@ LIVEPIX_WORKER_MAX_THREADS = 3
 BOT_WORKER_MAX_THREADS = 1
 STALE_MEI_MIN_AGE_SECONDS = 24 * 60 * 60
 STALE_MEI_CLEANUP_LIMIT = 3
+STALE_UPDATE_MIN_AGE_SECONDS = 24 * 60 * 60
+STALE_UPDATE_CLEANUP_LIMIT = 6
 WRITE_TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
 WRITE_TEXT_CACHE_LOCK = threading.Lock()
 WRITE_TEXT_IO_LOCK = threading.Lock()
@@ -2445,6 +2447,58 @@ def cleanup_stale_pyinstaller_dirs(
     return removed
 
 
+def cleanup_stale_update_dirs(
+    base_dir: Path | None = None,
+    min_age_seconds: int = STALE_UPDATE_MIN_AGE_SECONDS,
+    max_dirs: int = STALE_UPDATE_CLEANUP_LIMIT,
+) -> int:
+    if max_dirs <= 0:
+        return 0
+    try:
+        base = Path(base_dir or (APP_DIR / "updates")).resolve(strict=False)
+    except OSError:
+        return 0
+    if not base.is_dir():
+        return 0
+    now = time.time()
+    candidates: list[tuple[float, Path]] = []
+    try:
+        children = list(base.iterdir())
+    except OSError:
+        return 0
+    for child in children:
+        if not re.fullmatch(r"aizen_update_\d+_[0-9a-f]{8}", child.name, re.IGNORECASE):
+            continue
+        try:
+            resolved = child.resolve(strict=False)
+        except OSError:
+            continue
+        if resolved.parent != base or not child.is_dir():
+            continue
+        try:
+            modified_at = child.stat().st_mtime
+        except OSError:
+            continue
+        if now - modified_at < max(0, min_age_seconds):
+            continue
+        candidates.append((modified_at, resolved))
+
+    removed = 0
+    for _, target in sorted(candidates, key=lambda item: item[0])[:max_dirs]:
+        try:
+            resolved = target.resolve(strict=False)
+        except OSError:
+            continue
+        if resolved.parent != base or not re.fullmatch(r"aizen_update_\d+_[0-9a-f]{8}", resolved.name, re.IGNORECASE):
+            continue
+        try:
+            shutil.rmtree(resolved)
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def connect_plain_websocket_client(url: str, timeout: float = 8.0) -> socket.socket:
     parsed = urlparse(url)
     if parsed.scheme != "ws":
@@ -2947,10 +3001,18 @@ def tikfinity_chatbot_message_payload(args: dict[str, Any]) -> dict[str, Any]:
     return {"action": "sendChatbotMessage", "args": payload_args}
 
 
+def streamerbot_custom_event_payload(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "timeStamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+        "event": {"source": "General", "type": "Custom"},
+        "data": json.dumps(data, ensure_ascii=False),
+    }
+
+
 def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> str:
     if bridge_server is None:
         raise RuntimeError("A ponte direta do TikFinity nao foi iniciada.")
-    payload = tikfinity_chatbot_message_payload(args)
+    payload = streamerbot_custom_event_payload(tikfinity_chatbot_message_payload(args))
     client_count_getter = getattr(bridge_server, "client_count", None)
     ready_count_getter = getattr(bridge_server, "ready_client_count", None)
     ready_deadline = time.time() + TIKFINITY_DIRECT_READY_WAIT_SECONDS
@@ -2989,7 +3051,7 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
             ready_detail = f" Conexao assinada: {clients_ready}."
         elif clients_connected > 0:
             ready_detail = " A conexao ainda nao confirmou Subscribe."
-    return f"TikFinity recebeu pacote sendChatbotMessage ({delivered} {suffix}).{ready_detail} {TIKFINITY_DIRECT_CHATBOT_HINT}"
+    return f"TikFinity recebeu evento General.Custom sendChatbotMessage ({delivered} {suffix}).{ready_detail} {TIKFINITY_DIRECT_CHATBOT_HINT}"
 
 
 def send_chatbot_message_via_streamerbot(settings: dict[str, Any], args: dict[str, Any]) -> str:
@@ -17795,7 +17857,7 @@ def run_gui(config_path: Path) -> int:
                 release_bot_command_cooldown(payload, "fila cheia no reenvio")
                 return
             log(
-                "TikFinity recebeu o pacote do bot, mas a mensagem nao apareceu no chat em 7s; "
+                f"TikFinity recebeu o pacote do bot, mas a mensagem nao apareceu no chat em {BOT_DELIVERY_CONFIRMATION_WAIT_MS // 1000}s; "
                 "reiniciando a ponte direta e reenviando uma vez."
             )
             schedule_bot_send_pump(200)
@@ -17959,7 +18021,7 @@ def run_gui(config_path: Path) -> int:
                 bot_last_sent_var.set(datetime.now().strftime("%H:%M:%S"))
                 detail_text = str(detail or "")
                 message_preview = str(payload.get("message", ""))[:140]
-                if detail_text.startswith("TikFinity recebeu pacote"):
+                if detail_text.startswith("TikFinity recebeu evento") or detail_text.startswith("TikFinity recebeu pacote"):
                     bot_status_var.set("Aguardando confirmação")
                     log(f"Bot enviado ao TikFinity; aguardando aparecer no chat: {message_preview}")
                     schedule_bot_delivery_confirmation(payload)
@@ -23259,9 +23321,16 @@ def run_gui(config_path: Path) -> int:
             return
 
         def run() -> None:
-            removed = cleanup_stale_pyinstaller_dirs(APP_DIR)
+            removed_mei = cleanup_stale_pyinstaller_dirs(APP_DIR)
+            removed_updates = cleanup_stale_update_dirs()
+            removed = removed_mei + removed_updates
             if removed:
-                log(f"Limpeza leve: {removed} pasta(s) temporaria(s) antiga(s) removida(s).")
+                detail_parts = []
+                if removed_mei:
+                    detail_parts.append(f"{removed_mei} runtime")
+                if removed_updates:
+                    detail_parts.append(f"{removed_updates} update")
+                log(f"Limpeza leve: {', '.join(detail_parts)} removido(s).")
 
         threading.Thread(target=run, name="AizenPyInstallerCleanup", daemon=True).start()
 

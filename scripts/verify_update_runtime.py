@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
+import time
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -14,6 +16,7 @@ import freefire_kill_sender as app_runtime
 
 from freefire_kill_sender import (
     APP_EXE_NAME,
+    cleanup_stale_update_dirs,
     is_newer_version,
     resolve_downloaded_exe,
     safe_extract_update_zip,
@@ -109,11 +112,30 @@ def verify_build_scripts_include_runtime_assets() -> None:
     )
 
 
+def verify_stale_update_cleanup() -> None:
+    with tempfile.TemporaryDirectory(prefix="aizen_update_cleanup_") as tmp:
+        base = Path(tmp)
+        old_update = base / "aizen_update_1000_deadbeef"
+        fresh_update = base / "aizen_update_1001_cafebabe"
+        similar_name = base / "aizen_update_manual"
+        for path in (old_update, fresh_update, similar_name):
+            path.mkdir()
+        old_time = time.time() - (48 * 60 * 60)
+        os.utime(old_update, (old_time, old_time))
+        os.utime(similar_name, (old_time, old_time))
+        removed = cleanup_stale_update_dirs(base, min_age_seconds=24 * 60 * 60, max_dirs=4)
+        check(removed == 1, "limpeza de updates deveria remover somente uma pasta antiga valida")
+        check(not old_update.exists(), "limpeza de updates nao removeu pasta antiga valida")
+        check(fresh_update.exists(), "limpeza de updates removeu pasta recente")
+        check(similar_name.exists(), "limpeza de updates removeu pasta com nome fora do padrao")
+
+
 def main() -> int:
     verify_manifest_validation()
     verify_version_comparison()
     verify_zip_resolution()
     verify_build_scripts_include_runtime_assets()
+    verify_stale_update_cleanup()
     print("Runtime update OK: manifesto, versoes e ZIP de atualizacao validados.")
     return 0
 
