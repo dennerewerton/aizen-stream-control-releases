@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.263"
+APP_VERSION = "2.6.264"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -2866,30 +2866,16 @@ def send_streamerbot_action_websocket(
             pass
 
 
-def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> str:
-    if bridge_server is None:
-        raise RuntimeError("A ponte direta do TikFinity nao foi iniciada.")
-    message = re.sub(r"\s+", " ", str(args.get("message") or args.get("text") or "")).strip()
+def tikfinity_chatbot_message_payload(args: dict[str, Any]) -> dict[str, Any]:
+    message = re.sub(
+        r"\s+",
+        " ",
+        str(args.get("message") or args.get("text") or args.get("content") or args.get("chatMessage") or ""),
+    ).strip()
     username = str(args.get("username") or args.get("user") or "Aizen").strip() or "Aizen"
-    event_name = str(args.get("eventName") or "sendChatbotMessage").strip() or "sendChatbotMessage"
-    event_data = dict(args)
-    event_arguments = {
-        "message": message,
-        "text": message,
-        "content": message,
-        "chatMessage": message,
-        "username": username,
-        "user": username,
-        "nick": username,
-        "source": APP_NAME,
-        "deliveryId": str(args.get("deliveryId") or ""),
-    }
-    event_arguments.update(args)
-    event_data.update(
+    payload_args = dict(args)
+    payload_args.update(
         {
-            "name": event_name,
-            "eventName": event_name,
-            "action": event_name,
             "message": message,
             "text": message,
             "content": message,
@@ -2897,24 +2883,17 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
             "username": username,
             "user": username,
             "nick": username,
-            "args": event_arguments,
-            "arguments": event_arguments,
+            "source": APP_NAME,
+            "deliveryId": str(args.get("deliveryId") or ""),
         }
     )
-    payload = {
-        "timeStamp": datetime.now().isoformat(timespec="milliseconds"),
-        "event": {"source": "General", "type": "Custom"},
-        "source": "General",
-        "type": "Custom",
-        "action": event_name,
-        "request": event_name,
-        "message": message,
-        "text": message,
-        "content": message,
-        "args": event_arguments,
-        "arguments": event_arguments,
-        "data": event_data,
-    }
+    return {"action": "sendChatbotMessage", "args": payload_args}
+
+
+def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> str:
+    if bridge_server is None:
+        raise RuntimeError("A ponte direta do TikFinity nao foi iniciada.")
+    payload = tikfinity_chatbot_message_payload(args)
     delivered = bridge_server.broadcast_json(payload)
     deadline = time.time() + TIKFINITY_DIRECT_SEND_WAIT_SECONDS
     while delivered <= 0 and time.time() < deadline:
@@ -2928,7 +2907,7 @@ def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> s
             "no TikFinity, confira Setup > Streamer.bot Connection apontando para esse endereco."
         )
     suffix = "conexao" if delivered == 1 else "conexoes"
-    return f"TikFinity recebeu pacote do bot ({delivered} {suffix}). {TIKFINITY_DIRECT_CHATBOT_HINT}"
+    return f"TikFinity recebeu pacote sendChatbotMessage ({delivered} {suffix}). {TIKFINITY_DIRECT_CHATBOT_HINT}"
 
 
 def send_chatbot_message_via_streamerbot(settings: dict[str, Any], args: dict[str, Any]) -> str:

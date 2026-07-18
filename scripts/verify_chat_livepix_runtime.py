@@ -16,6 +16,8 @@ from freefire_kill_sender import (
     is_timer_countable_chat_message,
     livepix_should_announce_event_rule,
     normalize_chat_command,
+    send_tikfinity_direct_message,
+    tikfinity_chatbot_message_payload,
 )
 
 
@@ -88,6 +90,35 @@ def verify_cooldown_release() -> None:
         bot_cooldown_release_key({"command": "!boa", "commandCooldownStartedAt": 100.0}, last_sent) == "",
         "payload sem marcador interno nao deve liberar cooldown",
     )
+
+
+def verify_tikfinity_chatbot_payload() -> None:
+    class Bridge:
+        def __init__(self) -> None:
+            self.payloads: list[dict[str, object]] = []
+
+        def broadcast_json(self, payload: dict[str, object]) -> int:
+            self.payloads.append(payload)
+            return 1
+
+    payload = tikfinity_chatbot_message_payload(
+        {
+            "message": "  tudo   bem e vc?  ",
+            "username": "AIZEN OFC",
+            "deliveryId": "cmd-1",
+            "command": "!boa",
+        }
+    )
+    check(set(payload) == {"action", "args"}, "payload direto deve ter somente action e args no topo")
+    check(payload["action"] == "sendChatbotMessage", "action do TikFinity deve postar mensagem no chatbot")
+    check(payload["args"]["message"] == "tudo bem e vc?", "mensagem deve ser normalizada em args.message")
+    check(payload["args"]["text"] == "tudo bem e vc?", "args.text deve acompanhar a mensagem")
+    check(payload["args"]["username"] == "AIZEN OFC", "username deve ser preservado")
+    check(payload["args"]["command"] == "!boa", "argumentos extras do comando devem continuar no pacote")
+    bridge = Bridge()
+    detail = send_tikfinity_direct_message(bridge, {"message": "Boa tarde", "username": "Jarvis"})
+    check(detail.startswith("TikFinity recebeu pacote sendChatbotMessage"), "envio direto deve relatar action correta")
+    check(bridge.payloads == [tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis"})], "envio direto deve transmitir pacote oficial")
 
 
 def verify_livepix_alerts() -> None:
@@ -164,6 +195,7 @@ def main() -> int:
     verify_commands()
     verify_timer_counting()
     verify_cooldown_release()
+    verify_tikfinity_chatbot_payload()
     verify_livepix_alerts()
     print("Runtime chat/Livepix OK: comandos, temporizador e alertas antigos validados.")
     return 0

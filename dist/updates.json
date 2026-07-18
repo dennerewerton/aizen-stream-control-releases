@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.263",
-    "notes":  "Adiciona verificação automatizada das regras de comandos, temporizador e bloqueio de alertas Livepix antigos.",
+    "version":  "2.6.264",
+    "notes":  "Corrige envio direto ao TikFinity usando o pacote sendChatbotMessage oficial para comandos e temporizadores.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.263/AizenStreamControl.exe",
-                    "sha256":  "530f0eff1205a83ade270504f4bb59a00c221f2a2cc9d9aebed088f46de51805"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.264/AizenStreamControl.exe",
+                    "sha256":  "abe861bf48cc8ec52bfeb789101a1b563be5d3b673ccfce36e07f549de9191d1"
                 }
 }
