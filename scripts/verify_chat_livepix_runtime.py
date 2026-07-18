@@ -14,7 +14,10 @@ from freefire_kill_sender import (
     bot_cooldown_release_key,
     chat_command_token,
     is_timer_countable_chat_message,
+    livepix_amount_cents,
+    livepix_amount_cents_from_paths,
     livepix_should_announce_event_rule,
+    parse_livepix_event,
     normalize_chat_command,
     send_tikfinity_direct_message,
     tikfinity_chatbot_message_payload,
@@ -191,12 +194,27 @@ def verify_livepix_alerts() -> None:
     )
 
 
+def verify_livepix_amount_parsing() -> None:
+    check(livepix_amount_cents("R$ 4,00") == 400, "valor BRL com virgula deve virar centavos")
+    check(livepix_amount_cents("4.00") == 400, "valor decimal em texto deve virar centavos")
+    check(livepix_amount_cents(4.0) == 400, "float inteiro da API deve representar reais")
+    check(
+        livepix_amount_cents_from_paths({"amountCents": 400.0}, (("amountCents",), ("amount",))) == 400,
+        "campo amountCents float deve continuar sendo centavos",
+    )
+    decimal_event = parse_livepix_event({"id": "pix-decimal", "amount": 4.0, "username": "Apoiador"}, "payment", "api")
+    cents_event = parse_livepix_event({"id": "pix-cents", "amountCents": 400.0, "username": "Apoiador"}, "payment", "api")
+    check(decimal_event is not None and decimal_event.amount == 400, "evento com amount decimal deve ficar em centavos")
+    check(cents_event is not None and cents_event.amount == 400, "evento com amountCents deve preservar centavos")
+
+
 def main() -> int:
     verify_commands()
     verify_timer_counting()
     verify_cooldown_release()
     verify_tikfinity_chatbot_payload()
     verify_livepix_alerts()
+    verify_livepix_amount_parsing()
     print("Runtime chat/Livepix OK: comandos, temporizador e alertas antigos validados.")
     return 0
 

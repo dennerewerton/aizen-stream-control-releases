@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.264",
-    "notes":  "Corrige envio direto ao TikFinity usando o pacote sendChatbotMessage oficial para comandos e temporizadores.",
+    "version":  "2.6.265",
+    "notes":  "Melhora leitura de valores Livepix numericos e preserva campos em centavos, reduzindo totais exibidos incorretamente no dashboard.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.264/AizenStreamControl.exe",
-                    "sha256":  "abe861bf48cc8ec52bfeb789101a1b563be5d3b673ccfce36e07f549de9191d1"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.265/AizenStreamControl.exe",
+                    "sha256":  "6850cee3b5a87351a691d728f1ed0de98bd725655e685b9e50ac4e3a91c8aa62"
                 }
 }

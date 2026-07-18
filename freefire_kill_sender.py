@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.264"
+APP_VERSION = "2.6.265"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -1312,9 +1312,13 @@ def livepix_first_text_from(mapping: Any, paths: tuple[tuple[str, ...], ...]) ->
     return _first_text(*(livepix_text_value(value) for value in values))
 
 
-def livepix_amount_cents(value: Any) -> int:
+def livepix_amount_path_uses_cents(path: Iterable[str]) -> bool:
+    return any("cent" in str(part).casefold() or "centavo" in str(part).casefold() for part in path)
+
+
+def livepix_amount_cents(value: Any, value_is_cents: bool = False) -> int:
     if isinstance(value, dict):
-        value = livepix_first_value(
+        return livepix_amount_cents_from_paths(
             value,
             (
                 ("amount",),
@@ -1337,6 +1341,10 @@ def livepix_amount_cents(value: Any) -> int:
                 return 0
             has_decimal_marker = bool(re.search(r"\d[,.]\d{1,2}\b", text)) or any(mark in text for mark in ("R$", "$", "BRL"))
             cleaned = re.sub(r"[^0-9,.-]", "", text)
+            if value_is_cents:
+                if "," in cleaned and "." not in cleaned:
+                    cleaned = cleaned.replace(",", ".")
+                return max(0, int(round(float(cleaned))))
             if has_decimal_marker:
                 if "," in cleaned and "." in cleaned:
                     cleaned = cleaned.replace(".", "").replace(",", ".")
@@ -1345,10 +1353,22 @@ def livepix_amount_cents(value: Any) -> int:
                 return max(0, int(round(float(cleaned) * 100)))
             return max(0, int(float(cleaned)))
         if isinstance(value, float):
-            return max(0, int(round(value * 100 if abs(value) < 1000 and not value.is_integer() else value)))
+            if value_is_cents:
+                return max(0, int(round(value)))
+            return max(0, int(round(value * 100 if abs(value) < 100_000 else value)))
         return max(0, int(value))
     except (TypeError, ValueError):
         return 0
+
+
+def livepix_amount_cents_from_paths(mapping: Any, paths: tuple[tuple[str, ...], ...]) -> int:
+    if not isinstance(mapping, dict):
+        return 0
+    for path in paths:
+        value = livepix_first_value(mapping, (path,))
+        if value not in (None, ""):
+            return livepix_amount_cents(value, value_is_cents=livepix_amount_path_uses_cents(path))
+    return 0
 
 
 def livepix_parse_datetime(value: Any) -> datetime:
@@ -1425,27 +1445,25 @@ def parse_livepix_event(payload: Any, kind_hint: str = "payment", source: str = 
     reference = livepix_first_text_from(data, (("reference",), ("resource", "reference"), ("txid",), ("transaction", "id"))) or event_id
     if not event_id and not reference:
         return None
-    amount = livepix_amount_cents(
-        livepix_first_value(
-            data,
-            (
-                ("amount",),
-                ("amountCents",),
-                ("value",),
-                ("valueCents",),
-                ("total",),
-                ("totalAmount",),
-                ("grossAmount",),
-                ("netAmount",),
-                ("resource", "amount"),
-                ("payment", "amount"),
-                ("message", "amount"),
-                ("subscription", "amount"),
-                ("plan", "amount"),
-                ("transaction", "amount"),
-                ("receivable", "amount"),
-            ),
-        )
+    amount = livepix_amount_cents_from_paths(
+        data,
+        (
+            ("amount",),
+            ("amountCents",),
+            ("value",),
+            ("valueCents",),
+            ("total",),
+            ("totalAmount",),
+            ("grossAmount",),
+            ("netAmount",),
+            ("resource", "amount"),
+            ("payment", "amount"),
+            ("message", "amount"),
+            ("subscription", "amount"),
+            ("plan", "amount"),
+            ("transaction", "amount"),
+            ("receivable", "amount"),
+        ),
     )
     username = livepix_first_text_from(
         data,
@@ -18172,9 +18190,7 @@ def run_gui(config_path: Path) -> int:
         return selected if isinstance(selected, dict) else {}
 
     def livepix_mapping_amount(mapping: Any, paths: tuple[tuple[str, ...], ...]) -> int:
-        if not isinstance(mapping, dict):
-            return 0
-        return livepix_amount_cents(livepix_first_value(mapping, paths))
+        return livepix_amount_cents_from_paths(mapping, paths)
 
     def livepix_metric_display(value: str) -> str:
         clean = str(value or "").strip()
