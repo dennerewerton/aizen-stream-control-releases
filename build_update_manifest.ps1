@@ -6,7 +6,9 @@ param(
 
   [string]$Output = "dist\updates.json",
 
-  [string]$Notes = ""
+  [string]$Notes = "",
+
+  [switch]$SkipBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +22,44 @@ function Read-AppVersion {
   return $match.Groups[1].Value
 }
 
+function Test-BuildArtifactStale {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ArtifactPath
+  )
+
+  if (!(Test-Path $ArtifactPath)) {
+    return $true
+  }
+
+  $artifactTime = (Get-Item $ArtifactPath).LastWriteTimeUtc
+  $sourcePaths = @(
+    "freefire_kill_sender.py",
+    "config.example.json",
+    "requirements.txt",
+    "assets"
+  )
+
+  foreach ($sourcePath in $sourcePaths) {
+    if (!(Test-Path $sourcePath)) {
+      continue
+    }
+    $item = Get-Item $sourcePath
+    if ($item.PSIsContainer) {
+      $newerChild = Get-ChildItem $item.FullName -Recurse -File |
+        Where-Object { $_.LastWriteTimeUtc -gt $artifactTime } |
+        Select-Object -First 1
+      if ($null -ne $newerChild) {
+        return $true
+      }
+    } elseif ($item.LastWriteTimeUtc -gt $artifactTime) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
 if (!$Version) {
   $Version = Read-AppVersion
 }
@@ -28,8 +68,12 @@ if (!$Notes) {
   $Notes = "Atualizacao v$Version do Aizen Stream Control."
 }
 
-if (!(Test-Path "dist\AizenStreamControl.exe")) {
+if (!$SkipBuild -and (Test-BuildArtifactStale "dist\AizenStreamControl.exe")) {
   .\build_exe.ps1
+}
+
+if ($SkipBuild -and (Test-BuildArtifactStale "dist\AizenStreamControl.exe")) {
+  throw "dist\AizenStreamControl.exe esta ausente ou mais antigo que o codigo. Execute build_exe.ps1 ou remova -SkipBuild."
 }
 
 $hash = (Get-FileHash "dist\AizenStreamControl.exe" -Algorithm SHA256).Hash.ToLowerInvariant()

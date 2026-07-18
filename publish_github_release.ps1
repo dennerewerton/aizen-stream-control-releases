@@ -11,6 +11,8 @@ param(
 
   [string]$Notes = "",
 
+  [switch]$SkipBuild,
+
   [switch]$DryRun
 )
 
@@ -77,11 +79,14 @@ if (!$Notes) {
   $Notes = "Atualizacao $tag do Aizen Stream Control."
 }
 
-if (!(Test-Path $ExePath)) {
-  .\build_exe.ps1
+if (!$SkipBuild) {
+  if ($ExePath -ne "dist\AizenStreamControl.exe" -or $SetupPath -ne "dist\AizenStreamControlSetup.exe") {
+    throw "Build automatico usa os caminhos padrao em dist. Use os caminhos padrao ou rode com -SkipBuild apos gerar os artefatos customizados."
+  }
+  .\build_installer.ps1
 }
 
-.\build_update_manifest.ps1 -Version $Version -DownloadUrl $downloadUrl -Notes $Notes | Out-Host
+.\build_update_manifest.ps1 -Version $Version -DownloadUrl $downloadUrl -Output $ManifestPath -Notes $Notes -SkipBuild:$SkipBuild | Out-Host
 
 if (!(Test-Path $ExePath)) {
   throw "Executavel nao encontrado: $ExePath"
