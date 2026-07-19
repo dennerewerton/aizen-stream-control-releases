@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.276",
-    "notes":  "Adiciona leitura do chat do YouTube para sorteios: participantes entram pelo comando tanto no YouTube quanto no TikTok/TikFinity; salva URL do YouTube, aceita URL de live/video/chat pop-out, separa anti-fraude por plataforma e preserva a comparacao exata do comando configurado.",
+    "version":  "2.6.277",
+    "notes":  "Corrige o reset do Kills FF: ao zerar o ranking diario ou geral, o app tambem limpa os jogadores lancados na tabela esquerda somente do escopo escolhido e salva essa limpeza localmente.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.276/AizenStreamControl.exe",
-                    "sha256":  "b56df8fde8deb6ac739906a51a1aca407daf6ee5908328a0d6ef6a187d84dbdc"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.277/AizenStreamControl.exe",
+                    "sha256":  "1e5a4098b80d700228491a82d6d2cc50ef825a1c2e7b55650aa2d35fb96cd868"
                 }
 }

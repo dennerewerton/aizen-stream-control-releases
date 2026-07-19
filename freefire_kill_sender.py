@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.276"
+APP_VERSION = "2.6.277"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -12550,7 +12550,10 @@ def run_gui(config_path: Path) -> int:
                     room=str(local_config.get("kills_sync_room", "principal")),
                     token=str(local_config.get("jarvis_api_token", "")),
                 )
-                enqueue_sync_event("kills_action_done", {"state": state, "action": action, "label": label or action})
+                enqueue_sync_event(
+                    "kills_action_done",
+                    {"state": state, "action": action, "scope": action_scope, "label": label or action},
+                )
             except Exception as exc:
                 enqueue_sync_event("kills_action_error", {"error": str(exc), "action": action, "label": label or action})
 
@@ -14493,6 +14496,45 @@ def run_gui(config_path: Path) -> int:
         set_manual_players([])
         manual_status_var.set("Tabela limpa")
         on_manual_change()
+
+    def clear_manual_scopes_after_reset(scope: str | None = None) -> list[str]:
+        nonlocal kills_daily_ranking, kills_global_ranking
+        clean_scope = normalize_kills_scope_value(scope or current_manual_scope())
+        if clean_scope == "both":
+            scopes = ["daily", "general"]
+        elif clean_scope in {"daily", "general"}:
+            scopes = [clean_scope]
+        else:
+            scopes = [current_manual_scope()]
+
+        current_scope = current_manual_scope()
+        for scope_key in scopes:
+            manual_scope_buffers[scope_key] = []
+            manual_scope_dirty.discard(scope_key)
+            if scope_key == "daily":
+                kills_daily_ranking = []
+            else:
+                kills_global_ranking = []
+
+        clear_manual_reference_cache()
+        if current_scope in scopes:
+            set_manual_players([], scope=current_scope, force_render=True)
+        else:
+            update_manual_metrics()
+
+        config["manual_kills"] = player_payload(manual_scope_buffers.get(current_scope, []))
+        config["manual_kills_by_scope"] = {
+            "daily": player_payload(manual_scope_buffers.get("daily", [])),
+            "general": player_payload(manual_scope_buffers.get("general", [])),
+        }
+        config["kills_rank_cache"] = {
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "daily_ranking": player_payload(kills_daily_ranking),
+            "ranking": player_payload(kills_global_ranking),
+        }
+        save_config_snapshot_in_background(config)
+        schedule_kills_visual_refresh(delay_ms=80)
+        return scopes
 
     def reset_manual_kills() -> None:
         dialog = ctk.CTkToplevel(root)
@@ -21043,13 +21085,31 @@ def run_gui(config_path: Path) -> int:
             manual_poll_quiet_cycles = 0
             manual_remote_count_override = state.total_players
             manual_remote_total_override = state.total_kills
+            action_name = str(payload.get("action") or "").strip().lower()
+            reset_scopes: list[str] = []
+            if action_name in {"reset", "reset_daily", "reset_general"}:
+                reset_scope = "both" if action_name == "reset" else normalize_kills_scope_value(payload.get("scope"))
+                reset_scopes = clear_manual_scopes_after_reset(reset_scope)
+                visible_scope = current_manual_scope()
+                if visible_scope == "daily":
+                    manual_remote_count_override = 0 if "daily" in reset_scopes else state.daily_players
+                    manual_remote_total_override = 0 if "daily" in reset_scopes else state.daily_kills
+                else:
+                    manual_remote_count_override = 0 if "general" in reset_scopes else state.total_players
+                    manual_remote_total_override = 0 if "general" in reset_scopes else state.total_kills
             update_manual_metrics()
             if state.updated_by:
                 set_text_var(manual_source_var, state.updated_by)
-            set_text_var(manual_status_var, "Ranking atualizado")
+            if reset_scopes:
+                reset_labels = " / ".join(kills_scope_label(scope_key) for scope_key in reset_scopes)
+                set_text_var(manual_status_var, f"{reset_labels} zerado")
+            else:
+                set_text_var(manual_status_var, "Ranking atualizado")
             health_last_sync_var.set(f"{datetime.now().strftime('%H:%M:%S')} Kills FF ação")
             label = str(payload.get("label") or payload.get("action") or "acao")
             log(f"Ranking Kills FF atualizado pelo Jarvis: {label}.")
+            if reset_scopes:
+                log(f"Lista local de Kills FF limpa: {' / '.join(kills_scope_label(scope_key) for scope_key in reset_scopes)}.")
             return
 
         if kind == "kills_action_error":
