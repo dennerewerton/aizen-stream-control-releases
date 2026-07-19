@@ -67,6 +67,7 @@
   "livepix_announce_in_chat": true,
   "livepix_public_page_file": "livepix_public.html",
   "raffle_source_mode": "events",
+  "raffle_youtube_chat_url": "",
   "raffle_command": "!sorteio",
   "raffle_duration_seconds": 600,
   "raffle_entries_normal": 1,

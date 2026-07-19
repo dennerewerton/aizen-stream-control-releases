@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.274"
+APP_VERSION = "2.6.276"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -132,6 +132,8 @@ RAFFLE_SEEN_MESSAGES_LIMIT = 2500
 RAFFLE_PARTICIPANT_RENDER_THRESHOLD = 60
 RAFFLE_PARTICIPANT_RENDER_CHUNK_SIZE = 20
 RAFFLE_PARTICIPANT_RENDER_CHUNK_DELAY_MS = 18
+YOUTUBE_RAFFLE_CHAT_POLL_SECONDS = 0.75
+YOUTUBE_RAFFLE_DOM_MESSAGE_LIMIT = 160
 LIVEPIX_EVENT_STORAGE_LIMIT = 1000
 LIVEPIX_HISTORY_RENDER_LIMIT = 30
 LIVEPIX_HISTORY_RENDER_CHUNK_SIZE = 8
@@ -612,6 +614,7 @@ def load_config(path: Path) -> dict[str, Any]:
         data["chat_event_source"] = "websocket"
     data.setdefault("chat_max_messages", 250)
     data.setdefault("raffle_source_mode", "events")
+    data.setdefault("raffle_youtube_chat_url", "")
     data.setdefault("raffle_command", "!sorteio")
     data.setdefault("raffle_duration_seconds", 600)
     data.setdefault("raffle_entries_normal", 1)
@@ -7970,6 +7973,226 @@ class HotkeyWorker:
             self.log(f"Erro no monitor: {exc}")
 
 
+def youtube_video_id_from_url(raw_url: str) -> str:
+    text = str(raw_url or "").strip()
+    if not text:
+        return ""
+    if re.fullmatch(r"[A-Za-z0-9_-]{8,20}", text):
+        return text
+    parse_text = text if re.match(r"^[a-z][a-z0-9+.-]*://", text, re.IGNORECASE) else f"https://{text}"
+    parsed = urlparse(parse_text)
+    host = (parsed.hostname or "").casefold()
+    host = host[4:] if host.startswith("www.") else host
+    query = parse_qs(parsed.query)
+    if host in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
+        if query.get("v") and query["v"][0].strip():
+            return query["v"][0].strip()
+        match = re.match(r"^/(?:live|shorts|embed)/([^/?#]+)", parsed.path or "")
+        if match:
+            return match.group(1).strip()
+    if host == "youtu.be":
+        parts = [part for part in (parsed.path or "").split("/") if part]
+        if parts:
+            return parts[0].strip()
+    return ""
+
+
+def normalize_youtube_live_chat_url(raw_url: str) -> str:
+    text = str(raw_url or "").strip()
+    if not text:
+        return ""
+    parse_text = text if re.match(r"^[a-z][a-z0-9+.-]*://", text, re.IGNORECASE) else f"https://{text}"
+    parsed = urlparse(parse_text)
+    host = (parsed.hostname or "").casefold()
+    host = host[4:] if host.startswith("www.") else host
+    if host in {"youtube.com", "m.youtube.com", "music.youtube.com"} and (parsed.path or "").startswith("/live_chat"):
+        query = parse_qs(parsed.query)
+        video_id = (query.get("v") or [""])[0].strip()
+        if video_id:
+            return f"https://www.youtube.com/live_chat?is_popout=1&v={quote(video_id)}"
+        return parse_text
+    video_id = youtube_video_id_from_url(text)
+    if not video_id:
+        raise ValueError("URL do YouTube invalida. Use a URL da live, do video, youtu.be ou do chat pop-out.")
+    return f"https://www.youtube.com/live_chat?is_popout=1&v={quote(video_id)}"
+
+
+def create_raffle_browser_driver(log: callable, label: str = "sorteio", window_size: str = "900,700"):
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.webdriver.edge.options import Options as EdgeOptions
+
+    errors = []
+    for browser_name, driver_factory, options_factory in (
+        ("Edge", webdriver.Edge, EdgeOptions),
+        ("Chrome", webdriver.Chrome, ChromeOptions),
+    ):
+        try:
+            options = options_factory()
+            options.add_argument("--headless=new")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--log-level=3")
+            options.add_argument("--mute-audio")
+            options.add_argument(f"--window-size={window_size}")
+            driver = driver_factory(options=options)
+            log(f"Navegador usado no {label}: {browser_name} em segundo plano.")
+            return driver
+        except Exception as exc:
+            errors.append(f"{browser_name}: {exc}")
+
+    raise RuntimeError(f"Nao consegui abrir Edge nem Chrome para ler o chat do {label}. " + " | ".join(errors))
+
+
+class YouTubeRaffleChatWorker:
+    def __init__(self, chat_url: str, callback: callable, log: callable):
+        self.raw_chat_url = str(chat_url or "").strip()
+        self.chat_url = ""
+        self.callback = callback
+        self.log = log
+        self.thread: threading.Thread | None = None
+        self.stop_event = threading.Event()
+        self.seen_messages: set[str] = set()
+        self.seen_message_order: list[str] = []
+
+    def start(self) -> None:
+        if not self.raw_chat_url:
+            return
+        if self.thread and self.thread.is_alive():
+            return
+        self.chat_url = normalize_youtube_live_chat_url(self.raw_chat_url)
+        self.stop_event.clear()
+        self.thread = threading.Thread(target=self._run, name="YouTubeRaffleChat", daemon=True)
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def is_running(self) -> bool:
+        return bool(self.thread and self.thread.is_alive() and not self.stop_event.is_set())
+
+    def _run(self) -> None:
+        driver = None
+        try:
+            driver = create_raffle_browser_driver(self.log, label="chat do YouTube", window_size="980,760")
+            driver.get(self.chat_url)
+            self.log("Leitor do YouTube conectado ao sorteio. Aguardando comando no chat.")
+            while not self.stop_event.is_set():
+                for message in self._read_chat_messages(driver):
+                    self._handle_message(message)
+                time.sleep(YOUTUBE_RAFFLE_CHAT_POLL_SECONDS)
+        except Exception as exc:
+            self.log(f"Erro no leitor do YouTube para sorteio: {exc}")
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            self.log("Leitor do YouTube do sorteio parado.")
+
+    def _read_chat_messages(self, driver) -> list[dict[str, Any]]:
+        try:
+            messages = driver.execute_script(
+                f"""
+                window.__aizenYoutubeRaffleSeq = window.__aizenYoutubeRaffleSeq || 0;
+                function textOf(root) {{
+                    return (root?.innerText || root?.textContent || "").replace(/\\s+/g, " ").trim();
+                }}
+                function firstText(root, selectors) {{
+                    for (const selector of selectors) {{
+                        const value = textOf(root?.querySelector?.(selector));
+                        if (value) return value;
+                    }}
+                    return "";
+                }}
+                function firstAttr(root, selectors, attrs) {{
+                    for (const selector of selectors) {{
+                        const node = root?.querySelector?.(selector);
+                        if (!node) continue;
+                        for (const attr of attrs) {{
+                            const value = attr === "src" ? (node.currentSrc || node.src || "") : (node.getAttribute(attr) || "");
+                            if (value) return value;
+                        }}
+                    }}
+                    return "";
+                }}
+                const selector = [
+                    "yt-live-chat-text-message-renderer",
+                    "yt-live-chat-paid-message-renderer",
+                    "yt-live-chat-paid-sticker-renderer",
+                    "yt-live-chat-membership-item-renderer"
+                ].join(",");
+                return Array.from(document.querySelectorAll(selector)).slice(-{YOUTUBE_RAFFLE_DOM_MESSAGE_LIMIT}).map((el) => {{
+                    if (!el.dataset.aizenRaffleId) {{
+                        window.__aizenYoutubeRaffleSeq += 1;
+                        el.dataset.aizenRaffleId = "yt-" + window.__aizenYoutubeRaffleSeq;
+                    }}
+                    const tag = (el.tagName || "").toLowerCase();
+                    const authorType = String(el.getAttribute("author-type") || "").trim();
+                    const badges = Array.from(el.querySelectorAll("yt-live-chat-author-badge-renderer, #chat-badges yt-icon"))
+                        .map((badge) => badge.getAttribute("aria-label") || badge.title || textOf(badge))
+                        .filter(Boolean)
+                        .join(" ");
+                    const comment = firstText(el, [
+                        "#message",
+                        "yt-formatted-string#message",
+                        "#content #message",
+                        "#header-subtext",
+                        "#event-text"
+                    ]);
+                    return {{
+                        username: firstText(el, ["#author-name", "yt-live-chat-author-chip #author-name"]),
+                        comment: comment,
+                        userId: el.getAttribute("author-external-channel-id") || "",
+                        platform: "YouTube",
+                        supporterTier: [authorType, badges, tag.includes("membership") ? "subscriber" : ""].filter(Boolean).join(" "),
+                        gift: tag.includes("paid") ? firstText(el, ["#purchase-amount", "#price-column", "#amount"]) : "",
+                        sub: tag.includes("membership") ? "subscriber" : "",
+                        moderator: authorType,
+                        avatar: firstAttr(el, ["#author-photo img", "img#img", "img"], ["src"]),
+                        ts: el.id || el.dataset.aizenRaffleId || ""
+                    }};
+                }}).filter((message) => message.username && message.comment);
+                """
+            )
+        except Exception:
+            return []
+        if not isinstance(messages, list):
+            return []
+        return [message for message in messages if isinstance(message, dict)]
+
+    def _handle_message(self, message: dict[str, Any]) -> None:
+        username = str(message.get("username") or "").strip()
+        comment = str(message.get("comment") or "").strip()
+        user_id = str(message.get("userId") or "").strip()
+        message_id = str(message.get("ts") or "").strip() or f"{user_id}|{username}|{comment}"
+        if not username or not comment:
+            return
+        key = f"YouTube|{user_id}|{message_id}|{username}|{comment}"
+        if key in self.seen_messages:
+            return
+        self.seen_messages.add(key)
+        self.seen_message_order.append(key)
+        if len(self.seen_message_order) > RAFFLE_SEEN_MESSAGES_LIMIT:
+            stale_messages = self.seen_message_order[: len(self.seen_message_order) - RAFFLE_SEEN_MESSAGES_LIMIT]
+            del self.seen_message_order[: len(self.seen_message_order) - RAFFLE_SEEN_MESSAGES_LIMIT]
+            for stale_message_id in stale_messages:
+                self.seen_messages.discard(stale_message_id)
+        self.callback(
+            LiveChatMessage(
+                username=username,
+                comment=comment,
+                user_id=user_id,
+                avatar_url=str(message.get("avatar") or "").strip(),
+                platform="YouTube",
+                message_id=message_id,
+                source="YouTube Live Chat",
+                received_at=datetime.now().strftime("%H:%M:%S"),
+                supporter_tier=str(message.get("supporterTier") or "").strip() or "normal",
+            )
+        )
+
+
 class TikfinityRaffleWorker:
     def __init__(
         self,
@@ -7987,7 +8210,7 @@ class TikfinityRaffleWorker:
         include_moderators: bool = True,
     ):
         self.chat_url = chat_url.strip()
-        self.command = command.strip().lower()
+        self.command = clean_chat_command_text(command).casefold()
         self.duration_seconds = duration_seconds
         self.log = log
         self.source_mode = source_mode
@@ -8174,29 +8397,7 @@ class TikfinityRaffleWorker:
                     pass
 
     def _create_driver(self):
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options as ChromeOptions
-        from selenium.webdriver.edge.options import Options as EdgeOptions
-
-        errors = []
-        for browser_name, driver_factory, options_factory in (
-            ("Edge", webdriver.Edge, EdgeOptions),
-            ("Chrome", webdriver.Chrome, ChromeOptions),
-        ):
-            try:
-                options = options_factory()
-                options.add_argument("--headless=new")
-                options.add_argument("--disable-gpu")
-                options.add_argument("--log-level=3")
-                options.add_argument("--mute-audio")
-                options.add_argument("--window-size=900,700")
-                driver = driver_factory(options=options)
-                self.log(f"Navegador usado no sorteio: {browser_name} em segundo plano.")
-                return driver
-            except Exception as exc:
-                errors.append(f"{browser_name}: {exc}")
-
-        raise RuntimeError("Nao consegui abrir Edge nem Chrome para ler o chat. " + " | ".join(errors))
+        return create_raffle_browser_driver(self.log, label="sorteio")
 
     def _install_chat_hook(self, driver) -> bool:
         try:
@@ -8342,14 +8543,19 @@ class TikfinityRaffleWorker:
                 for stale_message_id in stale_messages:
                     self.seen_messages.discard(stale_message_id)
 
-        participant_key = self._participant_key(username, user_id)
+        participant_key = self._participant_key(username, user_id, platform)
         with self.lock:
             current_winner = self.current_winner
+            current_winner_platform = str(current_winner.platform or "").casefold() if current_winner else ""
+            message_platform = platform.casefold()
             winner_match = bool(
                 current_winner
                 and (
                     participant_key == current_winner.key
-                    or normalize_player_key(username) == normalize_player_key(current_winner.name)
+                    or (
+                        normalize_player_key(username) == normalize_player_key(current_winner.name)
+                        and (not current_winner_platform or not message_platform or current_winner_platform == message_platform)
+                    )
                 )
             )
             if winner_match:
@@ -8365,23 +8571,23 @@ class TikfinityRaffleWorker:
             if self.finished_event.is_set():
                 return
 
-            if comment.lower() != self.command:
+            if clean_chat_command_text(comment).casefold() != self.command:
                 return
 
             now = time.monotonic()
-            name_key = normalize_player_key(username)
-            user_key = self._participant_key(username, user_id)
+            name_key = self._participant_name_key(username, platform)
+            user_key = self._participant_key(username, user_id, platform)
             if self._is_moderator(message) and not self.include_moderators:
-                self._record_blocked_locked(username, user_id, "moderador ignorado")
+                self._record_blocked_locked(username, user_id, platform, "moderador ignorado")
                 return
             last_command_at = self.user_command_times.get(user_key, 0.0)
             if self.user_cooldown_seconds and now - last_command_at < self.user_cooldown_seconds:
-                self._record_blocked_locked(username, user_id, "cooldown anti-spam")
+                self._record_blocked_locked(username, user_id, platform, "cooldown anti-spam")
                 return
             self.user_command_times[user_key] = now
             existing_name_key = self.participant_names_seen.get(name_key)
             if existing_name_key and existing_name_key != participant_key:
-                self._record_blocked_locked(username, user_id, "nome duplicado")
+                self._record_blocked_locked(username, user_id, platform, "nome duplicado")
                 return
 
             if participant_key in self.participants_by_key:
@@ -8410,19 +8616,30 @@ class TikfinityRaffleWorker:
         tier_label = self._supporter_tier_label(supporter_tier)
         self.log(f"Entrou no sorteio: {username} - {entries} entrada(s) ({tier_label}) | {count} participante(s)")
 
-    def _record_blocked_locked(self, username: str, user_id: str, reason: str) -> None:
+    def _record_blocked_locked(self, username: str, user_id: str, platform: str, reason: str) -> None:
         self.blocked_attempts.append(
             {
                 "time": datetime.now().isoformat(timespec="seconds"),
                 "username": username,
                 "user_id": user_id,
+                "platform": platform,
                 "reason": reason,
             }
         )
         self.blocked_attempts = self.blocked_attempts[-500:]
 
-    def _participant_key(self, username: str, user_id: str = "") -> str:
-        return user_id or re.sub(r"\s+", " ", username.casefold()).strip()
+    def _participant_platform_key(self, platform: str = "") -> str:
+        return re.sub(r"\s+", " ", str(platform or "live").casefold()).strip() or "live"
+
+    def _participant_name_key(self, username: str, platform: str = "") -> str:
+        return f"{self._participant_platform_key(platform)}|{normalize_player_key(username)}"
+
+    def _participant_key(self, username: str, user_id: str = "", platform: str = "") -> str:
+        platform_key = self._participant_platform_key(platform)
+        user_key = str(user_id or "").strip()
+        if user_key:
+            return f"{platform_key}|id:{user_key}"
+        return f"{platform_key}|name:{normalize_player_key(username)}"
 
     def _normalize_supporter_tier(self, value: str) -> str:
         folded = _fold_raffle_text(value)
@@ -8479,6 +8696,7 @@ def run_gui(config_path: Path) -> int:
     chat_websocket_worker: ChatWebSocketWorker | None = None
     bot_bridge_server: TikfinityDirectBridgeServer | None = None
     raffle_worker: TikfinityRaffleWorker | None = None
+    youtube_raffle_chat_worker: YouTubeRaffleChatWorker | None = None
     raffle_end_at = 0.0
     raffle_animating = False
     raffle_started_at: datetime | None = None
@@ -9278,6 +9496,7 @@ def run_gui(config_path: Path) -> int:
     raffle_source_mode_var = tk.StringVar(
         value="URL do chat (legado)" if config.get("raffle_source_mode") == "browser" else "Eventos do app"
     )
+    raffle_youtube_chat_url_var = tk.StringVar(value=str(config.get("raffle_youtube_chat_url", "")))
     raffle_command_var = tk.StringVar(value=config.get("raffle_command", "!sorteio"))
     raffle_default_seconds = int(config.get("raffle_duration_seconds", 600))
     raffle_minutes_var = tk.StringVar(value=str(max(1, raffle_default_seconds // 60)))
@@ -11621,21 +11840,23 @@ def run_gui(config_path: Path) -> int:
     raffle_left.columnconfigure(0, weight=1)
     raffle_left.rowconfigure(1, weight=1)
 
-    raffle_controls = card(raffle_left, "Configurar sorteio", "Use eventos do app para entrar participantes automaticamente pelo comando ativo.")
+    raffle_controls = card(raffle_left, "Configurar sorteio", "Use TikTok/TikFinity e YouTube juntos para entrar participantes pelo comando ativo.")
     raffle_controls.grid(row=0, column=0, sticky="new", padx=12, pady=(12, 8))
     section_label(raffle_controls, "Fonte do sorteio", 2)
     combo(raffle_controls, raffle_source_mode_var, ["Eventos do app", "URL do chat (legado)"], width=210).grid(
         row=2, column=1, sticky="w", padx=18, pady=5
     )
-    section_label(raffle_controls, "URL do chat legado", 3)
+    section_label(raffle_controls, "URL TikTok legado", 3)
     entry(raffle_controls, tikfinity_url_var).grid(row=3, column=1, sticky="ew", padx=18, pady=5)
-    section_label(raffle_controls, "Comando", 4)
-    entry(raffle_controls, raffle_command_var, width=160).grid(row=4, column=1, sticky="w", padx=18, pady=5)
-    section_label(raffle_controls, "Minutos", 5)
-    entry(raffle_controls, raffle_minutes_var, width=92).grid(row=5, column=1, sticky="w", padx=18, pady=5)
-    section_label(raffle_controls, "Entradas por tipo", 6)
+    section_label(raffle_controls, "URL chat YouTube", 4)
+    entry(raffle_controls, raffle_youtube_chat_url_var).grid(row=4, column=1, sticky="ew", padx=18, pady=5)
+    section_label(raffle_controls, "Comando", 5)
+    entry(raffle_controls, raffle_command_var, width=160).grid(row=5, column=1, sticky="w", padx=18, pady=5)
+    section_label(raffle_controls, "Minutos", 6)
+    entry(raffle_controls, raffle_minutes_var, width=92).grid(row=6, column=1, sticky="w", padx=18, pady=5)
+    section_label(raffle_controls, "Entradas por tipo", 7)
     raffle_entries_row = ctk.CTkFrame(raffle_controls, fg_color=panel, corner_radius=0)
-    raffle_entries_row.grid(row=6, column=1, sticky="ew", padx=18, pady=5)
+    raffle_entries_row.grid(row=7, column=1, sticky="ew", padx=18, pady=5)
     for column in range(10):
         raffle_entries_row.columnconfigure(column, weight=1 if column in {1, 3, 5, 7, 9} else 0)
     ctk.CTkLabel(raffle_entries_row, text="Normal", text_color=muted, font=("Segoe UI", 11)).grid(
@@ -11659,9 +11880,9 @@ def run_gui(config_path: Path) -> int:
     )
     entry(raffle_entries_row, raffle_entries_sub_var, width=54).grid(row=0, column=9, sticky="w")
 
-    section_label(raffle_controls, "Anti-fraude", 7)
+    section_label(raffle_controls, "Anti-fraude", 8)
     anti_fraud_row = ctk.CTkFrame(raffle_controls, fg_color=panel, corner_radius=0)
-    anti_fraud_row.grid(row=7, column=1, sticky="ew", padx=18, pady=5)
+    anti_fraud_row.grid(row=8, column=1, sticky="ew", padx=18, pady=5)
     anti_fraud_row.columnconfigure(1, weight=1)
     ctk.CTkLabel(anti_fraud_row, text="Cooldown", text_color=muted, font=("Segoe UI", 11)).grid(
         row=0, column=0, sticky="w", padx=(0, 6)
@@ -11677,7 +11898,7 @@ def run_gui(config_path: Path) -> int:
     ).grid(row=0, column=2, sticky="w")
 
     metrics = ctk.CTkFrame(raffle_controls, fg_color=field, corner_radius=12, border_width=1, border_color=border)
-    metrics.grid(row=8, column=0, columnspan=2, sticky="ew", padx=18, pady=(14, 8))
+    metrics.grid(row=9, column=0, columnspan=2, sticky="ew", padx=18, pady=(14, 8))
     metrics.columnconfigure(0, weight=1)
     metrics.columnconfigure(1, weight=1)
     metrics.columnconfigure(2, weight=1)
@@ -11690,10 +11911,10 @@ def run_gui(config_path: Path) -> int:
     ctk.CTkLabel(metrics, textvariable=raffle_state_var, text_color=accent, font=("Segoe UI Semibold", 14)).grid(row=1, column=3, sticky="w", padx=14, pady=(4, 14))
 
     raffle_buttons = ctk.CTkFrame(raffle_controls, fg_color=panel, corner_radius=0)
-    raffle_buttons.grid(row=9, column=0, columnspan=2, sticky="ew", padx=18, pady=(10, 18))
+    raffle_buttons.grid(row=10, column=0, columnspan=2, sticky="ew", padx=18, pady=(10, 18))
 
     layout_controls = ctk.CTkFrame(raffle_controls, fg_color=field, corner_radius=12, border_width=1, border_color=border)
-    layout_controls.grid(row=10, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 18))
+    layout_controls.grid(row=11, column=0, columnspan=2, sticky="ew", padx=18, pady=(0, 18))
     layout_controls.columnconfigure(1, weight=1)
     layout_controls.columnconfigure(3, weight=1)
     ctk.CTkLabel(
@@ -19925,6 +20146,7 @@ def run_gui(config_path: Path) -> int:
         config["livepix_announce_in_chat"] = bool(livepix_announce_in_chat_var.get())
         config["livepix_public_page_file"] = livepix_public_page_file_var.get().strip() or "livepix_public.html"
         config["raffle_source_mode"] = raffle_source_key()
+        config["raffle_youtube_chat_url"] = raffle_youtube_chat_url_var.get().strip()
         config["raffle_command"] = raffle_command_var.get().strip() or "!sorteio"
         config["raffle_duration_seconds"] = int(float(raffle_minutes_var.get().replace(",", ".")) * 60)
         config["raffle_entries_normal"] = raffle_entries_value(raffle_entries_normal_var, 1)
@@ -21689,6 +21911,36 @@ def run_gui(config_path: Path) -> int:
         path = Path(raw_path)
         return path if path.is_absolute() else ROOT / path
 
+    def stop_youtube_raffle_chat(silent: bool = False) -> None:
+        nonlocal youtube_raffle_chat_worker
+        worker = youtube_raffle_chat_worker
+        if worker is None:
+            return
+        worker.stop()
+        worker_thread = worker.thread
+        if worker_thread is not None and worker_thread is not threading.current_thread():
+            worker_thread.join(timeout=0.8)
+        youtube_raffle_chat_worker = None
+        if not silent:
+            log("Leitor do YouTube do sorteio parado.")
+
+    def start_youtube_raffle_chat(chat_url: str) -> bool:
+        nonlocal youtube_raffle_chat_worker
+        clean_url = str(chat_url or "").strip()
+        if not clean_url:
+            stop_youtube_raffle_chat(silent=True)
+            return False
+        stop_youtube_raffle_chat(silent=True)
+
+        def receive_youtube_raffle_event(event: LiveChatMessage) -> None:
+            if raffle_worker is not None:
+                raffle_worker.handle_live_chat_event(event)
+
+        worker = YouTubeRaffleChatWorker(clean_url, receive_youtube_raffle_event, log)
+        worker.start()
+        youtube_raffle_chat_worker = worker
+        return True
+
     def update_raffle_status() -> None:
         nonlocal raffle_worker
         if app_closing or raffle_worker is None:
@@ -21726,18 +21978,30 @@ def run_gui(config_path: Path) -> int:
 
             duration_seconds = int(local_config.get("raffle_duration_seconds", 600))
             source_mode = str(local_config.get("raffle_source_mode", "events"))
+            youtube_chat_url = str(local_config.get("raffle_youtube_chat_url", "")).strip()
+            if youtube_chat_url:
+                youtube_chat_url = normalize_youtube_live_chat_url(youtube_chat_url)
+                set_text_var(raffle_youtube_chat_url_var, youtube_chat_url)
+                local_config["raffle_youtube_chat_url"] = youtube_chat_url
+            legacy_chat_url = str(local_config.get("tikfinity_chat_url", "")).strip() if source_mode == "browser" else ""
+            if source_mode == "browser" and not legacy_chat_url and youtube_chat_url:
+                source_mode = "events"
+                log("URL TikTok legado vazia; sorteio vai usar o YouTube como fonte principal.")
             if source_mode == "events" and chat_webhook_server is None and chat_websocket_worker is None:
-                if chat_listener_hidden:
+                if chat_listener_hidden and not youtube_chat_url:
                     messagebox.showinfo(
                         "Sorteio",
                         "A captura de eventos do app esta desativada porque a aba Chat Ao Vivo esta oculta.",
                     )
                     return
-                start_chat_listener()
-                if chat_webhook_server is None and chat_websocket_worker is None:
+                if not chat_listener_hidden:
+                    start_chat_listener()
+                if chat_webhook_server is None and chat_websocket_worker is None and not youtube_chat_url:
                     return
+                if chat_webhook_server is None and chat_websocket_worker is None and youtube_chat_url:
+                    log("Sorteio iniciado sem leitor TikFinity ativo; usando apenas YouTube.")
             raffle_worker = TikfinityRaffleWorker(
-                local_config.get("tikfinity_chat_url", "") if source_mode == "browser" else "",
+                legacy_chat_url if source_mode == "browser" else "",
                 local_config.get("raffle_command", "!sorteio"),
                 duration_seconds,
                 log,
@@ -21751,6 +22015,7 @@ def run_gui(config_path: Path) -> int:
                 include_moderators=bool(local_config.get("raffle_include_moderators", True)),
             )
             raffle_worker.start()
+            youtube_started = start_youtube_raffle_chat(youtube_chat_url)
             raffle_started_at = datetime.now()
             raffle_end_at = time.monotonic() + duration_seconds
             raffle_timer_var.set(format_raffle_timer(duration_seconds))
@@ -21766,7 +22031,14 @@ def run_gui(config_path: Path) -> int:
             redraw_raffle_button.configure(state=tk.DISABLED)
             conclude_raffle_button.configure(state=tk.DISABLED)
             cancel_raffle_button.configure(state=tk.NORMAL)
-            source_label = "eventos do app" if source_mode == "events" else "URL do chat legado"
+            source_parts = []
+            if source_mode == "events" and (chat_webhook_server is not None or chat_websocket_worker is not None):
+                source_parts.append("TikTok/TikFinity")
+            elif source_mode == "browser":
+                source_parts.append("URL TikTok legado")
+            if youtube_started:
+                source_parts.append("YouTube")
+            source_label = " + ".join(source_parts) or ("eventos do app" if source_mode == "events" else "URL do chat legado")
             log(
                 f"Sorteio iniciado por {duration_seconds // 60} minuto(s). "
                 f"Fonte: {source_label}. Comando: {local_config.get('raffle_command')}"
@@ -21839,6 +22111,7 @@ def run_gui(config_path: Path) -> int:
             raffle_state_var.set("Sem participantes")
             log("Sorteio encerrado sem participantes.")
             raffle_worker.stop()
+            stop_youtube_raffle_chat(silent=True)
             start_raffle_button.configure(state=tk.NORMAL)
             finish_raffle_button.configure(state=tk.DISABLED)
             redraw_raffle_button.configure(state=tk.DISABLED)
@@ -21871,6 +22144,7 @@ def run_gui(config_path: Path) -> int:
             "started_at": raffle_started_at.isoformat(timespec="seconds") if raffle_started_at else None,
             "concluded_at": datetime.now().isoformat(timespec="seconds"),
             "chat_url": tikfinity_url_var.get().strip(),
+            "youtube_chat_url": raffle_youtube_chat_url_var.get().strip(),
             "source_mode": raffle_source_key(),
             "command": raffle_command_var.get().strip() or "!sorteio",
             "duration_seconds": int(config.get("raffle_duration_seconds", 600)),
@@ -21886,6 +22160,7 @@ def run_gui(config_path: Path) -> int:
         path = raffle_history_path()
         append_raffle_history(path, record)
         raffle_worker.stop()
+        stop_youtube_raffle_chat(silent=True)
         raffle_worker = None
         raffle_started_at = None
         raffle_state_var.set("Concluido")
@@ -21901,6 +22176,7 @@ def run_gui(config_path: Path) -> int:
         if raffle_worker is None:
             return
         raffle_worker.stop()
+        stop_youtube_raffle_chat(silent=True)
         raffle_worker = None
         raffle_started_at = None
         raffle_timer_var.set("00:00")
@@ -21975,6 +22251,7 @@ def run_gui(config_path: Path) -> int:
         try:
             if raffle_worker is not None:
                 raffle_worker.stop()
+            stop_youtube_raffle_chat(silent=True)
             stop_tikfinity_direct_bridge(silent=True)
             stop_chat_listener(silent=True)
             stop_livepix_webhook(silent=True)
@@ -23108,6 +23385,7 @@ def run_gui(config_path: Path) -> int:
         livepix_announce_in_chat_var,
         livepix_public_page_file_var,
         raffle_source_mode_var,
+        raffle_youtube_chat_url_var,
         raffle_command_var,
         raffle_minutes_var,
         raffle_entries_normal_var,

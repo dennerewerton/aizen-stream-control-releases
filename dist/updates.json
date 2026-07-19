@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.274",
-    "notes":  "Fortalece comandos e temporizadores no TikFinity: primeira tentativa usa evento Streamer.bot General.Custom e o reenvio automatico usa pacote direto sendChatbotMessage como fallback; adiciona teste real de ponte WebSocket local.",
+    "version":  "2.6.276",
+    "notes":  "Adiciona leitura do chat do YouTube para sorteios: participantes entram pelo comando tanto no YouTube quanto no TikTok/TikFinity; salva URL do YouTube, aceita URL de live/video/chat pop-out, separa anti-fraude por plataforma e preserva a comparacao exata do comando configurado.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.274/AizenStreamControl.exe",
-                    "sha256":  "8818b98da47010d454a7b9108d1ce203e14d0be7d40c03d655b5f537304d3f69"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.276/AizenStreamControl.exe",
+                    "sha256":  "b56df8fde8deb6ac739906a51a1aca407daf6ee5908328a0d6ef6a187d84dbdc"
                 }
 }

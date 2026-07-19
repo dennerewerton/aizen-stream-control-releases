@@ -25,6 +25,8 @@ from freefire_kill_sender import (
     livepix_should_announce_event_rule,
     parse_livepix_event,
     normalize_chat_command,
+    normalize_youtube_live_chat_url,
+    TikfinityRaffleWorker,
     connect_plain_websocket_client,
     read_websocket_frame,
     send_tikfinity_direct_message,
@@ -69,6 +71,64 @@ def verify_commands() -> None:
     check(chat_command_token("!boa tudo bem") == ("!boa", "tudo bem"), "comando simples nao reconhecido")
     check(chat_command_token("@Aizen !boa, salve") == ("!boa", "salve"), "comando apos mencao nao reconhecido")
     check(chat_command_token("fala !boa") == ("", ""), "texto comum nao deve virar comando")
+
+
+def verify_youtube_raffle_url_normalization() -> None:
+    check(
+        normalize_youtube_live_chat_url("https://www.youtube.com/watch?v=abcDEF_1234")
+        == "https://www.youtube.com/live_chat?is_popout=1&v=abcDEF_1234",
+        "URL watch do YouTube deve virar chat pop-out",
+    )
+    check(
+        normalize_youtube_live_chat_url("https://youtu.be/abcDEF_1234?t=12")
+        == "https://www.youtube.com/live_chat?is_popout=1&v=abcDEF_1234",
+        "URL youtu.be deve virar chat pop-out",
+    )
+    check(
+        normalize_youtube_live_chat_url("abcDEF_1234")
+        == "https://www.youtube.com/live_chat?is_popout=1&v=abcDEF_1234",
+        "ID de video do YouTube deve virar chat pop-out",
+    )
+
+
+def verify_raffle_accepts_tiktok_and_youtube() -> None:
+    logs: list[str] = []
+    worker = TikfinityRaffleWorker("", "!sorteio", 60, logs.append, source_mode="events")
+    worker.handle_live_chat_event(
+        LiveChatMessage(
+            username="Pedro",
+            comment="!sorteio",
+            user_id="tt-1",
+            platform="TikTok",
+            message_id="tt-msg-1",
+        )
+    )
+    worker.handle_live_chat_event(
+        LiveChatMessage(
+            username="Pedro",
+            comment="!sorteio",
+            user_id="yt-1",
+            platform="YouTube",
+            message_id="yt-msg-1",
+        )
+    )
+    items = sorted(worker.participant_items(), key=lambda item: item.platform)
+    check(len(items) == 2, "TikTok e YouTube devem entrar no mesmo sorteio")
+    check({item.platform for item in items} == {"TikTok", "YouTube"}, "participantes devem preservar plataforma")
+    check(worker.total_entries() == 2, "entradas de TikTok e YouTube devem somar")
+
+    same_platform = TikfinityRaffleWorker("", "!sorteio", 60, logs.append, source_mode="events")
+    same_platform.handle_live_chat_event(
+        LiveChatMessage(username="Maria", comment="!sorteio", user_id="yt-a", platform="YouTube", message_id="yt-a-1")
+    )
+    same_platform.handle_live_chat_event(
+        LiveChatMessage(username="Maria", comment="!sorteio", user_id="yt-b", platform="YouTube", message_id="yt-b-1")
+    )
+    check(same_platform.participant_count() == 1, "nome duplicado na mesma plataforma deve continuar bloqueado")
+    check(
+        any(item.get("reason") == "nome duplicado" and item.get("platform") == "YouTube" for item in same_platform.blocked_history_items()),
+        "bloqueio de nome duplicado deve registrar plataforma",
+    )
 
 
 def verify_timer_counting() -> None:
@@ -353,6 +413,8 @@ def verify_livepix_rate_limit_detection() -> None:
 
 def main() -> int:
     verify_commands()
+    verify_youtube_raffle_url_normalization()
+    verify_raffle_accepts_tiktok_and_youtube()
     verify_timer_counting()
     verify_cooldown_release()
     verify_tikfinity_chatbot_payload()
@@ -360,7 +422,7 @@ def main() -> int:
     verify_livepix_alerts()
     verify_livepix_amount_parsing()
     verify_livepix_rate_limit_detection()
-    print("Runtime chat/Livepix OK: comandos, temporizador e alertas antigos validados.")
+    print("Runtime chat/Livepix OK: comandos, temporizador, sorteio YouTube/TikTok e alertas validados.")
     return 0
 
 
