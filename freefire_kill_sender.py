@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.286"
+APP_VERSION = "2.6.287"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -561,7 +561,14 @@ def load_config(path: Path) -> dict[str, Any]:
         else:
             raise FileNotFoundError(f"Config nao encontrado: {path}")
 
-    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(data, dict):
+            raise ValueError("o config precisa ser um objeto JSON")
+    except (json.JSONDecodeError, OSError, ValueError):
+        data = recover_config_from_backup(path)
+        if data is None:
+            raise
     data = merge_defaults(data, defaults)
     data.setdefault("captures_dir", "captures")
     data.setdefault("debug_dir", "debug")
@@ -822,6 +829,40 @@ def normalize_config_backup_content(content: str) -> str:
     if not isinstance(payload, dict):
         raise ValueError("o backup precisa ser um objeto JSON de configuracao")
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def invalid_config_path(config_path: Path) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return config_path.with_suffix(f".invalid_{stamp}_{uuid.uuid4().hex[:8]}.json")
+
+
+def move_invalid_config_aside(config_path: Path) -> Path | None:
+    if not config_path.exists():
+        return None
+    target = invalid_config_path(config_path)
+    try:
+        config_path.replace(target)
+        return target
+    except OSError:
+        return None
+
+
+def recover_config_from_backup(config_path: Path) -> dict[str, Any] | None:
+    recovered_content = ""
+    for backup_path in list_config_backups(config_path):
+        try:
+            recovered_content = normalize_config_backup_content(backup_path.read_text(encoding="utf-8-sig"))
+            break
+        except Exception:
+            continue
+    invalid_path = move_invalid_config_aside(config_path)
+    if not recovered_content:
+        return None
+    write_text_if_changed(config_path, recovered_content)
+    recovered = json.loads(recovered_content)
+    if invalid_path is not None:
+        prune_config_backups(config_path)
+    return recovered if isinstance(recovered, dict) else None
 
 
 def create_config_backup(

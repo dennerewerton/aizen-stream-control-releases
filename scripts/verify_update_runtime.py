@@ -23,6 +23,7 @@ from freefire_kill_sender import (
     create_update_download_dir,
     hidden_aware_toggle_config_value,
     is_newer_version,
+    load_config,
     resolve_downloaded_exe,
     safe_extract_update_zip,
     update_asset_from_manifest,
@@ -105,6 +106,23 @@ def verify_atomic_local_history_writes() -> None:
         recovered = json.loads(history_path.read_text(encoding="utf-8-sig"))
         check(recovered == [{"winner": "Recuperado"}], "historico corrompido deve ser isolado e reiniciado")
         check(list(history_path.parent.glob("*.invalid_*.json")), "historico corrompido deve gerar backup invalid")
+
+
+def verify_config_recovery_from_backup() -> None:
+    with tempfile.TemporaryDirectory(prefix="aizen_config_recover_") as tmp:
+        config_path = Path(tmp) / "config.json"
+        backup_path = Path(tmp) / "config-backup-2026-07-22-manual.json"
+        backup_path.write_text(
+            json.dumps({"device_name": "Recovered PC", "auto_update_enabled": False}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        config_path.write_text("{", encoding="utf-8")
+        loaded = load_config(config_path)
+        check(loaded.get("device_name") == "Recovered PC", "config corrompido deveria carregar do backup valido")
+        check(loaded.get("auto_update_enabled") is False, "config recuperado deve preservar valor do backup")
+        current = json.loads(config_path.read_text(encoding="utf-8-sig"))
+        check(current.get("device_name") == "Recovered PC", "config principal deveria ser restaurado com JSON valido")
+        check(list(config_path.parent.glob("config.invalid_*.json")), "config corrompido deveria ser guardado como invalid")
 
 
 def verify_zip_resolution() -> None:
@@ -224,6 +242,7 @@ def main() -> int:
     verify_version_comparison()
     verify_hidden_toggle_preservation()
     verify_atomic_local_history_writes()
+    verify_config_recovery_from_backup()
     verify_zip_resolution()
     verify_build_scripts_include_runtime_assets()
     verify_stale_update_cleanup()

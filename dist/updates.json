@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.286",
-    "notes":  "Melhora a robustez de arquivos locais: escrita segura agora usa temporarios unicos e o historico de sorteios passa a ser salvo atomicamente, evitando JSON truncado se o app fechar no meio.",
+    "version":  "2.6.287",
+    "notes":  "Adiciona recuperacao automatica do config.json: se o arquivo principal estiver corrompido, o app restaura o backup valido mais recente e guarda o arquivo quebrado como .invalid.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.286/AizenStreamControl.exe",
-                    "sha256":  "bd389f055f9ab75fed20c3ee70f0ef14a328abe803faa240733cae43f7aab28b"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.287/AizenStreamControl.exe",
+                    "sha256":  "509d0841b9d9e455434f799d56cbf0af231ca4672fa8b65f4b3c371b2ab86fa6"
                 }
 }
