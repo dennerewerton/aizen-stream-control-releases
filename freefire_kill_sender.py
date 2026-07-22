@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.285"
+APP_VERSION = "2.6.286"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -769,9 +769,16 @@ def write_text_if_changed(path: Path, content: str) -> None:
         except Exception:
             pass
 
-        tmp_path = path.with_name(f"{path.name}.tmp")
-        tmp_path.write_text(content, encoding="utf-8")
-        tmp_path.replace(path)
+        tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp_path.write_text(content, encoding="utf-8")
+            tmp_path.replace(path)
+        finally:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
         current_signature = file_signature(path)
         if current_signature is not None:
             with WRITE_TEXT_CACHE_LOCK:
@@ -867,8 +874,7 @@ def append_raffle_history(path: Path, record: dict[str, Any]) -> None:
             path.replace(backup)
 
     history.append(record)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_text_if_changed(path, json.dumps(history, ensure_ascii=False, indent=2))
 
 
 def kills_matches_history_path(config_path: Path, config: dict[str, Any]) -> Path:

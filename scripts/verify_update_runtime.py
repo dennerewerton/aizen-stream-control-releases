@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -16,6 +17,7 @@ import freefire_kill_sender as app_runtime
 
 from freefire_kill_sender import (
     APP_EXE_NAME,
+    append_raffle_history,
     cleanup_stale_update_dirs,
     config_bool,
     create_update_download_dir,
@@ -86,6 +88,23 @@ def verify_hidden_toggle_preservation() -> None:
         hidden_aware_toggle_config_value(False, True, hidden=False, default=True) is False,
         "toggle visivel deve salvar o valor atual",
     )
+
+
+def verify_atomic_local_history_writes() -> None:
+    with tempfile.TemporaryDirectory(prefix="aizen_history_write_") as tmp:
+        history_path = Path(tmp) / "nested" / "raffle_history.json"
+        append_raffle_history(history_path, {"winner": "Ana", "prize": "VIP"})
+        append_raffle_history(history_path, {"winner": "Pedro", "prize": "Sala"})
+        loaded = json.loads(history_path.read_text(encoding="utf-8-sig"))
+        check([item.get("winner") for item in loaded] == ["Ana", "Pedro"], "historico de sorteio deve acumular registros")
+        check(not list(history_path.parent.glob("*.tmp")), "historico de sorteio nao deve deixar tmp sobrando")
+        check(not list(history_path.parent.glob(".*.tmp")), "historico de sorteio nao deve deixar tmp oculto sobrando")
+
+        history_path.write_text("{", encoding="utf-8")
+        append_raffle_history(history_path, {"winner": "Recuperado"})
+        recovered = json.loads(history_path.read_text(encoding="utf-8-sig"))
+        check(recovered == [{"winner": "Recuperado"}], "historico corrompido deve ser isolado e reiniciado")
+        check(list(history_path.parent.glob("*.invalid_*.json")), "historico corrompido deve gerar backup invalid")
 
 
 def verify_zip_resolution() -> None:
@@ -204,6 +223,7 @@ def main() -> int:
     verify_manifest_validation()
     verify_version_comparison()
     verify_hidden_toggle_preservation()
+    verify_atomic_local_history_writes()
     verify_zip_resolution()
     verify_build_scripts_include_runtime_assets()
     verify_stale_update_cleanup()
