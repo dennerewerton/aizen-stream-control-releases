@@ -17,6 +17,7 @@ import freefire_kill_sender as app_runtime
 
 from freefire_kill_sender import (
     APP_EXE_NAME,
+    append_kills_match_history,
     append_raffle_history,
     cleanup_stale_update_dirs,
     config_bool,
@@ -105,7 +106,20 @@ def verify_atomic_local_history_writes() -> None:
         append_raffle_history(history_path, {"winner": "Recuperado"})
         recovered = json.loads(history_path.read_text(encoding="utf-8-sig"))
         check(recovered == [{"winner": "Recuperado"}], "historico corrompido deve ser isolado e reiniciado")
-        check(list(history_path.parent.glob("*.invalid_*.json")), "historico corrompido deve gerar backup invalid")
+        history_path.write_text("{", encoding="utf-8")
+        append_raffle_history(history_path, {"winner": "Recuperado 2"})
+        invalid_history_files = list(history_path.parent.glob("*.invalid_*.json"))
+        check(len(invalid_history_files) == 2, "historico corrompido duas vezes deve gerar dois backups invalid")
+        check(
+            len({item.name for item in invalid_history_files}) == len(invalid_history_files),
+            "backups invalid de historico devem ter nomes unicos",
+        )
+
+        kills_history_path = Path(tmp) / "kills_history.json"
+        kills_history_path.write_text("{", encoding="utf-8")
+        append_kills_match_history(kills_history_path, {"scope": "daily", "players": []})
+        check(json.loads(kills_history_path.read_text(encoding="utf-8-sig"))[0].get("scope") == "daily", "historico Kills FF deve recuperar JSON corrompido")
+        check(list(kills_history_path.parent.glob("kills_history.invalid_*.json")), "historico Kills FF corrompido deve gerar backup invalid")
 
 
 def verify_config_recovery_from_backup() -> None:

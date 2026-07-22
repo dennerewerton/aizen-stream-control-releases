@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.288"
+APP_VERSION = "2.6.289"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -831,9 +831,13 @@ def normalize_config_backup_content(content: str) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def invalid_config_path(config_path: Path) -> Path:
+def invalid_json_path(path: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return config_path.with_suffix(f".invalid_{stamp}_{uuid.uuid4().hex[:8]}.json")
+    return path.with_suffix(f".invalid_{stamp}_{uuid.uuid4().hex[:8]}.json")
+
+
+def invalid_config_path(config_path: Path) -> Path:
+    return invalid_json_path(config_path)
 
 
 def move_invalid_config_aside(config_path: Path) -> Path | None:
@@ -911,7 +915,7 @@ def append_raffle_history(path: Path, record: dict[str, Any]) -> None:
             if isinstance(loaded, list):
                 history = loaded
         except json.JSONDecodeError:
-            backup = path.with_suffix(f".invalid_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+            backup = invalid_json_path(path)
             path.replace(backup)
 
     history.append(record)
@@ -934,7 +938,7 @@ def append_kills_match_history(path: Path, record: dict[str, Any], limit: int = 
             if isinstance(loaded, list):
                 history = loaded
         except json.JSONDecodeError:
-            backup = path.with_suffix(f".invalid_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+            backup = invalid_json_path(path)
             path.replace(backup)
 
     history.insert(0, record)

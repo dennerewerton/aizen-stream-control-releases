@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.288",
-    "notes":  "Melhora a recuperacao do config.json: se o config estiver corrompido e nao houver backup valido, o app guarda o arquivo quebrado como .invalid e abre com configuracao padrao segura.",
+    "version":  "2.6.289",
+    "notes":  "Melhora os backups .invalid dos historicos locais: sorteios e Kills FF agora usam nomes unicos ao isolar JSON corrompido, evitando colisao quando duas recuperacoes acontecem no mesmo segundo.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.288/AizenStreamControl.exe",
-                    "sha256":  "d2ac7f9e441f16c154cce094e18920a7e3e480ed299f80acc71061a11b99ba30"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.289/AizenStreamControl.exe",
+                    "sha256":  "c6d42e4e5b0320b36f498b70fa06570074b4d3a05d5fdee46c9fcdfc780fb271"
                 }
 }
