@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.284",
-    "notes":  "Corrige a leitura do Chat Ao Vivo para nao descartar mensagens reais sem ID externo quando o mesmo usuario envia o mesmo texto no mesmo segundo.",
+    "version":  "2.6.285",
+    "notes":  "Preserva preferencias salvas de Fila FF, Overlay FF e TikFinity Gifts FF quando essas abas estao ocultas, sem reativar sincronizacoes ocultas em segundo plano.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.284/AizenStreamControl.exe",
-                    "sha256":  "e92be0f3db57cc5fb7e6ada9d3157511c0f4586d21089921df824f5a8d3eab7d"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.285/AizenStreamControl.exe",
+                    "sha256":  "18aa5cf880b42647c62d68c73dbf62ccd4a3361fca55ff7f8507a9ec0c8b9ca7"
                 }
 }

@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.284"
+APP_VERSION = "2.6.285"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -708,6 +708,30 @@ def merge_defaults(data: dict[str, Any], defaults: dict[str, Any]) -> dict[str, 
         else:
             merged[key] = value
     return merged
+
+
+def config_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().casefold()
+    if text in {"1", "true", "yes", "y", "on", "sim", "s", "ativo", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "nao", "não", "desativado", "disabled"}:
+        return False
+    return default
+
+
+def hidden_aware_toggle_config_value(
+    current_value: Any,
+    stored_value: Any,
+    hidden: bool,
+    default: bool = False,
+) -> bool:
+    return config_bool(stored_value, default) if hidden else config_bool(current_value, default)
 
 
 def file_signature(path: Path) -> tuple[int, int] | None:
@@ -9445,7 +9469,7 @@ def run_gui(config_path: Path) -> int:
     }
     tikfinity_ff_url_var = tk.StringVar(value=initial_tikfinity_ff_url)
     tikfinity_ff_profile_var = tk.StringVar(value=str(config.get("tikfinity_ff_profile", "streamer1") or "streamer1"))
-    tikfinity_ff_enabled_var = tk.BooleanVar(value=bool(config.get("tikfinity_ff_enabled", False)) and not ff_queue_site_sync_hidden)
+    tikfinity_ff_enabled_var = tk.BooleanVar(value=config_bool(config.get("tikfinity_ff_enabled", False)))
     tikfinity_ff_coins_var = tk.StringVar(value=str(config.get("tikfinity_ff_coins_per_room", 50)))
     tikfinity_ff_token_var = tk.StringVar(value=str(config.get("tikfinity_ff_token", "")))
     tikfinity_ff_status_var = tk.StringVar(value="Não carregado")
@@ -9457,8 +9481,8 @@ def run_gui(config_path: Path) -> int:
     tikfinity_ff_map_ff_id_var = tk.StringVar(value="")
     ff_queue_room_var = tk.StringVar(value=config.get("ff_queue_room", "principal"))
     jarvis_base_url_var = tk.StringVar(value=initial_jarvis_base_url)
-    ff_queue_enabled_var = tk.BooleanVar(value=bool(config.get("ff_queue_auto_sync", True)) and not ff_queue_site_sync_hidden)
-    ff_overlay_enabled_var = tk.BooleanVar(value=bool(config.get("ff_overlay_auto_sync", True)) and not ff_overlay_site_sync_hidden)
+    ff_queue_enabled_var = tk.BooleanVar(value=config_bool(config.get("ff_queue_auto_sync", True), True))
+    ff_overlay_enabled_var = tk.BooleanVar(value=config_bool(config.get("ff_overlay_auto_sync", True), True))
     ff_queue_poll_seconds_var = tk.StringVar(value=str(max(10, normalize_kill_value(config.get("ff_queue_poll_seconds", 15)))))
     ff_queue_status_var = tk.StringVar(value="Manual")
     ff_overlay_status_var = tk.StringVar(value="Local")
@@ -20195,8 +20219,18 @@ def run_gui(config_path: Path) -> int:
         config["ff_overlay_config_url"] = overlay_config_url
         set_text_var(ff_overlay_config_url_var, config["ff_overlay_config_url"])
         config["ff_overlay_profile"] = ff_overlay_site_profile_var.get().strip() or "streamer1"
-        config["ff_queue_auto_sync"] = bool(ff_queue_enabled_var.get()) and not ff_queue_site_sync_hidden
-        config["ff_overlay_auto_sync"] = bool(ff_overlay_enabled_var.get()) and not ff_overlay_site_sync_hidden
+        config["ff_queue_auto_sync"] = hidden_aware_toggle_config_value(
+            ff_queue_enabled_var.get(),
+            config.get("ff_queue_auto_sync", True),
+            ff_queue_site_sync_hidden,
+            True,
+        )
+        config["ff_overlay_auto_sync"] = hidden_aware_toggle_config_value(
+            ff_overlay_enabled_var.get(),
+            config.get("ff_overlay_auto_sync", True),
+            ff_overlay_site_sync_hidden,
+            True,
+        )
         config["ff_queue_poll_seconds"] = ff_queue_poll_interval_seconds()
         config["ff_queue_room"] = ff_queue_room_var.get().strip() or "principal"
         if not ff_queue_site_sync_hidden:
@@ -20209,7 +20243,12 @@ def run_gui(config_path: Path) -> int:
         config["tikfinity_ff_gifts_url"] = tikfinity_ff_url
         set_text_var(tikfinity_ff_url_var, tikfinity_ff_url)
         config["tikfinity_ff_profile"] = tikfinity_ff_profile_var.get().strip() or "streamer1"
-        config["tikfinity_ff_enabled"] = bool(tikfinity_ff_enabled_var.get()) and not ff_queue_site_sync_hidden
+        config["tikfinity_ff_enabled"] = hidden_aware_toggle_config_value(
+            tikfinity_ff_enabled_var.get(),
+            config.get("tikfinity_ff_enabled", False),
+            ff_queue_site_sync_hidden,
+            False,
+        )
         config["tikfinity_ff_coins_per_room"] = max(1, normalize_kill_value(tikfinity_ff_coins_var.get()))
         set_text_var(tikfinity_ff_coins_var, config["tikfinity_ff_coins_per_room"])
         config["tikfinity_ff_token"] = tikfinity_ff_token_var.get().strip()

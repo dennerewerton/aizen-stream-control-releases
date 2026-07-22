@@ -17,7 +17,9 @@ import freefire_kill_sender as app_runtime
 from freefire_kill_sender import (
     APP_EXE_NAME,
     cleanup_stale_update_dirs,
+    config_bool,
     create_update_download_dir,
+    hidden_aware_toggle_config_value,
     is_newer_version,
     resolve_downloaded_exe,
     safe_extract_update_zip,
@@ -67,6 +69,23 @@ def verify_version_comparison() -> None:
     check(version_tuple("v2.6.267") == (2, 6, 267), "versao com prefixo v deve ser lida")
     check(is_newer_version("2.6.10", "2.6.9"), "2.6.10 deve ser maior que 2.6.9")
     check(not is_newer_version("2.6.9", "2.6.10"), "2.6.9 nao deve ser maior que 2.6.10")
+
+
+def verify_hidden_toggle_preservation() -> None:
+    check(config_bool("false", True) is False, "booleano textual false deve ser falso")
+    check(config_bool("sim", False) is True, "booleano textual sim deve ser verdadeiro")
+    check(
+        hidden_aware_toggle_config_value(False, True, hidden=True, default=True) is True,
+        "toggle oculto deve preservar verdadeiro salvo",
+    )
+    check(
+        hidden_aware_toggle_config_value(True, False, hidden=True, default=True) is False,
+        "toggle oculto deve preservar falso salvo",
+    )
+    check(
+        hidden_aware_toggle_config_value(False, True, hidden=False, default=True) is False,
+        "toggle visivel deve salvar o valor atual",
+    )
 
 
 def verify_zip_resolution() -> None:
@@ -184,6 +203,7 @@ def verify_update_download_dir_fallback() -> None:
 def main() -> int:
     verify_manifest_validation()
     verify_version_comparison()
+    verify_hidden_toggle_preservation()
     verify_zip_resolution()
     verify_build_scripts_include_runtime_assets()
     verify_stale_update_cleanup()
