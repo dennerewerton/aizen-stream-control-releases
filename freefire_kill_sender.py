@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.289"
+APP_VERSION = "2.6.290"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -1010,7 +1010,45 @@ def compact_json_preview(payload: Any, limit: int = 700) -> str:
     except Exception:
         text = str(payload)
     text = re.sub(r"\s+", " ", text).strip()
+    text = sanitize_log_message(text)
     return text[:limit] + ("..." if len(text) > limit else "")
+
+
+SENSITIVE_LOG_KEY_PATTERN = (
+    r"(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key|"
+    r"x[_-]?aizen[_-]?token|authorization|password|senha|secret|token)"
+)
+SENSITIVE_LOG_MASK = "<oculto>"
+
+
+def sanitize_log_message(value: Any) -> str:
+    text = str(value)
+
+    text = re.sub(
+        rf"(?i)(https?://[^:/\s]+:)([^@\s/]+)(@)",
+        rf"\1{SENSITIVE_LOG_MASK}\3",
+        text,
+    )
+    text = re.sub(
+        rf"(?i)([?&](?:{SENSITIVE_LOG_KEY_PATTERN})=)([^&\s]+)",
+        rf"\1{SENSITIVE_LOG_MASK}",
+        text,
+    )
+
+    def mask_json_value(match: re.Match[str]) -> str:
+        return f"{match.group(1)}{SENSITIVE_LOG_MASK}{match.group(3)}"
+
+    text = re.sub(
+        rf"(?i)([\"']\s*{SENSITIVE_LOG_KEY_PATTERN}\s*[\"']\s*:\s*[\"'])(.*?)([\"'])",
+        mask_json_value,
+        text,
+    )
+    text = re.sub(
+        rf"(?i)(\b{SENSITIVE_LOG_KEY_PATTERN}\b\s*[:=]\s*)(Bearer\s+)?([^\s,;}}&]+)",
+        lambda match: f"{match.group(1)}{match.group(2) or ''}{SENSITIVE_LOG_MASK}",
+        text,
+    )
+    return text
 
 
 def _fold_raffle_text(value: Any) -> str:
@@ -7531,7 +7569,7 @@ def create_update_download_dir() -> Path:
 def write_update_log(message: str) -> None:
     try:
         with update_log_path().open("a", encoding="utf-8") as handle:
-            handle.write(f"[{datetime.now().isoformat(timespec='seconds')}] {message}\n")
+            handle.write(f"[{datetime.now().isoformat(timespec='seconds')}] {sanitize_log_message(message)}\n")
     except OSError:
         pass
 
@@ -9095,6 +9133,7 @@ def run_gui(config_path: Path) -> int:
 
     def log(message: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
+        safe_message = sanitize_log_message(message)
         dropped = 0
         try:
             if log_queue.qsize() > LOG_QUEUE_SOFT_LIMIT:
@@ -9103,7 +9142,7 @@ def run_gui(config_path: Path) -> int:
             pass
         if dropped:
             enqueue_log_line(f"[{stamp}] {dropped} log(s) antigos omitidos para manter o app leve.")
-        enqueue_log_line(f"[{stamp}] {message}")
+        enqueue_log_line(f"[{stamp}] {safe_message}")
 
     def note_queue_drop(key: str, label: str, count: int = 1) -> None:
         queue_drop_counts[key] = queue_drop_counts.get(key, 0) + max(1, count)

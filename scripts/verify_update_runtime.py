@@ -20,6 +20,7 @@ from freefire_kill_sender import (
     append_kills_match_history,
     append_raffle_history,
     cleanup_stale_update_dirs,
+    compact_json_preview,
     config_bool,
     create_update_download_dir,
     hidden_aware_toggle_config_value,
@@ -27,6 +28,7 @@ from freefire_kill_sender import (
     load_config,
     resolve_downloaded_exe,
     safe_extract_update_zip,
+    sanitize_log_message,
     update_asset_from_manifest,
     update_workspace_fallback_dir,
     version_tuple,
@@ -90,6 +92,27 @@ def verify_hidden_toggle_preservation() -> None:
         hidden_aware_toggle_config_value(False, True, hidden=False, default=True) is False,
         "toggle visivel deve salvar o valor atual",
     )
+
+
+def verify_log_secret_redaction() -> None:
+    raw = (
+        "GET http://user:senha123@example.com/api?token=abc123&room=principal "
+        "Authorization: Bearer live-token password=streamer"
+    )
+    sanitized = sanitize_log_message(raw)
+    for secret in ("senha123", "abc123", "live-token", "streamer"):
+        check(secret not in sanitized, f"segredo escapou no log: {secret}")
+    check("room=principal" in sanitized, "campos nao sensiveis do log devem continuar legiveis")
+    preview = compact_json_preview(
+        {
+            "client_secret": "livepix-secret",
+            "access_token": "access-secret",
+            "payload": {"X-Aizen-Token": "jarvis-token", "ok": True},
+        }
+    )
+    for secret in ("livepix-secret", "access-secret", "jarvis-token"):
+        check(secret not in preview, f"segredo escapou no preview JSON: {secret}")
+    check("<oculto>" in preview, "preview deveria indicar campos mascarados")
 
 
 def verify_atomic_local_history_writes() -> None:
@@ -264,6 +287,7 @@ def main() -> int:
     verify_manifest_validation()
     verify_version_comparison()
     verify_hidden_toggle_preservation()
+    verify_log_secret_redaction()
     verify_atomic_local_history_writes()
     verify_config_recovery_from_backup()
     verify_zip_resolution()
