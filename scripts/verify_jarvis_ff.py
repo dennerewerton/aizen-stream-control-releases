@@ -39,6 +39,7 @@ from freefire_kill_sender import (  # noqa: E402
     fetch_kills_snapshot_realtime,
     fetch_tikfinity_ff_gifts,
     is_live_chat_event_payload,
+    kills_reset_scope_for_action,
     kills_snapshot_url_candidates,
     manual_kills_scopes_to_save,
     manual_kills_should_send_snapshot,
@@ -734,6 +735,19 @@ def verify_contracts() -> None:
             raise RuntimeError(f"Escopo Kills FF divergente: {raw_scope!r}")
         if kills_scope_label(raw_scope) != expected_label:
             raise RuntimeError(f"Rotulo de escopo Kills FF divergente: {raw_scope!r}")
+    reset_scope_checks = {
+        ("reset_daily", ""): "daily",
+        ("reset_general", ""): "general",
+        ("reset", "daily"): "both",
+        ("set", "Geral"): "general",
+        ("set", ""): "",
+    }
+    for (action, raw_scope), expected_scope in reset_scope_checks.items():
+        actual_scope = kills_reset_scope_for_action(action, raw_scope)
+        if actual_scope != expected_scope:
+            raise RuntimeError(
+                f"Escopo do reset Kills FF divergente para {action!r}/{raw_scope!r}: {actual_scope!r}"
+            )
     both_dirty_scopes = manual_kills_scopes_to_save(
         "Geral",
         {"daily", "general"},

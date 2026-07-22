@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.281"
+APP_VERSION = "2.6.282"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -4159,6 +4159,19 @@ def kills_scope_label(value: Any) -> str:
     if scope == "general":
         return "Geral"
     return "Ambos"
+
+
+def kills_reset_scope_for_action(action: Any, scope: Any = None) -> str:
+    normalized_action = str(action or "").strip().casefold()
+    if normalized_action == "reset":
+        return "both"
+    if normalized_action == "reset_daily":
+        return "daily"
+    if normalized_action == "reset_general":
+        return "general"
+    if str(scope or "").strip():
+        return normalize_kills_scope_value(scope)
+    return ""
 
 
 def kills_scope_payload_fields(value: Any) -> dict[str, Any]:
@@ -21144,8 +21157,9 @@ def run_gui(config_path: Path) -> int:
             action_name = str(payload.get("action") or "").strip().lower()
             reset_scopes: list[str] = []
             if action_name in {"reset", "reset_daily", "reset_general"}:
-                reset_scope = "both" if action_name == "reset" else normalize_kills_scope_value(payload.get("scope"))
-                reset_scopes = clear_manual_scopes_after_reset(reset_scope)
+                reset_scope = kills_reset_scope_for_action(action_name, payload.get("scope"))
+                if reset_scope:
+                    reset_scopes = clear_manual_scopes_after_reset(reset_scope)
                 visible_scope = current_manual_scope()
                 if visible_scope == "daily":
                     manual_remote_count_override = 0 if "daily" in reset_scopes else state.daily_players

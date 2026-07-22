@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.281",
-    "notes":  "Completa a robustez do atualizador: a limpeza automatica agora tambem remove pastas antigas criadas no fallback temporario do Windows, evitando acumulo de arquivos de staging apos updates.",
+    "version":  "2.6.282",
+    "notes":  "Corrige o Zerar do painel Kills FF para limpar a lista local da esquerda apenas no escopo escolhido: diario limpa somente diario, geral limpa somente geral.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.281/AizenStreamControl.exe",
-                    "sha256":  "eae226cf06575d9de663f4c01a90dcf4afc92b1bf78017efdb799f7875e3c26c"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.282/AizenStreamControl.exe",
+                    "sha256":  "397dfa4fcfb8a7e10a29084e3a5bca8da8f77c289767ff8d1c9abde901854939"
                 }
 }
