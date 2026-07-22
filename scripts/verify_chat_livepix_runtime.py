@@ -21,6 +21,8 @@ from freefire_kill_sender import (
     is_bot_confirmation_chat_message,
     is_internal_chat_message,
     is_timer_countable_chat_message,
+    live_chat_message_key,
+    live_chat_user_key,
     livepix_amount_cents,
     livepix_amount_cents_from_paths,
     livepix_is_rate_limit_detail,
@@ -130,6 +132,31 @@ def verify_raffle_accepts_tiktok_and_youtube() -> None:
     check(
         any(item.get("reason") == "nome duplicado" and item.get("platform") == "YouTube" for item in same_platform.blocked_history_items()),
         "bloqueio de nome duplicado deve registrar plataforma",
+    )
+
+
+def verify_live_chat_identity_keys() -> None:
+    tiktok_upper = LiveChatMessage(username="Pedro", comment="Oi", user_id="42", platform="TikTok", message_id="abc")
+    tiktok_lower = LiveChatMessage(username="Pedro", comment="Oi", user_id="42", platform="tiktok", message_id="ABC")
+    youtube_same_id = LiveChatMessage(username="Pedro", comment="Oi", user_id="42", platform="YouTube", message_id="abc")
+    check(
+        live_chat_message_key(tiktok_upper) == live_chat_message_key(tiktok_lower),
+        "caixa da plataforma/id da mensagem nao deve duplicar chat",
+    )
+    check(
+        live_chat_message_key(tiktok_upper) != live_chat_message_key(youtube_same_id),
+        "mesmo id em plataformas diferentes nao deve deduplicar chat",
+    )
+    check(
+        live_chat_user_key(tiktok_upper) != live_chat_user_key(youtube_same_id),
+        "mesmo user_id em TikTok e YouTube deve contar como usuarios diferentes",
+    )
+
+    tiktok_name_only = LiveChatMessage(username="Pedro", comment="Oi", platform="TikTok")
+    youtube_name_only = LiveChatMessage(username="Pedro", comment="Oi", platform="YouTube")
+    check(
+        live_chat_user_key(tiktok_name_only) != live_chat_user_key(youtube_name_only),
+        "mesmo nome em plataformas diferentes deve contar como usuarios diferentes",
     )
 
 
@@ -429,6 +456,7 @@ def main() -> int:
     verify_commands()
     verify_youtube_raffle_url_normalization()
     verify_raffle_accepts_tiktok_and_youtube()
+    verify_live_chat_identity_keys()
     verify_timer_counting()
     verify_cooldown_release()
     verify_tikfinity_chatbot_payload()

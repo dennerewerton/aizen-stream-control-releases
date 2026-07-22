@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.282",
-    "notes":  "Corrige o Zerar do painel Kills FF para limpar a lista local da esquerda apenas no escopo escolhido: diario limpa somente diario, geral limpa somente geral.",
+    "version":  "2.6.283",
+    "notes":  "Melhora a identidade do Chat Ao Vivo em uso multi-plataforma: TikTok e YouTube agora usam a plataforma normalizada nas chaves de mensagens e usuarios, evitando colisao entre contas com mesmo nome ou ID.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.282/AizenStreamControl.exe",
-                    "sha256":  "397dfa4fcfb8a7e10a29084e3a5bca8da8f77c289767ff8d1c9abde901854939"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.283/AizenStreamControl.exe",
+                    "sha256":  "acb25baea52511b7b4d4e958cd65620ce9c4c1ee7a799fd4653dcb5fa96b701a"
                 }
 }

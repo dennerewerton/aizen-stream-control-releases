@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.282"
+APP_VERSION = "2.6.283"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -2201,6 +2201,29 @@ def render_chat_command_response(
 
 def normalize_bot_confirmation_text_value(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+
+def live_chat_platform_key(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "live").strip()).casefold() or "live"
+
+
+def live_chat_message_key(message: LiveChatMessage) -> str:
+    platform_key = live_chat_platform_key(message.platform)
+    user_id = str(message.user_id or "").strip().casefold()
+    message_id = str(message.message_id or "").strip().casefold()
+    if message_id:
+        return f"{platform_key}|{user_id}|{message_id}"
+    username_key = normalize_player_key(message.username)
+    comment_key = normalize_bot_confirmation_text_value(message.comment)
+    return f"{platform_key}|{user_id}|{username_key}|{comment_key}|{message.received_at}"
+
+
+def live_chat_user_key(message: LiveChatMessage) -> str:
+    platform_key = live_chat_platform_key(message.platform)
+    user_id = str(message.user_id or "").strip().casefold()
+    if user_id:
+        return f"{platform_key}|id:{user_id}"
+    return f"{platform_key}|name:{normalize_player_key(message.username)}"
 
 
 def is_internal_chat_message(message: LiveChatMessage) -> bool:
@@ -16561,14 +16584,12 @@ def run_gui(config_path: Path) -> int:
         log("Tela de chat limpa.")
 
     def live_chat_key(message: LiveChatMessage) -> str:
-        if message.message_id:
-            return f"{message.platform}|{message.user_id}|{message.message_id}"
-        return f"{message.platform}|{message.user_id}|{message.username}|{message.comment}|{message.received_at}"
+        return live_chat_message_key(message)
 
     def rebuild_recent_chat_users() -> None:
         chat_users.clear()
         for recent_message in chat_messages[-chat_max_messages() :]:
-            user_key = recent_message.user_id or normalize_player_key(recent_message.username)
+            user_key = live_chat_user_key(recent_message)
             if user_key:
                 chat_users[user_key] = recent_message
 
@@ -16956,7 +16977,7 @@ def run_gui(config_path: Path) -> int:
         chat_messages.append(message)
         if is_real_chat_message_for_timer(message):
             chat_timer_message_count += 1
-        user_key = message.user_id or normalize_player_key(message.username)
+        user_key = live_chat_user_key(message)
         chat_users[user_key] = message
         limit = chat_max_messages()
         if len(chat_messages) > limit:
