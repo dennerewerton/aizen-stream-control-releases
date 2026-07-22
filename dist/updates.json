@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.291",
-    "notes":  "Melhora a sincronizacao completa do Livepix: o app agora busca transacoes e recebiveis antes dos endpoints opcionais, reduzindo chance de 429 transformar o dashboard em parcial antes de carregar os valores principais.",
+    "version":  "2.6.292",
+    "notes":  "Protege a restauracao de backup de configuracao: qualquer auto-save pendente e cancelado antes de restaurar, e o worker ignora escritas antigas enquanto o app aguarda reabertura.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.291/AizenStreamControl.exe",
-                    "sha256":  "bdc694fbb1eec0d4b4b217455b92c9ad488b7566548f83fd86fc35b40a9043b6"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.292/AizenStreamControl.exe",
+                    "sha256":  "951682ba6ce0f5c29eb9e5d116a2aa0c98dd9172e460a31c47e67a5fc3c68759"
                 }
 }

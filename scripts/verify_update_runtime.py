@@ -171,6 +171,32 @@ def verify_config_recovery_from_backup() -> None:
         check(list(config_path.parent.glob("config.invalid_*.json")), "config corrompido sem backup deveria ser guardado como invalid")
 
 
+def verify_config_restore_cancels_pending_autosave() -> None:
+    source = (ROOT / "freefire_kill_sender.py").read_text(encoding="utf-8-sig")
+    restore_start = source.index("    def restore_config_backup")
+    worker_start = source.index("    def ensure_config_autosave_worker", restore_start)
+    queue_start = source.index("    def queue_config_autosave", worker_start)
+    save_text_start = source.index("    def save_config_text_in_background", queue_start)
+    restore_source = source[restore_start:worker_start]
+    worker_source = source[worker_start:queue_start]
+    queue_source = source[queue_start:save_text_start]
+    for marker in (
+        "config_auto_save_write_generation += 1",
+        "config_auto_save_pending = None",
+        "config_auto_save_event.clear()",
+        "write_text_if_changed(config_path, restored_content)",
+    ):
+        check(marker in restore_source, f"restauracao de backup deve cancelar auto-save pendente: {marker}")
+    check(
+        "config_restore_pending_restart or generation != config_auto_save_write_generation" in worker_source,
+        "worker de auto-save deve ignorar escrita antiga apos restaurar backup",
+    )
+    check(
+        "if config_restore_pending_restart:" in queue_source,
+        "fila de auto-save deve rejeitar novos saves enquanto backup restaurado aguarda reabertura",
+    )
+
+
 def verify_zip_resolution() -> None:
     with tempfile.TemporaryDirectory(prefix="aizen_update_verify_") as tmp:
         base = Path(tmp)
@@ -290,6 +316,7 @@ def main() -> int:
     verify_log_secret_redaction()
     verify_atomic_local_history_writes()
     verify_config_recovery_from_backup()
+    verify_config_restore_cancels_pending_autosave()
     verify_zip_resolution()
     verify_build_scripts_include_runtime_assets()
     verify_stale_update_cleanup()

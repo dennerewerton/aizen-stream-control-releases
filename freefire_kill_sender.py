@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.291"
+APP_VERSION = "2.6.292"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -20492,7 +20492,7 @@ def run_gui(config_path: Path) -> int:
             messagebox.showerror("Backup", f"Nao consegui criar o backup:\n{exc}")
 
     def restore_config_backup() -> None:
-        nonlocal config_restore_pending_restart
+        nonlocal config_auto_save_pending, config_auto_save_write_generation, config_restore_pending_restart
         backups = list_config_backups(config_path)
         if not backups:
             update_config_backup_status()
@@ -20518,12 +20518,16 @@ def run_gui(config_path: Path) -> int:
         ):
             return
         try:
-            try:
-                create_config_backup(config_path, force=True, timestamp=True, suffix="antes-restaurar")
-            except Exception as backup_exc:
-                log(f"Backup antes da restauracao falhou: {backup_exc}")
-            write_text_if_changed(config_path, restored_content)
-            config_restore_pending_restart = True
+            with config_auto_save_lock:
+                config_restore_pending_restart = True
+                config_auto_save_write_generation += 1
+                config_auto_save_pending = None
+                config_auto_save_event.clear()
+                try:
+                    create_config_backup(config_path, force=True, timestamp=True, suffix="antes-restaurar")
+                except Exception as backup_exc:
+                    log(f"Backup antes da restauracao falhou: {backup_exc}")
+                write_text_if_changed(config_path, restored_content)
             update_config_backup_status()
             log(f"Configuracao restaurada do backup {backup_path}")
         except Exception as exc:
@@ -20552,8 +20556,6 @@ def run_gui(config_path: Path) -> int:
                             config_auto_save_event.clear()
                             break
                     generation, path, payload, compact, payload_kind = pending
-                    if generation != config_auto_save_write_generation:
-                        continue
                     try:
                         if payload_kind == "text":
                             content = str(payload)
@@ -20564,13 +20566,14 @@ def run_gui(config_path: Path) -> int:
                                 if compact
                                 else json.dumps(snapshot, ensure_ascii=False, indent=2)
                             )
-                        if generation != config_auto_save_write_generation:
-                            continue
-                        try:
-                            create_config_backup(path)
-                        except Exception as backup_exc:
-                            log(f"Backup automatico ignorado: {backup_exc}")
-                        write_text_if_changed(path, content)
+                        with config_auto_save_lock:
+                            if config_restore_pending_restart or generation != config_auto_save_write_generation:
+                                continue
+                            try:
+                                create_config_backup(path)
+                            except Exception as backup_exc:
+                                log(f"Backup automatico ignorado: {backup_exc}")
+                            write_text_if_changed(path, content)
                         root.after(0, update_config_backup_status)
                     except Exception as exc:
                         log(f"Auto-save em segundo plano falhou: {exc}")
@@ -20580,9 +20583,11 @@ def run_gui(config_path: Path) -> int:
     def queue_config_autosave(path: Path, payload: str | dict[str, Any], compact: bool, payload_kind: str) -> None:
         nonlocal config_auto_save_write_generation, config_auto_save_pending
         ensure_config_autosave_worker()
-        config_auto_save_write_generation += 1
-        generation = config_auto_save_write_generation
         with config_auto_save_lock:
+            if config_restore_pending_restart:
+                return
+            config_auto_save_write_generation += 1
+            generation = config_auto_save_write_generation
             config_auto_save_pending = (generation, path, payload, compact, payload_kind)
             config_auto_save_event.set()
 
