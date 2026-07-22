@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.279"
+APP_VERSION = "2.6.280"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -7363,6 +7363,29 @@ def update_workspace_dir() -> Path:
     return workspace
 
 
+def create_update_download_dir() -> Path:
+    dirname = f"aizen_update_{int(time.time())}_{secrets.token_hex(4)}"
+    errors: list[str] = []
+    bases: list[tuple[str, Path]] = []
+    try:
+        bases.append(("padrao", update_workspace_dir()))
+    except OSError as exc:
+        errors.append(f"{APP_DIR / 'updates'}: {exc}")
+    bases.append(("temporario", Path(tempfile.gettempdir()) / APP_NAME / "updates"))
+
+    for label, base in bases:
+        target_dir = base / dirname
+        try:
+            target_dir.mkdir(parents=True, exist_ok=False)
+            if label != "padrao":
+                write_update_log(f"Workspace de update padrao indisponivel; usando {target_dir}.")
+            return target_dir
+        except OSError as exc:
+            errors.append(f"{target_dir}: {exc}")
+    detail = "; ".join(errors[-3:]) if errors else "sem detalhe"
+    raise RuntimeError(f"Nao consegui criar pasta temporaria da atualizacao: {detail}")
+
+
 def write_update_log(message: str) -> None:
     try:
         with update_log_path().open("a", encoding="utf-8") as handle:
@@ -7548,8 +7571,7 @@ def download_update_asset(url: str, sha256: str = "", progress_callback: Any | N
             pass
 
     for attempt in range(1, UPDATE_DOWNLOAD_ATTEMPTS + 1):
-        target_dir = update_workspace_dir() / f"aizen_update_{int(time.time())}_{secrets.token_hex(4)}"
-        target_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = create_update_download_dir()
         target = target_dir / f"update{suffix}"
         downloaded = 0
         total = 0

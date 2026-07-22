@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.279",
-    "notes":  "Melhora a confirmacao de entrega do bot: mensagens internas do app, testes, Timer e Livepix nao podem mais confirmar falsamente que uma resposta apareceu no chat da live.",
+    "version":  "2.6.280",
+    "notes":  "Melhora a robustez do atualizador: se a pasta padrao de staging nao puder ser criada, o download da atualizacao usa um fallback temporario seguro do Windows e registra o detalhe no log.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.279/AizenStreamControl.exe",
-                    "sha256":  "07017ddfb4ef916b3bb90b155102b5adba3d4fbd7e4caa4a8ebdc0d5ca0caf06"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.280/AizenStreamControl.exe",
+                    "sha256":  "cc09a39883aa78550158be9df1732a2732e5f6ee59268f50cc645fd6c2ef1017"
                 }
 }

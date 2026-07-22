@@ -17,6 +17,7 @@ import freefire_kill_sender as app_runtime
 from freefire_kill_sender import (
     APP_EXE_NAME,
     cleanup_stale_update_dirs,
+    create_update_download_dir,
     is_newer_version,
     resolve_downloaded_exe,
     safe_extract_update_zip,
@@ -130,12 +131,33 @@ def verify_stale_update_cleanup() -> None:
         check(similar_name.exists(), "limpeza de updates removeu pasta com nome fora do padrao")
 
 
+def verify_update_download_dir_fallback() -> None:
+    original_update_workspace_dir = app_runtime.update_workspace_dir
+    original_tempdir = tempfile.tempdir
+
+    def broken_workspace() -> Path:
+        raise OSError("sem permissao")
+
+    with tempfile.TemporaryDirectory(prefix="aizen_update_fallback_") as tmp:
+        app_runtime.update_workspace_dir = broken_workspace
+        tempfile.tempdir = tmp
+        try:
+            target = create_update_download_dir()
+        finally:
+            app_runtime.update_workspace_dir = original_update_workspace_dir
+            tempfile.tempdir = original_tempdir
+        expected_parent = Path(tmp) / app_runtime.APP_NAME / "updates"
+        check(target.exists() and target.is_dir(), "fallback temporario do update nao criou pasta")
+        check(target.parent == expected_parent, "fallback temporario do update usou pasta inesperada")
+
+
 def main() -> int:
     verify_manifest_validation()
     verify_version_comparison()
     verify_zip_resolution()
     verify_build_scripts_include_runtime_assets()
     verify_stale_update_cleanup()
+    verify_update_download_dir_fallback()
     print("Runtime update OK: manifesto, versoes e ZIP de atualizacao validados.")
     return 0
 
