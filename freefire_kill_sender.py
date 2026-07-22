@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.283"
+APP_VERSION = "2.6.284"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -416,6 +416,11 @@ class LiveChatMessage:
     source: str = ""
     received_at: str = ""
     supporter_tier: str = "normal"
+    dedupe_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.dedupe_id:
+            self.dedupe_id = uuid.uuid4().hex
 
 
 @dataclass
@@ -2213,6 +2218,9 @@ def live_chat_message_key(message: LiveChatMessage) -> str:
     message_id = str(message.message_id or "").strip().casefold()
     if message_id:
         return f"{platform_key}|{user_id}|{message_id}"
+    dedupe_id = str(message.dedupe_id or "").strip().casefold()
+    if dedupe_id:
+        return f"{platform_key}|{user_id}|local:{dedupe_id}"
     username_key = normalize_player_key(message.username)
     comment_key = normalize_bot_confirmation_text_value(message.comment)
     return f"{platform_key}|{user_id}|{username_key}|{comment_key}|{message.received_at}"

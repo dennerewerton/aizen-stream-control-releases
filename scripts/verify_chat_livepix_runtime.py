@@ -158,6 +158,16 @@ def verify_live_chat_identity_keys() -> None:
         live_chat_user_key(tiktok_name_only) != live_chat_user_key(youtube_name_only),
         "mesmo nome em plataformas diferentes deve contar como usuarios diferentes",
     )
+    repeated_first = LiveChatMessage(username="Pedro", comment="Oi", platform="TikTok", received_at="12:00:00")
+    repeated_second = LiveChatMessage(username="Pedro", comment="Oi", platform="TikTok", received_at="12:00:00")
+    check(
+        live_chat_message_key(repeated_first) != live_chat_message_key(repeated_second),
+        "mensagens sem id, iguais e no mesmo segundo nao devem sumir como duplicadas",
+    )
+    check(
+        live_chat_message_key(repeated_first) == live_chat_message_key(repeated_first),
+        "chave local de mensagem sem id deve ser estavel no mesmo objeto",
+    )
 
 
 def verify_timer_counting() -> None:
