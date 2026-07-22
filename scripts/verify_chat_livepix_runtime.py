@@ -18,6 +18,7 @@ from freefire_kill_sender import (
     LivepixEvent,
     bot_cooldown_release_key,
     chat_command_token,
+    is_bot_confirmation_chat_message,
     is_internal_chat_message,
     is_timer_countable_chat_message,
     livepix_amount_cents,
@@ -145,6 +146,14 @@ def verify_timer_counting() -> None:
     check(
         is_internal_chat_message(chat_message("Aizen", "!boa", platform="aIzEn", source="LOCAL")),
         "mensagem local do app deve ser interna mesmo com caixa mista",
+    )
+    check(
+        not is_bot_confirmation_chat_message(chat_message("Aizen", "Boa tarde", platform="Aizen", source="local"), "Boa tarde"),
+        "mensagem interna nao deve confirmar entrega do bot",
+    )
+    check(
+        is_bot_confirmation_chat_message(chat_message("Jarvis", "Boa tarde", platform="TikTok"), "Boa tarde"),
+        "chat externo igual a resposta deve confirmar entrega do bot",
     )
     check(
         not is_timer_countable_chat_message(chat_message("Livepix", "pagamento", platform="Livepix", source="livepix")),

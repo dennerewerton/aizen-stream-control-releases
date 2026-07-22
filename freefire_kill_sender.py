@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.278"
+APP_VERSION = "2.6.279"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -2212,6 +2212,13 @@ def is_internal_chat_message(message: LiveChatMessage) -> bool:
         "local",
         "simulator",
     }
+
+
+def is_bot_confirmation_chat_message(message: LiveChatMessage, expected_text: Any) -> bool:
+    expected = normalize_bot_confirmation_text_value(expected_text)
+    if not expected or is_internal_chat_message(message):
+        return False
+    return normalize_bot_confirmation_text_value(message.comment) == expected
 
 
 def is_timer_countable_chat_message(
@@ -16511,24 +16518,21 @@ def run_gui(config_path: Path) -> int:
         return normalize_bot_confirmation_text_value(value)
 
     def bot_reply_seen_in_chat(text: str, start_index: int = 0) -> bool:
-        expected = normalize_bot_confirmation_text(text)
-        if not expected:
+        if not normalize_bot_confirmation_text(text):
             return False
         recent_messages = chat_messages[max(0, start_index) :]
         for chat_message in reversed(recent_messages[-80:]):
-            if normalize_bot_confirmation_text(chat_message.comment) == expected:
+            if is_bot_confirmation_chat_message(chat_message, text):
                 return True
         return False
 
     def confirm_bot_reply_from_chat(message: LiveChatMessage) -> None:
         if not bot_pending_confirmations:
             return
-        received = normalize_bot_confirmation_text(message.comment)
-        if not received:
+        if is_internal_chat_message(message):
             return
         for delivery_id, pending in list(bot_pending_confirmations.items()):
-            expected = normalize_bot_confirmation_text(pending.get("message"))
-            if expected and expected == received:
+            if is_bot_confirmation_chat_message(message, pending.get("message")):
                 bot_pending_confirmations.pop(delivery_id, None)
                 bot_status_var.set("Confirmado na live")
                 log(f"Bot confirmado no chat: {message.username}: {message.comment[:120]}")
