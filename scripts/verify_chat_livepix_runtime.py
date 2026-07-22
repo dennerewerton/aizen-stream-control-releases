@@ -18,6 +18,7 @@ from freefire_kill_sender import (
     LivepixEvent,
     bot_cooldown_release_key,
     chat_command_token,
+    is_internal_chat_message,
     is_timer_countable_chat_message,
     livepix_amount_cents,
     livepix_amount_cents_from_paths,
@@ -140,6 +141,10 @@ def verify_timer_counting() -> None:
     check(
         not is_timer_countable_chat_message(chat_message("AizenTimer", "timer", platform="Timer", source="timer")),
         "timer nao deve alimentar outro timer",
+    )
+    check(
+        is_internal_chat_message(chat_message("Aizen", "!boa", platform="aIzEn", source="LOCAL")),
+        "mensagem local do app deve ser interna mesmo com caixa mista",
     )
     check(
         not is_timer_countable_chat_message(chat_message("Livepix", "pagamento", platform="Livepix", source="livepix")),

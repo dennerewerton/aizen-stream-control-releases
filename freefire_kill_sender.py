@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.277"
+APP_VERSION = "2.6.278"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -2203,16 +2203,23 @@ def normalize_bot_confirmation_text_value(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
 
 
+def is_internal_chat_message(message: LiveChatMessage) -> bool:
+    platform = str(message.platform or "").strip().casefold()
+    source = str(message.source or "").strip().casefold()
+    return platform in {"aizen", "timer", "livepix", "teste", "simulador"} or source in {
+        "timer",
+        "livepix",
+        "local",
+        "simulator",
+    }
+
+
 def is_timer_countable_chat_message(
     message: LiveChatMessage,
     pending_bot_messages: Iterable[Any] = (),
     ignored_usernames: Iterable[str] = (),
 ) -> bool:
-    platform = str(message.platform or "").strip().casefold()
-    source = str(message.source or "").strip().casefold()
-    if platform in {"aizen", "timer", "livepix", "teste", "simulador"}:
-        return False
-    if source in {"timer", "livepix", "local", "simulator"}:
+    if is_internal_chat_message(message):
         return False
     received = normalize_bot_confirmation_text_value(message.comment)
     if received:
@@ -18150,7 +18157,7 @@ def run_gui(config_path: Path) -> int:
     def handle_custom_chat_commands(message: LiveChatMessage) -> None:
         if not chat_commands_enabled_var.get():
             return
-        if message.platform == "Aizen" or should_ignore_bot_user(message):
+        if is_internal_chat_message(message) or should_ignore_bot_user(message):
             return
         token, args = chat_command_token(message.comment)
         if not token:
