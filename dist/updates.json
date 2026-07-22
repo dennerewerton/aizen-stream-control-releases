@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.287",
-    "notes":  "Adiciona recuperacao automatica do config.json: se o arquivo principal estiver corrompido, o app restaura o backup valido mais recente e guarda o arquivo quebrado como .invalid.",
+    "version":  "2.6.288",
+    "notes":  "Melhora a recuperacao do config.json: se o config estiver corrompido e nao houver backup valido, o app guarda o arquivo quebrado como .invalid e abre com configuracao padrao segura.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.287/AizenStreamControl.exe",
-                    "sha256":  "509d0841b9d9e455434f799d56cbf0af231ca4672fa8b65f4b3c371b2ab86fa6"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.288/AizenStreamControl.exe",
+                    "sha256":  "d2ac7f9e441f16c154cce094e18920a7e3e480ed299f80acc71061a11b99ba30"
                 }
 }

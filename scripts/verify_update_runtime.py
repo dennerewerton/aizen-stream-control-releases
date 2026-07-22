@@ -124,6 +124,15 @@ def verify_config_recovery_from_backup() -> None:
         check(current.get("device_name") == "Recovered PC", "config principal deveria ser restaurado com JSON valido")
         check(list(config_path.parent.glob("config.invalid_*.json")), "config corrompido deveria ser guardado como invalid")
 
+    with tempfile.TemporaryDirectory(prefix="aizen_config_default_") as tmp:
+        config_path = Path(tmp) / "config.json"
+        config_path.write_text("{", encoding="utf-8")
+        loaded = load_config(config_path)
+        check(isinstance(loaded, dict), "config corrompido sem backup deveria abrir com defaults")
+        check(loaded.get("captures_dir") == "captures", "config default recuperado deveria receber defaults internos")
+        json.loads(config_path.read_text(encoding="utf-8-sig"))
+        check(list(config_path.parent.glob("config.invalid_*.json")), "config corrompido sem backup deveria ser guardado como invalid")
+
 
 def verify_zip_resolution() -> None:
     with tempfile.TemporaryDirectory(prefix="aizen_update_verify_") as tmp:

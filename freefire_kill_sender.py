@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.287"
+APP_VERSION = "2.6.288"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -568,7 +568,7 @@ def load_config(path: Path) -> dict[str, Any]:
     except (json.JSONDecodeError, OSError, ValueError):
         data = recover_config_from_backup(path)
         if data is None:
-            raise
+            data = json.loads(json.dumps(defaults)) if defaults else {}
     data = merge_defaults(data, defaults)
     data.setdefault("captures_dir", "captures")
     data.setdefault("debug_dir", "debug")
