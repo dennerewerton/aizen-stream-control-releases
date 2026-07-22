@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.290",
-    "notes":  "Protege logs contra vazamento de segredos: tokens, client_secret, senhas, Authorization e parametros sensiveis de URL agora sao mascarados em logs e previews JSON.",
+    "version":  "2.6.291",
+    "notes":  "Melhora a sincronizacao completa do Livepix: o app agora busca transacoes e recebiveis antes dos endpoints opcionais, reduzindo chance de 429 transformar o dashboard em parcial antes de carregar os valores principais.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.290/AizenStreamControl.exe",
-                    "sha256":  "8225ad277c5b74a9643ec979659e6e126957435ce88f225c7ed69283d99cdcb1"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.291/AizenStreamControl.exe",
+                    "sha256":  "bdc694fbb1eec0d4b4b217455b92c9ad488b7566548f83fd86fc35b40a9043b6"
                 }
 }

@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.290"
+APP_VERSION = "2.6.291"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -19654,6 +19654,23 @@ def run_gui(config_path: Path) -> int:
                 transaction_items: list[dict[str, Any]] = []
                 receivable_items: list[dict[str, Any]] = []
                 if is_full_sync:
+                    # Prioriza dados que afetam o total antes dos endpoints opcionais, evitando 429 desnecessario no dashboard.
+                    transactions_payload, transaction_items = fetch_livepix_collection(
+                        "transacoes",
+                        f"/wallet/{selected_currency}/transactions",
+                        limit=collection_limit,
+                        max_pages=collection_pages,
+                    )
+                    receivables_payload, receivable_items = fetch_livepix_collection(
+                        "recebiveis",
+                        f"/wallet/{selected_currency}/receivables",
+                        limit=collection_limit,
+                        max_pages=collection_pages,
+                    )
+                    raw_payloads["transactions"] = transactions_payload
+                    raw_payloads["receivables"] = receivables_payload
+                    extras["transactions"] = transaction_items
+                    extras["receivables"] = receivable_items
                     for name, getter in (
                         ("currencies", client.currencies),
                         ("plans", client.plans),
@@ -19672,22 +19689,6 @@ def run_gui(config_path: Path) -> int:
                             mark_livepix_rate_limit(detail)
                             extras[name] = f"erro: {detail}"
                             sync_errors.append(f"{name}: {detail}")
-                    transactions_payload, transaction_items = fetch_livepix_collection(
-                        "transacoes",
-                        f"/wallet/{selected_currency}/transactions",
-                        limit=collection_limit,
-                        max_pages=collection_pages,
-                    )
-                    receivables_payload, receivable_items = fetch_livepix_collection(
-                        "recebiveis",
-                        f"/wallet/{selected_currency}/receivables",
-                        limit=collection_limit,
-                        max_pages=collection_pages,
-                    )
-                    raw_payloads["transactions"] = transactions_payload
-                    raw_payloads["receivables"] = receivables_payload
-                    extras["transactions"] = transaction_items
-                    extras["receivables"] = receivable_items
                 reward_grants: list[dict[str, Any]] = []
                 if is_full_sync and isinstance(extras.get("rewards"), list):
                     for reward in extras["rewards"]:

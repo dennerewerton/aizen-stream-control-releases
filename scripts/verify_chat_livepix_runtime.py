@@ -462,6 +462,20 @@ def verify_livepix_rate_limit_detection() -> None:
     check(not livepix_is_rate_limit_detail("401 credenciais invalidas"), "401 nao deve ser tratado como rate limit")
 
 
+def verify_livepix_full_sync_order() -> None:
+    source = (ROOT / "freefire_kill_sender.py").read_text(encoding="utf-8-sig")
+    start = source.index("    def sync_livepix_from_api")
+    end = source.index("    def test_livepix_account", start)
+    sync_source = source[start:end]
+    transactions_pos = sync_source.index("transactions_payload, transaction_items = fetch_livepix_collection")
+    receivables_pos = sync_source.index("receivables_payload, receivable_items = fetch_livepix_collection")
+    optional_pos = sync_source.index("for name, getter in (")
+    check(
+        transactions_pos < optional_pos and receivables_pos < optional_pos,
+        "Livepix deve buscar transacoes/recebiveis antes dos endpoints opcionais para reduzir 429 no dashboard",
+    )
+
+
 def main() -> int:
     verify_commands()
     verify_youtube_raffle_url_normalization()
@@ -474,6 +488,7 @@ def main() -> int:
     verify_livepix_alerts()
     verify_livepix_amount_parsing()
     verify_livepix_rate_limit_detection()
+    verify_livepix_full_sync_order()
     print("Runtime chat/Livepix OK: comandos, temporizador, sorteio YouTube/TikTok e alertas validados.")
     return 0
 
