@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.280",
-    "notes":  "Melhora a robustez do atualizador: se a pasta padrao de staging nao puder ser criada, o download da atualizacao usa um fallback temporario seguro do Windows e registra o detalhe no log.",
+    "version":  "2.6.281",
+    "notes":  "Completa a robustez do atualizador: a limpeza automatica agora tambem remove pastas antigas criadas no fallback temporario do Windows, evitando acumulo de arquivos de staging apos updates.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.280/AizenStreamControl.exe",
-                    "sha256":  "cc09a39883aa78550158be9df1732a2732e5f6ee59268f50cc645fd6c2ef1017"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.281/AizenStreamControl.exe",
+                    "sha256":  "eae226cf06575d9de663f4c01a90dcf4afc92b1bf78017efdb799f7875e3c26c"
                 }
 }

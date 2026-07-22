@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.280"
+APP_VERSION = "2.6.281"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -2471,8 +2471,27 @@ def cleanup_stale_update_dirs(
 ) -> int:
     if max_dirs <= 0:
         return 0
+    if base_dir is None:
+        total_removed = 0
+        seen_bases: set[Path] = set()
+        for candidate_base in (APP_DIR / "updates", update_workspace_fallback_dir()):
+            try:
+                resolved_base = candidate_base.resolve(strict=False)
+            except OSError:
+                continue
+            if resolved_base in seen_bases:
+                continue
+            seen_bases.add(resolved_base)
+            total_removed += cleanup_stale_update_dirs(
+                resolved_base,
+                min_age_seconds=min_age_seconds,
+                max_dirs=max(0, max_dirs - total_removed),
+            )
+            if total_removed >= max_dirs:
+                break
+        return total_removed
     try:
-        base = Path(base_dir or (APP_DIR / "updates")).resolve(strict=False)
+        base = Path(base_dir).resolve(strict=False)
     except OSError:
         return 0
     if not base.is_dir():
@@ -7363,6 +7382,10 @@ def update_workspace_dir() -> Path:
     return workspace
 
 
+def update_workspace_fallback_dir() -> Path:
+    return Path(tempfile.gettempdir()) / APP_NAME / "updates"
+
+
 def create_update_download_dir() -> Path:
     dirname = f"aizen_update_{int(time.time())}_{secrets.token_hex(4)}"
     errors: list[str] = []
@@ -7371,7 +7394,7 @@ def create_update_download_dir() -> Path:
         bases.append(("padrao", update_workspace_dir()))
     except OSError as exc:
         errors.append(f"{APP_DIR / 'updates'}: {exc}")
-    bases.append(("temporario", Path(tempfile.gettempdir()) / APP_NAME / "updates"))
+    bases.append(("temporario", update_workspace_fallback_dir()))
 
     for label, base in bases:
         target_dir = base / dirname

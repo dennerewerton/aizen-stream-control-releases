@@ -22,6 +22,7 @@ from freefire_kill_sender import (
     resolve_downloaded_exe,
     safe_extract_update_zip,
     update_asset_from_manifest,
+    update_workspace_fallback_dir,
     version_tuple,
 )
 
@@ -131,8 +132,35 @@ def verify_stale_update_cleanup() -> None:
         check(similar_name.exists(), "limpeza de updates removeu pasta com nome fora do padrao")
 
 
+def verify_default_update_cleanup_includes_fallback() -> None:
+    original_app_dir = app_runtime.APP_DIR
+    original_tempdir = tempfile.tempdir
+    try:
+        with tempfile.TemporaryDirectory(prefix="aizen_update_cleanup_default_") as tmp:
+            root = Path(tmp)
+            app_runtime.APP_DIR = root / "appdata"
+            tempfile.tempdir = str(root / "temp")
+            default_update = app_runtime.APP_DIR / "updates" / "aizen_update_1000_deadbeef"
+            fallback_update = update_workspace_fallback_dir() / "aizen_update_1001_cafebabe"
+            recent_fallback = update_workspace_fallback_dir() / "aizen_update_1002_faded123"
+            for path in (default_update, fallback_update, recent_fallback):
+                path.mkdir(parents=True)
+            old_time = time.time() - (48 * 60 * 60)
+            os.utime(default_update, (old_time, old_time))
+            os.utime(fallback_update, (old_time, old_time))
+            removed = cleanup_stale_update_dirs(min_age_seconds=24 * 60 * 60, max_dirs=4)
+            check(removed == 2, "limpeza padrao deveria remover updates antigos do padrao e fallback")
+            check(not default_update.exists(), "limpeza padrao nao removeu update antigo do AppData")
+            check(not fallback_update.exists(), "limpeza padrao nao removeu update antigo do fallback temporario")
+            check(recent_fallback.exists(), "limpeza padrao removeu update recente do fallback")
+    finally:
+        app_runtime.APP_DIR = original_app_dir
+        tempfile.tempdir = original_tempdir
+
+
 def verify_update_download_dir_fallback() -> None:
     original_update_workspace_dir = app_runtime.update_workspace_dir
+    original_write_update_log = app_runtime.write_update_log
     original_tempdir = tempfile.tempdir
 
     def broken_workspace() -> Path:
@@ -140,11 +168,13 @@ def verify_update_download_dir_fallback() -> None:
 
     with tempfile.TemporaryDirectory(prefix="aizen_update_fallback_") as tmp:
         app_runtime.update_workspace_dir = broken_workspace
+        app_runtime.write_update_log = lambda _message: None
         tempfile.tempdir = tmp
         try:
             target = create_update_download_dir()
         finally:
             app_runtime.update_workspace_dir = original_update_workspace_dir
+            app_runtime.write_update_log = original_write_update_log
             tempfile.tempdir = original_tempdir
         expected_parent = Path(tmp) / app_runtime.APP_NAME / "updates"
         check(target.exists() and target.is_dir(), "fallback temporario do update nao criou pasta")
@@ -157,6 +187,7 @@ def main() -> int:
     verify_zip_resolution()
     verify_build_scripts_include_runtime_assets()
     verify_stale_update_cleanup()
+    verify_default_update_cleanup_includes_fallback()
     verify_update_download_dir_fallback()
     print("Runtime update OK: manifesto, versoes e ZIP de atualizacao validados.")
     return 0
