@@ -257,32 +257,34 @@ def verify_tikfinity_chatbot_payload() -> None:
     first_attempt_payload, first_attempt_label = tikfinity_direct_delivery_payload(
         {"message": "Boa tarde", "username": "Jarvis", "attempt": 1}
     )
-    check(first_attempt_label.startswith("evento General.Custom"), "primeira tentativa deve usar General.Custom")
-    check(first_attempt_payload.get("event") == {"source": "General", "type": "Custom"}, "primeira tentativa deve envelopar evento")
+    check(first_attempt_label.startswith("pacote oficial"), "primeira tentativa deve usar pacote oficial direto")
+    check(first_attempt_payload == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 1}), "primeira tentativa deve transmitir sendChatbotMessage cru")
     retry_payload, retry_label = tikfinity_direct_delivery_payload(
         {"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True}
     )
-    check(retry_label.startswith("pacote direto"), "reenvio deve usar fallback direto")
-    check(set(retry_payload) == {"action", "args"}, "fallback direto deve manter o pacote TikFinity cru")
+    check(retry_label.startswith("evento legacy General.Custom"), "reenvio deve usar fallback legado General.Custom")
+    check(retry_payload.get("event") == {"source": "General", "type": "Custom"}, "fallback legado deve envelopar evento")
+    check(
+        json.loads(str(retry_payload.get("data") or "{}"))
+        == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True}),
+        "fallback legado deve carregar sendChatbotMessage em data",
+    )
     bridge = Bridge()
     detail = send_tikfinity_direct_message(bridge, {"message": "Boa tarde", "username": "Jarvis"})
-    check(detail.startswith("TikFinity recebeu evento General.Custom sendChatbotMessage"), "envio direto deve relatar evento correto")
+    check(detail.startswith("TikFinity recebeu pacote oficial sendChatbotMessage"), "envio direto deve relatar pacote oficial")
     sent_payload = bridge.payloads[0] if bridge.payloads else {}
-    check(sent_payload.get("event") == {"source": "General", "type": "Custom"}, "envio direto deve transmitir evento General.Custom")
-    check(
-        json.loads(str(sent_payload.get("data") or "{}"))
-        == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis"}),
-        "envio direto deve transmitir pacote oficial dentro de data",
-    )
+    check(sent_payload == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis"}), "envio direto deve transmitir sendChatbotMessage cru")
     retry_bridge = Bridge()
     retry_detail = send_tikfinity_direct_message(
         retry_bridge,
         {"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True},
     )
-    check(retry_detail.startswith("TikFinity recebeu pacote direto sendChatbotMessage"), "retry deve relatar fallback direto")
+    check(retry_detail.startswith("TikFinity recebeu evento legacy General.Custom sendChatbotMessage"), "retry deve relatar fallback legado")
+    retry_sent_payload = retry_bridge.payloads[0] if retry_bridge.payloads else {}
     check(
-        retry_bridge.payloads == [tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True})],
-        "retry deve transmitir pacote direto oficial",
+        json.loads(str(retry_sent_payload.get("data") or "{}"))
+        == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True}),
+        "retry deve transmitir pacote oficial dentro do fallback legado",
     )
 
     waiting_bridge = Bridge()
@@ -344,24 +346,24 @@ def verify_tikfinity_direct_bridge_socket_delivery() -> None:
         subscribe_response = read_json_frame_until(sock, lambda item: item.get("id") == subscribe_id)
         check(subscribe_response.get("status") == "ok", "ponte deve aceitar Subscribe do TikFinity")
         detail = send_tikfinity_direct_message(server, {"message": "Boa tarde", "username": "Jarvis"})
-        check("General.Custom" in detail, "envio direto deve relatar General.Custom")
-        event = read_json_frame_until(
+        check("pacote oficial" in detail, "envio direto deve relatar pacote oficial")
+        direct_message = read_json_frame_until(sock, lambda item: item.get("action") == "sendChatbotMessage")
+        check(direct_message.get("args", {}).get("message") == "Boa tarde", "evento real da ponte deve carregar a mensagem direta")
+        check(direct_message.get("args", {}).get("username") == "Jarvis", "evento real da ponte deve carregar o usuario")
+        retry_detail = send_tikfinity_direct_message(
+            server,
+            {"message": "Boa noite", "username": "Jarvis", "attempt": 2, "retry": True},
+        )
+        check("General.Custom" in retry_detail, "retry real da ponte deve usar fallback legado")
+        legacy_event = read_json_frame_until(
             sock,
             lambda item: isinstance(item.get("event"), dict)
             and item["event"].get("source") == "General"
             and item["event"].get("type") == "Custom",
         )
-        data = json.loads(str(event.get("data") or "{}"))
-        check(data.get("action") == "sendChatbotMessage", "evento real da ponte deve carregar sendChatbotMessage")
-        check(data.get("args", {}).get("message") == "Boa tarde", "evento real da ponte deve carregar a mensagem")
-        check(data.get("args", {}).get("username") == "Jarvis", "evento real da ponte deve carregar o usuario")
-        retry_detail = send_tikfinity_direct_message(
-            server,
-            {"message": "Boa noite", "username": "Jarvis", "attempt": 2, "retry": True},
-        )
-        check("pacote direto" in retry_detail, "retry real da ponte deve usar pacote direto")
-        raw_message = read_json_frame_until(sock, lambda item: item.get("action") == "sendChatbotMessage")
-        check(raw_message.get("args", {}).get("message") == "Boa noite", "retry real deve carregar a mensagem direta")
+        legacy_data = json.loads(str(legacy_event.get("data") or "{}"))
+        check(legacy_data.get("action") == "sendChatbotMessage", "retry real deve carregar sendChatbotMessage no fallback")
+        check(legacy_data.get("args", {}).get("message") == "Boa noite", "retry real deve carregar a mensagem no fallback")
     finally:
         if sock is not None:
             try:

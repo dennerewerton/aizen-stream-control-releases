@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.292"
+APP_VERSION = "2.6.293"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -3196,8 +3196,8 @@ def tikfinity_direct_delivery_payload(args: dict[str, Any]) -> tuple[dict[str, A
     except (TypeError, ValueError):
         attempt = 1
     if bool(args.get("retry")) and attempt >= 2:
-        return chatbot_payload, "pacote direto sendChatbotMessage"
-    return streamerbot_custom_event_payload(chatbot_payload), "evento General.Custom sendChatbotMessage"
+        return streamerbot_custom_event_payload(chatbot_payload), "evento legacy General.Custom sendChatbotMessage"
+    return chatbot_payload, "pacote oficial sendChatbotMessage"
 
 
 def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> str:
