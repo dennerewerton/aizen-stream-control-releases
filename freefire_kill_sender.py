@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.295"
+APP_VERSION = "2.6.296"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -9853,6 +9853,55 @@ def run_gui(config_path: Path) -> int:
             font=("Segoe UI Semibold", 12),
         )
 
+    class DualAxisScrollableFrame(tk.Frame):
+        """A scrollable CustomTkinter-compatible content frame with two visible axes."""
+
+        def __init__(self, master: Any, *, background: str, height: int = 200) -> None:
+            self._parent_frame = ctk.CTkFrame(master, fg_color=background, corner_radius=0)
+            self._canvas = tk.Canvas(self._parent_frame, highlightthickness=0, bg=background)
+            self._vertical_scrollbar = ctk.CTkScrollbar(
+                self._parent_frame,
+                orientation="vertical",
+                command=self._canvas.yview,
+                button_color=chip_bg,
+                button_hover_color=accent,
+            )
+            self._horizontal_scrollbar = ctk.CTkScrollbar(
+                self._parent_frame,
+                orientation="horizontal",
+                command=self._canvas.xview,
+                button_color=chip_bg,
+                button_hover_color=accent,
+            )
+            self._canvas.configure(
+                yscrollcommand=self._vertical_scrollbar.set,
+                xscrollcommand=self._horizontal_scrollbar.set,
+                height=height,
+                xscrollincrement=1,
+                yscrollincrement=1,
+            )
+            self._parent_frame.columnconfigure(0, weight=1)
+            self._parent_frame.rowconfigure(0, weight=1)
+            self._canvas.grid(row=0, column=0, sticky="nsew")
+            self._vertical_scrollbar.grid(row=0, column=1, sticky="ns")
+            self._horizontal_scrollbar.grid(row=1, column=0, sticky="ew")
+            super().__init__(self._canvas, highlightthickness=0, bg=background)
+            self._window_id = self._canvas.create_window(0, 0, window=self, anchor="nw")
+            self.bind("<Configure>", self._refresh_scrollregion)
+            self._canvas.bind("<Configure>", self._refresh_scrollregion)
+
+        def _refresh_scrollregion(self, _event: Any = None) -> None:
+            self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+        def grid(self, **kwargs: Any) -> None:
+            self._parent_frame.grid(**kwargs)
+
+        def grid_remove(self) -> None:
+            self._parent_frame.grid_remove()
+
+        def grid_forget(self) -> None:
+            self._parent_frame.grid_forget()
+
     def avatar_initials(name: str) -> str:
         words = [part for part in re.split(r"\s+", name.strip()) if part]
         if not words:
@@ -10182,44 +10231,18 @@ def run_gui(config_path: Path) -> int:
             scrollbar_button_hover_color=accent,
         )
         live_chat_tab.grid(row=0, column=0, sticky="nsew")
-    commands_tab_vertical = ctk.CTkScrollableFrame(
+    commands_tab = DualAxisScrollableFrame(
         commands_tab_root,
-        fg_color=bg,
-        corner_radius=0,
-        scrollbar_button_color=chip_bg,
-        scrollbar_button_hover_color=accent,
+        background=bg,
+        height=760,
     )
-    commands_tab_vertical.grid(row=0, column=0, sticky="nsew")
-    commands_tab_vertical.columnconfigure(0, weight=1)
-    commands_tab = ctk.CTkScrollableFrame(
-        commands_tab_vertical,
-        fg_color=bg,
-        corner_radius=0,
-        height=960,
-        orientation="horizontal",
-        scrollbar_button_color=chip_bg,
-        scrollbar_button_hover_color=accent,
-    )
-    commands_tab.grid(row=0, column=0, sticky="ew")
-    timers_tab_vertical = ctk.CTkScrollableFrame(
+    commands_tab.grid(row=0, column=0, sticky="nsew")
+    timers_tab = DualAxisScrollableFrame(
         timers_tab_root,
-        fg_color=bg,
-        corner_radius=0,
-        scrollbar_button_color=chip_bg,
-        scrollbar_button_hover_color=accent,
+        background=bg,
+        height=760,
     )
-    timers_tab_vertical.grid(row=0, column=0, sticky="nsew")
-    timers_tab_vertical.columnconfigure(0, weight=1)
-    timers_tab = ctk.CTkScrollableFrame(
-        timers_tab_vertical,
-        fg_color=bg,
-        corner_radius=0,
-        height=960,
-        orientation="horizontal",
-        scrollbar_button_color=chip_bg,
-        scrollbar_button_hover_color=accent,
-    )
-    timers_tab.grid(row=0, column=0, sticky="ew")
+    timers_tab.grid(row=0, column=0, sticky="nsew")
     events_tab = ctk.CTkFrame(
         events_tab_root,
         fg_color=bg,
@@ -10252,10 +10275,10 @@ def run_gui(config_path: Path) -> int:
         live_chat_tab.rowconfigure(2, weight=0)
         live_chat_tab.rowconfigure(3, weight=1)
     commands_tab.columnconfigure(0, weight=1, minsize=320)
-    commands_tab.columnconfigure(1, weight=2, minsize=420)
+    commands_tab.columnconfigure(1, weight=2, minsize=760)
     commands_tab.rowconfigure(0, weight=1)
     timers_tab.columnconfigure(0, weight=1, minsize=320)
-    timers_tab.columnconfigure(1, weight=2, minsize=420)
+    timers_tab.columnconfigure(1, weight=2, minsize=760)
     timers_tab.rowconfigure(0, weight=1)
     raffle_tab.columnconfigure(0, weight=1)
     raffle_tab.rowconfigure(0, weight=1)

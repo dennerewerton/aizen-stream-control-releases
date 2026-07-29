@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.295",
-    "notes":  "Adiciona barras horizontal e vertical nas abas Comandos e Temporizador. Corrige o temporizador: restaura automaticamente a ponte TikFinity para a porta padrao 8080 quando livre, aceita intervalos a partir de 15 segundos, informa no log o que esta bloqueando o envio e ativa os timers configurados quando o controle geral estiver ligado e nenhum timer individual estiver marcado.",
+    "version":  "2.6.296",
+    "notes":  "Corrige a tela do Temporizador e Comandos em janelas estreitas: os painéis agora usam rolagem horizontal e vertical no mesmo quadro, com a barra horizontal fixa e os campos Nome, Mensagem, Intervalo e Min. chat preservados em largura configurável.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.295/AizenStreamControl.exe",
-                    "sha256":  "aa4ac7b23cf193a345d4de8829e4d6eeca1fbb2b9245f974ddd158f81744dc46"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.296/AizenStreamControl.exe",
+                    "sha256":  "930db1c53dfa4532d0a39a75fac9d7f7a2f609cfb62352092a807c70b68fd681"
                 }
 }
