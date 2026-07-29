@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.293",
-    "notes":  "Corrige o envio dos Comandos e Temporizador pelo TikFinity direto: o app agora usa como primeira tentativa o formato oficial do Streamer.bot Messages (sendChatbotMessage direto), mantendo o General.Custom apenas como fallback legado.",
+    "version":  "2.6.294",
+    "notes":  "Corrige o envio de Comandos e Temporizador pelo TikFinity: a ponte agora usa primeiro o evento oficial General.Custom do Streamer.bot, com pacote direto apenas como alternativa. As abas Comandos e Temporizador agora possuem rolagem vertical para telas e janelas menores.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.293/AizenStreamControl.exe",
-                    "sha256":  "f1538375dd2374ffad012cbfe7c8d6f5f8fc7696ca0f8aa83ffe4c0bf8505834"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.294/AizenStreamControl.exe",
+                    "sha256":  "005698e4b84bf7b6d8ea540abf0cd72b36e7b565e16317335d5186d2be34239f"
                 }
 }

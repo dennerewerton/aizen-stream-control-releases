@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.293"
+APP_VERSION = "2.6.294"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -3195,9 +3195,12 @@ def tikfinity_direct_delivery_payload(args: dict[str, Any]) -> tuple[dict[str, A
         attempt = int(args.get("attempt") or 1)
     except (TypeError, ValueError):
         attempt = 1
+    # TikFinity listens to the General.Custom event emitted by
+    # CPH.WebsocketBroadcastJson. Sending the inner JSON raw is retained only
+    # as a compatibility fallback for older desktop builds.
     if bool(args.get("retry")) and attempt >= 2:
-        return streamerbot_custom_event_payload(chatbot_payload), "evento legacy General.Custom sendChatbotMessage"
-    return chatbot_payload, "pacote oficial sendChatbotMessage"
+        return chatbot_payload, "pacote alternativo sendChatbotMessage direto"
+    return streamerbot_custom_event_payload(chatbot_payload), "evento oficial General.Custom sendChatbotMessage"
 
 
 def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> str:
@@ -10178,16 +10181,20 @@ def run_gui(config_path: Path) -> int:
             scrollbar_button_hover_color=accent,
         )
         live_chat_tab.grid(row=0, column=0, sticky="nsew")
-    commands_tab = ctk.CTkFrame(
+    commands_tab = ctk.CTkScrollableFrame(
         commands_tab_root,
         fg_color=bg,
         corner_radius=0,
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
     )
     commands_tab.grid(row=0, column=0, sticky="nsew")
-    timers_tab = ctk.CTkFrame(
+    timers_tab = ctk.CTkScrollableFrame(
         timers_tab_root,
         fg_color=bg,
         corner_radius=0,
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
     )
     timers_tab.grid(row=0, column=0, sticky="nsew")
     events_tab = ctk.CTkFrame(
@@ -18344,7 +18351,7 @@ def run_gui(config_path: Path) -> int:
                 return
             log(
                 f"TikFinity recebeu o pacote do bot, mas a mensagem nao apareceu no chat em {BOT_DELIVERY_CONFIRMATION_WAIT_MS // 1000}s; "
-                "reiniciando a ponte direta e reenviando uma vez em formato alternativo."
+                "reiniciando a ponte direta e reenviando uma vez no formato alternativo."
             )
             schedule_bot_send_pump(200)
             return
@@ -18352,7 +18359,7 @@ def run_gui(config_path: Path) -> int:
         release_bot_command_cooldown(payload, "sem confirmacao do TikFinity")
         log(
             "TikFinity recebeu o pacote do bot, mas o app nao viu a mensagem voltar no chat. "
-            "No TikFinity, desconecte/conecte Setup > Streamer.bot Connection e teste novamente."
+            "No TikFinity, confirme que Chatbot esta conectado na conta TikTok e ativo; depois desconecte/conecte Setup > Streamer.bot Connection e teste novamente."
         )
 
     def should_ignore_bot_user(message: LiveChatMessage) -> bool:
