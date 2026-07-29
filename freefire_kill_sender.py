@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.298"
+APP_VERSION = "2.6.299"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -2761,6 +2761,7 @@ class TikfinityDirectBridgeServer:
         self.clients: set[socket.socket] = set()
         self.client_states: dict[socket.socket, dict[str, Any]] = {}
         self.clients_lock = threading.Lock()
+        self.session_id = uuid.uuid4().hex
 
     def start(self) -> None:
         if self.is_running():
@@ -2835,12 +2836,16 @@ class TikfinityDirectBridgeServer:
             "name": APP_NAME,
             "os": "windows" if os.name == "nt" else sys.platform,
             "osVersion": platform.version(),
-            "version": "0.2.5",
+            "version": "1.0.4",
+            "mode": "ui",
+            "darkMode": True,
             "source": "websocketServer",
         }
 
     def streamerbot_hello_payload(self) -> dict[str, Any]:
         return {
+            "timestamp": datetime.now().astimezone().isoformat(timespec="microseconds"),
+            "session": self.session_id,
             "request": "Hello",
             "info": self.streamerbot_info_payload(),
         }
@@ -3174,7 +3179,9 @@ def streamerbot_custom_event_payload(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "timeStamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
         "event": {"source": "General", "type": "Custom"},
-        "data": json.dumps(data, ensure_ascii=False),
+        # Streamer.bot serializes the outer event only. Its data field stays an
+        # object, which is what TikFinity reads before handling the action.
+        "data": data,
     }
 
 
@@ -3184,12 +3191,12 @@ def tikfinity_direct_delivery_payload(args: dict[str, Any]) -> tuple[dict[str, A
         attempt = int(args.get("attempt") or 1)
     except (TypeError, ValueError):
         attempt = 1
-    # TikFinity documents CPH.WebsocketBroadcastJson with this exact JSON as
-    # its payload. Send that compact packet first, then retain the
-    # General.Custom envelope only for older TikFinity builds.
+    # CPH.WebsocketBroadcastJson places the JSON object inside a General.Custom
+    # event. TikFinity subscribes to that event and reads data.action from the
+    # object, not from a JSON string.
     if bool(args.get("retry")) and attempt >= 2:
-        return streamerbot_custom_event_payload(chatbot_payload), "evento alternativo General.Custom sendChatbotMessage"
-    return chatbot_payload, "pacote oficial sendChatbotMessage direto"
+        return chatbot_payload, "pacote alternativo sendChatbotMessage direto"
+    return streamerbot_custom_event_payload(chatbot_payload), "evento oficial General.Custom sendChatbotMessage"
 
 
 def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> str:

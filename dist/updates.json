@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.298",
-    "notes":  "Corrige o envio de mensagens do bot e temporizador para o TikFinity: usa primeiro o pacote oficial sendChatbotMessage com apenas o campo message, mantém compatibilidade alternativa sem reiniciar a ponte e evita desconexoes durante o reenvio.",
+    "version":  "2.6.299",
+    "notes":  "Corrige definitivamente a ponte do TikFinity: o evento General.Custom agora transmite data como objeto JSON, igual ao WebsocketBroadcastJson do Streamer.bot 1.0.4, e o Hello da ponte segue o protocolo atual com sessao e identificacao compativeis.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.298/AizenStreamControl.exe",
-                    "sha256":  "a4b08fe9fca2ca0be02bca3b9e5f1476b7e21d4dcdd5aa143f881398de5a3bb0"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.299/AizenStreamControl.exe",
+                    "sha256":  "da52f841f388dad948f01becdf364980deb5bc725a99b977e08c0a71b4faea31"
                 }
 }
