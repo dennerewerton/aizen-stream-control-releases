@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.294"
+APP_VERSION = "2.6.295"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -193,6 +193,7 @@ WINSOCK_CLEAN_RESTART_ENV = "AIZEN_WINSOCK_CLEAN_RESTARTED"
 TIKFINITY_DIRECT_SEND_WAIT_SECONDS = 12.0
 TIKFINITY_DIRECT_READY_WAIT_SECONDS = 8.0
 BOT_DELIVERY_CONFIRMATION_WAIT_MS = 12000
+BOT_MIN_TIMER_INTERVAL_SECONDS = 15
 TIKFINITY_DIRECT_CHATBOT_HINT = (
     "Se nao aparecer na live, confirme no TikFinity: Chatbot > Settings > "
     "Allow Streamer.bot to push messages to TikFinity. Se ja estiver ativo, desconecte e conecte "
@@ -2243,7 +2244,7 @@ def parse_chat_timers_payload(payload: Any) -> list[ChatTimer]:
                 name=name[:80],
                 message=message,
                 enabled=bool(item.get("enabled", True)),
-                interval_seconds=max(60, interval),
+                interval_seconds=max(BOT_MIN_TIMER_INTERVAL_SECONDS, interval),
                 min_chat_messages=max(0, min_messages),
             )
         )
@@ -10181,22 +10182,44 @@ def run_gui(config_path: Path) -> int:
             scrollbar_button_hover_color=accent,
         )
         live_chat_tab.grid(row=0, column=0, sticky="nsew")
-    commands_tab = ctk.CTkScrollableFrame(
+    commands_tab_vertical = ctk.CTkScrollableFrame(
         commands_tab_root,
         fg_color=bg,
         corner_radius=0,
         scrollbar_button_color=chip_bg,
         scrollbar_button_hover_color=accent,
     )
-    commands_tab.grid(row=0, column=0, sticky="nsew")
-    timers_tab = ctk.CTkScrollableFrame(
+    commands_tab_vertical.grid(row=0, column=0, sticky="nsew")
+    commands_tab_vertical.columnconfigure(0, weight=1)
+    commands_tab = ctk.CTkScrollableFrame(
+        commands_tab_vertical,
+        fg_color=bg,
+        corner_radius=0,
+        height=960,
+        orientation="horizontal",
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
+    )
+    commands_tab.grid(row=0, column=0, sticky="ew")
+    timers_tab_vertical = ctk.CTkScrollableFrame(
         timers_tab_root,
         fg_color=bg,
         corner_radius=0,
         scrollbar_button_color=chip_bg,
         scrollbar_button_hover_color=accent,
     )
-    timers_tab.grid(row=0, column=0, sticky="nsew")
+    timers_tab_vertical.grid(row=0, column=0, sticky="nsew")
+    timers_tab_vertical.columnconfigure(0, weight=1)
+    timers_tab = ctk.CTkScrollableFrame(
+        timers_tab_vertical,
+        fg_color=bg,
+        corner_radius=0,
+        height=960,
+        orientation="horizontal",
+        scrollbar_button_color=chip_bg,
+        scrollbar_button_hover_color=accent,
+    )
+    timers_tab.grid(row=0, column=0, sticky="ew")
     events_tab = ctk.CTkFrame(
         events_tab_root,
         fg_color=bg,
@@ -11954,7 +11977,7 @@ def run_gui(config_path: Path) -> int:
     entry(timer_bot_card, bot_default_timer_min_messages_var, width=100).grid(row=4, column=1, sticky="w", padx=18, pady=5)
     ctk.CTkLabel(
         timer_bot_card,
-        text="Use 300 a 600 segundos para mensagens recorrentes. O delay seguro global continua valendo.",
+        text="O minimo e 15 segundos. Para disparar mesmo sem movimento, use 0 em Min. mensagens.",
         text_color=muted,
         font=("Segoe UI", 11),
         wraplength=320,
@@ -17608,7 +17631,7 @@ def run_gui(config_path: Path) -> int:
             value = int(float(bot_default_timer_interval_var.get().replace(",", ".")))
         except ValueError:
             value = 600
-        value = max(60, value)
+        value = max(BOT_MIN_TIMER_INTERVAL_SECONDS, value)
         bot_default_timer_interval_var.set(str(value))
         return value
 
@@ -17638,8 +17661,15 @@ def run_gui(config_path: Path) -> int:
         if app_closing:
             raise RuntimeError("O app esta fechando; ponte do TikFinity nao pode iniciar.")
         preferred_url = normalize_streamerbot_websocket_url(bot_streamerbot_ws_url_var.get())
+        default_url = normalize_streamerbot_websocket_url(DEFAULT_STREAMERBOT_WEBSOCKET_URL)
         bot_streamerbot_ws_url_var.set(preferred_url)
         candidate_urls = tikfinity_direct_bridge_url_candidates(preferred_url)
+        # A porta 8081 normalmente e apenas um fallback temporario. Quando a
+        # porta padrao volta a ficar livre, restaura-a para coincidir com a
+        # configuracao padrao do TikFinity sem exigir ajuste manual.
+        if preferred_url != default_url and default_url in candidate_urls:
+            candidate_urls.remove(default_url)
+            candidate_urls.insert(0, default_url)
         if bot_bridge_server is not None and bot_bridge_server.url in candidate_urls and bot_bridge_server.is_running():
             return bot_bridge_server
         stop_tikfinity_direct_bridge(silent=True)
@@ -17654,10 +17684,13 @@ def run_gui(config_path: Path) -> int:
             bot_bridge_server = server
             if server.url != preferred_url:
                 bot_streamerbot_ws_url_var.set(server.url)
-                log(
-                    f"Porta da ponte TikFinity ocupada ({preferred_url}). "
-                    f"Use no TikFinity: Setup > Streamer.bot Connection = {server.url}"
-                )
+                if server.url == default_url:
+                    log(f"Ponte TikFinity restaurada na porta padrao: {server.url}.")
+                else:
+                    log(
+                        f"Porta da ponte TikFinity ocupada ({preferred_url}). "
+                        f"Use no TikFinity: Setup > Streamer.bot Connection = {server.url}"
+                    )
             log(f"Ponte direta do TikFinity ativa em {server.url}.")
             return server
         detail = " ".join(port_errors) or "Todas as portas alternativas falharam."
@@ -17944,7 +17977,7 @@ def run_gui(config_path: Path) -> int:
         enabled_var = tk.BooleanVar(value=enabled)
         name_var = tk.StringVar(value=name)
         message_var = tk.StringVar(value=message)
-        interval_var = tk.StringVar(value=str(max(60, int(interval))))
+        interval_var = tk.StringVar(value=str(max(BOT_MIN_TIMER_INTERVAL_SECONDS, int(interval))))
         min_messages_var = tk.StringVar(value=str(max(0, int(min_messages))))
         row: dict[str, Any] = {
             "id": uuid.uuid4().hex,
@@ -17987,7 +18020,7 @@ def run_gui(config_path: Path) -> int:
             value = int(float(row["interval"].get().replace(",", ".")))
         except ValueError:
             value = bot_default_timer_interval_seconds()
-        return max(60, value)
+        return max(BOT_MIN_TIMER_INTERVAL_SECONDS, value)
 
     def timer_row_min_messages(row: dict[str, Any]) -> int:
         try:
@@ -18158,11 +18191,34 @@ def run_gui(config_path: Path) -> int:
                     "id": chat_timer_cache_id(timer),
                     "name": name or "Timer",
                     "message": message,
-                    "interval": max(60, int(timer.interval_seconds or bot_default_timer_interval_seconds())),
+                    "interval": max(BOT_MIN_TIMER_INTERVAL_SECONDS, int(timer.interval_seconds or bot_default_timer_interval_seconds())),
                     "min_messages": max(0, int(timer.min_chat_messages or bot_default_timer_min_messages())),
                 }
             )
         return entries
+
+    def enable_configured_chat_timers_if_none_active() -> bool:
+        nonlocal chat_timer_cache
+        if active_chat_timer_entries():
+            return False
+        changed = False
+        if chat_timer_rows_loaded:
+            for row in chat_timer_rows:
+                if row["message"].get().strip() and not bool(row["enabled"].get()):
+                    row["enabled"].set(True)
+                    changed = True
+        else:
+            for timer in chat_timer_cache:
+                if timer.message.strip() and not timer.enabled:
+                    timer.enabled = True
+                    changed = True
+        if changed:
+            log("Nenhum timer individual estava marcado; os timers configurados foram ativados pelo controle geral.")
+            try:
+                schedule_config_autosave()
+            except NameError:
+                pass
+        return changed
 
     def schedule_chat_timer_pump(delay_ms: int = 0) -> None:
         nonlocal chat_timer_after_id
@@ -18199,16 +18255,36 @@ def run_gui(config_path: Path) -> int:
         if not active_rows:
             timer_status_var.set("Sem timers ativos")
             timer_next_send_var.set("-")
+            last_notice = float(getattr(pump_chat_timers, "_last_empty_notice_at", 0.0))
+            if now - last_notice >= 30.0:
+                log("Temporizador ligado, mas nenhum timer individual esta ativo. Marque o quadrado On ao lado da mensagem.")
+                pump_chat_timers._last_empty_notice_at = now  # type: ignore[attr-defined]
             if not app_closing:
                 schedule_chat_timer_pump(3000)
             return
+
+        waiting_for_bridge = False
+        if bot_delivery_method_key() == BOT_DELIVERY_TIKFINITY_DIRECT:
+            bridge = bot_bridge_server
+            ready_clients = bridge.ready_client_count() if bridge is not None and bridge.is_running() else 0
+            if ready_clients <= 0:
+                waiting_for_bridge = True
+                bridge_url = bridge.url if bridge is not None else normalize_streamerbot_websocket_url(bot_streamerbot_ws_url_var.get())
+                timer_status_var.set("Aguardando TikFinity")
+                last_notice = float(getattr(pump_chat_timers, "_last_bridge_notice_at", 0.0))
+                if now - last_notice >= 15.0:
+                    log(
+                        f"Temporizador aguardando o TikFinity conectar na ponte {bridge_url}. "
+                        "Em Setup > Streamer.bot Connection, use exatamente este endereco."
+                    )
+                    pump_chat_timers._last_bridge_notice_at = now  # type: ignore[attr-defined]
 
         nearest_next_at: float | None = None
         queued = 0
         waiting_for_chat = False
         for row in active_rows:
             timer_id = str(row["id"])
-            interval = max(60, normalize_kill_value(row.get("interval")))
+            interval = max(BOT_MIN_TIMER_INTERVAL_SECONDS, normalize_kill_value(row.get("interval")))
             min_messages = max(0, normalize_kill_value(row.get("min_messages")))
             runtime = chat_timer_runtime.setdefault(
                 timer_id,
@@ -18217,8 +18293,15 @@ def run_gui(config_path: Path) -> int:
                     "last_chat_count": chat_timer_message_count,
                     "interval": interval,
                     "min_messages": min_messages,
+                    "announced": False,
                 },
             )
+            if not runtime.get("announced"):
+                runtime["announced"] = True
+                log(
+                    f"Temporizador programado: {row.get('name') or 'Timer'} em {interval}s "
+                    f"(minimo de {min_messages} mensagem(ns) novas)."
+                )
             if runtime.get("interval") != interval or runtime.get("min_messages") != min_messages:
                 runtime["interval"] = interval
                 runtime["min_messages"] = min_messages
@@ -18234,6 +18317,7 @@ def run_gui(config_path: Path) -> int:
                         str(row.get("message") or ""),
                     ):
                         queued += 1
+                        log(f"Temporizador disparado: {row.get('name') or 'Timer'}.")
                     runtime["last_chat_count"] = chat_timer_message_count
                     runtime["next_at"] = now + interval
                 else:
@@ -18247,6 +18331,8 @@ def run_gui(config_path: Path) -> int:
             timer_status_var.set("Mensagem na fila")
         elif waiting_for_chat:
             timer_status_var.set("Aguardando chat")
+        elif waiting_for_bridge:
+            timer_status_var.set("Aguardando TikFinity")
         else:
             timer_status_var.set("Rodando")
 
@@ -23773,6 +23859,8 @@ def run_gui(config_path: Path) -> int:
             if chat_tab_hidden:
                 stop_chat_listener(silent=True)
             return
+        if chat_timers_enabled_var.get():
+            enable_configured_chat_timers_if_none_active()
         ensure_chat_listener_for_bot()
         refresh_tikfinity_direct_bridge()
         if chat_commands_enabled_var.get() or chat_timers_enabled_var.get() or not bot_reply_queue.empty():
@@ -23785,6 +23873,8 @@ def run_gui(config_path: Path) -> int:
         chat_timer_runtime.clear()
         timer_next_send_var.set("-")
         timer_status_var.set("Reiniciado" if chat_timers_enabled_var.get() else "Desligado")
+        if chat_timers_enabled_var.get():
+            enable_configured_chat_timers_if_none_active()
         ensure_bot_runtime()
 
     def schedule_deferred_render_pump(delay_ms: int = 0) -> None:

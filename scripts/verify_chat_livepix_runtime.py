@@ -28,6 +28,7 @@ from freefire_kill_sender import (
     livepix_is_rate_limit_detail,
     livepix_should_announce_event_rule,
     parse_livepix_event,
+    parse_chat_timers_payload,
     normalize_chat_command,
     normalize_youtube_live_chat_url,
     TikfinityRaffleWorker,
@@ -200,6 +201,13 @@ def verify_timer_counting() -> None:
         not is_timer_countable_chat_message(chat_message("Jarvis", "qualquer coisa"), ignored_usernames=["jarvis"]),
         "usuario ignorado nao deve contar para timer",
     )
+
+
+def verify_timer_interval_floor() -> None:
+    timer = parse_chat_timers_payload(
+        [{"name": "Teste", "message": "Mensagem", "interval_seconds": 1, "min_chat_messages": 0}]
+    )[0]
+    check(timer.interval_seconds == app_runtime.BOT_MIN_TIMER_INTERVAL_SECONDS, "temporizador deve aceitar o minimo seguro de 15 segundos")
 
 
 def verify_cooldown_release() -> None:
@@ -491,6 +499,7 @@ def main() -> int:
     verify_raffle_accepts_tiktok_and_youtube()
     verify_live_chat_identity_keys()
     verify_timer_counting()
+    verify_timer_interval_floor()
     verify_cooldown_release()
     verify_tikfinity_chatbot_payload()
     verify_tikfinity_direct_bridge_socket_delivery()

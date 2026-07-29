@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.294",
-    "notes":  "Corrige o envio de Comandos e Temporizador pelo TikFinity: a ponte agora usa primeiro o evento oficial General.Custom do Streamer.bot, com pacote direto apenas como alternativa. As abas Comandos e Temporizador agora possuem rolagem vertical para telas e janelas menores.",
+    "version":  "2.6.295",
+    "notes":  "Adiciona barras horizontal e vertical nas abas Comandos e Temporizador. Corrige o temporizador: restaura automaticamente a ponte TikFinity para a porta padrao 8080 quando livre, aceita intervalos a partir de 15 segundos, informa no log o que esta bloqueando o envio e ativa os timers configurados quando o controle geral estiver ligado e nenhum timer individual estiver marcado.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.294/AizenStreamControl.exe",
-                    "sha256":  "005698e4b84bf7b6d8ea540abf0cd72b36e7b565e16317335d5186d2be34239f"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.295/AizenStreamControl.exe",
+                    "sha256":  "aa4ac7b23cf193a345d4de8829e4d6eeca1fbb2b9245f974ddd158f81744dc46"
                 }
 }
