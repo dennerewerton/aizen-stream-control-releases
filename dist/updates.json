@@ -1,8 +1,8 @@
 {
-    "version":  "2.6.296",
-    "notes":  "Corrige a tela do Temporizador e Comandos em janelas estreitas: os painéis agora usam rolagem horizontal e vertical no mesmo quadro, com a barra horizontal fixa e os campos Nome, Mensagem, Intervalo e Min. chat preservados em largura configurável.",
+    "version":  "2.6.297",
+    "notes":  "Corrige os campos da tabela de Temporizador e Comandos: Nome e Mensagem agora possuem largura minima garantida e cada tabela tem rolagem horizontal e vertical propria, com a barra horizontal logo abaixo das mensagens.",
     "windows":  {
-                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.296/AizenStreamControl.exe",
-                    "sha256":  "930db1c53dfa4532d0a39a75fac9d7f7a2f609cfb62352092a807c70b68fd681"
+                    "portable_url":  "https://github.com/dennerewerton/aizen-stream-control-releases/releases/download/v2.6.297/AizenStreamControl.exe",
+                    "sha256":  "73d49a993ae710a3745a348c0b819a25785cb78b0bb6f6c7c8972c22d4a8fd3d"
                 }
 }

@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.296"
+APP_VERSION = "2.6.297"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -9856,8 +9856,21 @@ def run_gui(config_path: Path) -> int:
     class DualAxisScrollableFrame(tk.Frame):
         """A scrollable CustomTkinter-compatible content frame with two visible axes."""
 
-        def __init__(self, master: Any, *, background: str, height: int = 200) -> None:
-            self._parent_frame = ctk.CTkFrame(master, fg_color=background, corner_radius=0)
+        def __init__(
+            self,
+            master: Any,
+            *,
+            background: str,
+            height: int = 200,
+            bordered: bool = False,
+        ) -> None:
+            self._parent_frame = ctk.CTkFrame(
+                master,
+                fg_color=background,
+                corner_radius=12 if bordered else 0,
+                border_width=1 if bordered else 0,
+                border_color=border if bordered else background,
+            )
             self._canvas = tk.Canvas(self._parent_frame, highlightthickness=0, bg=background)
             self._vertical_scrollbar = ctk.CTkScrollbar(
                 self._parent_frame,
@@ -11938,8 +11951,8 @@ def run_gui(config_path: Path) -> int:
     commands_card.rowconfigure(3, weight=1)
     commands_header = ctk.CTkFrame(commands_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
     commands_header.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 0))
-    commands_header.columnconfigure(1, weight=1)
-    commands_header.columnconfigure(2, weight=4)
+    commands_header.columnconfigure(1, weight=1, minsize=130)
+    commands_header.columnconfigure(2, weight=4, minsize=300)
     ctk.CTkLabel(commands_header, text="On", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
         row=0, column=0, sticky="w", padx=10, pady=9
     )
@@ -11952,14 +11965,11 @@ def run_gui(config_path: Path) -> int:
     ctk.CTkLabel(commands_header, text="Cooldown", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
         row=0, column=3, sticky="w", padx=10, pady=9
     )
-    commands_table_frame = ctk.CTkScrollableFrame(
+    commands_table_frame = DualAxisScrollableFrame(
         commands_card,
-        fg_color=field,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-        scrollbar_button_color=border,
-        scrollbar_button_hover_color=accent,
+        background=field,
+        height=330,
+        bordered=True,
     )
     commands_table_frame.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 12))
     commands_table_frame.columnconfigure(0, weight=1)
@@ -12059,8 +12069,8 @@ def run_gui(config_path: Path) -> int:
     timers_card.rowconfigure(3, weight=1)
     timers_header = ctk.CTkFrame(timers_card, fg_color=table_header_bg, corner_radius=10, border_width=1, border_color=border)
     timers_header.grid(row=2, column=0, sticky="ew", padx=18, pady=(4, 0))
-    timers_header.columnconfigure(1, weight=1)
-    timers_header.columnconfigure(2, weight=4)
+    timers_header.columnconfigure(1, weight=1, minsize=130)
+    timers_header.columnconfigure(2, weight=4, minsize=300)
     ctk.CTkLabel(timers_header, text="On", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
         row=0, column=0, sticky="w", padx=10, pady=9
     )
@@ -12076,14 +12086,11 @@ def run_gui(config_path: Path) -> int:
     ctk.CTkLabel(timers_header, text="Min. chat", text_color=muted, font=("Segoe UI Semibold", 11)).grid(
         row=0, column=4, sticky="w", padx=10, pady=9
     )
-    timers_table_frame = ctk.CTkScrollableFrame(
+    timers_table_frame = DualAxisScrollableFrame(
         timers_card,
-        fg_color=field,
-        corner_radius=12,
-        border_width=1,
-        border_color=border,
-        scrollbar_button_color=border,
-        scrollbar_button_hover_color=accent,
+        background=field,
+        height=330,
+        bordered=True,
     )
     timers_table_frame.grid(row=3, column=0, sticky="nsew", padx=18, pady=(0, 12))
     timers_table_frame.columnconfigure(0, weight=1)
@@ -17847,8 +17854,8 @@ def run_gui(config_path: Path) -> int:
         if cooldown is None:
             cooldown = bot_default_cooldown_seconds()
         frame = ctk.CTkFrame(commands_table_frame, fg_color="#101016", corner_radius=10)
-        frame.columnconfigure(1, weight=1)
-        frame.columnconfigure(2, weight=4)
+        frame.columnconfigure(1, weight=1, minsize=130)
+        frame.columnconfigure(2, weight=4, minsize=300)
         enabled_var = tk.BooleanVar(value=enabled)
         command_var = tk.StringVar(value=command)
         response_var = tk.StringVar(value=response)
@@ -17995,8 +18002,8 @@ def run_gui(config_path: Path) -> int:
         if min_messages is None:
             min_messages = bot_default_timer_min_messages()
         frame = ctk.CTkFrame(timers_table_frame, fg_color="#101016", corner_radius=10)
-        frame.columnconfigure(1, weight=1)
-        frame.columnconfigure(2, weight=4)
+        frame.columnconfigure(1, weight=1, minsize=130)
+        frame.columnconfigure(2, weight=4, minsize=300)
         enabled_var = tk.BooleanVar(value=enabled)
         name_var = tk.StringVar(value=name)
         message_var = tk.StringVar(value=message)
