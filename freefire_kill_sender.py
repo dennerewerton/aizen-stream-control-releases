@@ -80,7 +80,7 @@ APP_LOGO = ASSET_DIR / "assets" / "app_logo.png"
 APP_ICON = ASSET_DIR / "assets" / "app_icon.ico"
 APP_NAME = "Aizen Stream Control"
 APP_EXE_NAME = "AizenStreamControl.exe"
-APP_VERSION = "2.6.297"
+APP_VERSION = "2.6.298"
 CONFIG_BACKUP_KEEP = 20
 DEFAULT_UPDATES_MANIFEST_URL = (
     "https://github.com/dennerewerton/aizen-stream-control-releases/releases/latest/download/updates.json"
@@ -3164,22 +3164,10 @@ def tikfinity_chatbot_message_payload(args: dict[str, Any]) -> dict[str, Any]:
         " ",
         str(args.get("message") or args.get("text") or args.get("content") or args.get("chatMessage") or ""),
     ).strip()
-    username = str(args.get("username") or args.get("user") or "Aizen").strip() or "Aizen"
-    payload_args = dict(args)
-    payload_args.update(
-        {
-            "message": message,
-            "text": message,
-            "content": message,
-            "chatMessage": message,
-            "username": username,
-            "user": username,
-            "nick": username,
-            "source": APP_NAME,
-            "deliveryId": str(args.get("deliveryId") or ""),
-        }
-    )
-    return {"action": "sendChatbotMessage", "args": payload_args}
+    # This mirrors TikFinity's documented Streamer.bot action exactly.  The
+    # integration only requires the ``message`` argument; passing the app's
+    # queue metadata can make TikFinity reject the message without an error.
+    return {"action": "sendChatbotMessage", "args": {"message": message}}
 
 
 def streamerbot_custom_event_payload(data: dict[str, Any]) -> dict[str, Any]:
@@ -3196,12 +3184,12 @@ def tikfinity_direct_delivery_payload(args: dict[str, Any]) -> tuple[dict[str, A
         attempt = int(args.get("attempt") or 1)
     except (TypeError, ValueError):
         attempt = 1
-    # TikFinity listens to the General.Custom event emitted by
-    # CPH.WebsocketBroadcastJson. Sending the inner JSON raw is retained only
-    # as a compatibility fallback for older desktop builds.
+    # TikFinity documents CPH.WebsocketBroadcastJson with this exact JSON as
+    # its payload. Send that compact packet first, then retain the
+    # General.Custom envelope only for older TikFinity builds.
     if bool(args.get("retry")) and attempt >= 2:
-        return chatbot_payload, "pacote alternativo sendChatbotMessage direto"
-    return streamerbot_custom_event_payload(chatbot_payload), "evento oficial General.Custom sendChatbotMessage"
+        return streamerbot_custom_event_payload(chatbot_payload), "evento alternativo General.Custom sendChatbotMessage"
+    return chatbot_payload, "pacote oficial sendChatbotMessage direto"
 
 
 def send_tikfinity_direct_message(bridge_server: Any, args: dict[str, Any]) -> str:
@@ -18455,7 +18443,6 @@ def run_gui(config_path: Path) -> int:
             payload["attempt"] = attempt + 1
             payload["retry"] = True
             payload["deliveryId"] = f"bot-{uuid.uuid4().hex}"
-            stop_tikfinity_direct_bridge(silent=True)
             bot_next_allowed_at = 0.0
             if enqueue_bot_reply_payload(payload):
                 update_bot_queue_count()
@@ -18467,7 +18454,7 @@ def run_gui(config_path: Path) -> int:
                 return
             log(
                 f"TikFinity recebeu o pacote do bot, mas a mensagem nao apareceu no chat em {BOT_DELIVERY_CONFIRMATION_WAIT_MS // 1000}s; "
-                "reiniciando a ponte direta e reenviando uma vez no formato alternativo."
+                "reenviando uma vez no formato alternativo sem derrubar a ponte."
             )
             schedule_bot_send_pump(200)
             return

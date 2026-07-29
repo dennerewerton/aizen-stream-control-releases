@@ -253,9 +253,7 @@ def verify_tikfinity_chatbot_payload() -> None:
     check(set(payload) == {"action", "args"}, "payload direto deve ter somente action e args no topo")
     check(payload["action"] == "sendChatbotMessage", "action do TikFinity deve postar mensagem no chatbot")
     check(payload["args"]["message"] == "tudo bem e vc?", "mensagem deve ser normalizada em args.message")
-    check(payload["args"]["text"] == "tudo bem e vc?", "args.text deve acompanhar a mensagem")
-    check(payload["args"]["username"] == "AIZEN OFC", "username deve ser preservado")
-    check(payload["args"]["command"] == "!boa", "argumentos extras do comando devem continuar no pacote")
+    check(payload["args"] == {"message": "tudo bem e vc?"}, "pacote deve conter apenas o argumento oficial message")
     event_payload = streamerbot_custom_event_payload(payload)
     check(event_payload["event"] == {"source": "General", "type": "Custom"}, "ponte direta deve emitir General.Custom")
     check(
@@ -265,41 +263,39 @@ def verify_tikfinity_chatbot_payload() -> None:
     first_attempt_payload, first_attempt_label = tikfinity_direct_delivery_payload(
         {"message": "Boa tarde", "username": "Jarvis", "attempt": 1}
     )
-    check(first_attempt_label.startswith("evento oficial General.Custom"), "primeira tentativa deve usar o evento oficial do Streamer.bot")
-    check(first_attempt_payload.get("event") == {"source": "General", "type": "Custom"}, "primeira tentativa deve envelopar General.Custom")
+    check(first_attempt_label.startswith("pacote oficial sendChatbotMessage direto"), "primeira tentativa deve usar o pacote oficial direto")
     check(
-        json.loads(str(first_attempt_payload.get("data") or "{}"))
-        == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 1}),
-        "primeira tentativa deve carregar sendChatbotMessage no evento oficial",
+        first_attempt_payload == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 1}),
+        "primeira tentativa deve transmitir o pacote oficial direto",
     )
     retry_payload, retry_label = tikfinity_direct_delivery_payload(
         {"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True}
     )
-    check(retry_label.startswith("pacote alternativo"), "reenvio deve usar o pacote cru alternativo")
+    check(retry_label.startswith("evento alternativo General.Custom"), "reenvio deve usar General.Custom como compatibilidade")
     check(
-        retry_payload == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True}),
-        "reenvio deve transmitir sendChatbotMessage cru",
+        json.loads(str(retry_payload.get("data") or "{}"))
+        == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True}),
+        "reenvio deve transmitir sendChatbotMessage no evento alternativo",
     )
     bridge = Bridge()
     detail = send_tikfinity_direct_message(bridge, {"message": "Boa tarde", "username": "Jarvis"})
-    check(detail.startswith("TikFinity recebeu evento oficial General.Custom sendChatbotMessage"), "envio direto deve relatar evento oficial")
+    check(detail.startswith("TikFinity recebeu pacote oficial sendChatbotMessage direto"), "envio direto deve relatar pacote oficial")
     sent_payload = bridge.payloads[0] if bridge.payloads else {}
-    check(sent_payload.get("event") == {"source": "General", "type": "Custom"}, "envio direto deve transmitir General.Custom")
     check(
-        json.loads(str(sent_payload.get("data") or "{}"))
-        == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis"}),
-        "envio direto deve transmitir sendChatbotMessage no evento oficial",
+        sent_payload == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis"}),
+        "envio direto deve transmitir o pacote oficial direto",
     )
     retry_bridge = Bridge()
     retry_detail = send_tikfinity_direct_message(
         retry_bridge,
         {"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True},
     )
-    check(retry_detail.startswith("TikFinity recebeu pacote alternativo sendChatbotMessage direto"), "retry deve relatar fallback alternativo")
+    check(retry_detail.startswith("TikFinity recebeu evento alternativo General.Custom sendChatbotMessage"), "retry deve relatar fallback alternativo")
     retry_sent_payload = retry_bridge.payloads[0] if retry_bridge.payloads else {}
     check(
-        retry_sent_payload == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True}),
-        "retry deve transmitir o pacote cru alternativo",
+        json.loads(str(retry_sent_payload.get("data") or "{}"))
+        == tikfinity_chatbot_message_payload({"message": "Boa tarde", "username": "Jarvis", "attempt": 2, "retry": True}),
+        "retry deve transmitir o evento alternativo",
     )
 
     waiting_bridge = Bridge()
@@ -361,24 +357,24 @@ def verify_tikfinity_direct_bridge_socket_delivery() -> None:
         subscribe_response = read_json_frame_until(sock, lambda item: item.get("id") == subscribe_id)
         check(subscribe_response.get("status") == "ok", "ponte deve aceitar Subscribe do TikFinity")
         detail = send_tikfinity_direct_message(server, {"message": "Boa tarde", "username": "Jarvis"})
-        check("General.Custom" in detail, "envio direto deve relatar evento oficial")
-        official_event = read_json_frame_until(
+        check("pacote oficial" in detail, "envio direto deve relatar o pacote oficial")
+        direct_message = read_json_frame_until(sock, lambda item: item.get("action") == "sendChatbotMessage")
+        check(direct_message.get("args", {}).get("message") == "Boa tarde", "pacote real deve carregar a mensagem")
+        check(direct_message.get("args") == {"message": "Boa tarde"}, "pacote real deve usar somente o argumento oficial")
+        retry_detail = send_tikfinity_direct_message(
+            server,
+            {"message": "Boa noite", "username": "Jarvis", "attempt": 2, "retry": True},
+        )
+        check("General.Custom" in retry_detail, "retry real da ponte deve usar General.Custom como compatibilidade")
+        alternate_event = read_json_frame_until(
             sock,
             lambda item: isinstance(item.get("event"), dict)
             and item["event"].get("source") == "General"
             and item["event"].get("type") == "Custom",
         )
-        official_data = json.loads(str(official_event.get("data") or "{}"))
-        check(official_data.get("action") == "sendChatbotMessage", "evento real deve carregar sendChatbotMessage")
-        check(official_data.get("args", {}).get("message") == "Boa tarde", "evento real deve carregar a mensagem")
-        check(official_data.get("args", {}).get("username") == "Jarvis", "evento real deve carregar o usuario")
-        retry_detail = send_tikfinity_direct_message(
-            server,
-            {"message": "Boa noite", "username": "Jarvis", "attempt": 2, "retry": True},
-        )
-        check("pacote alternativo" in retry_detail, "retry real da ponte deve usar pacote cru alternativo")
-        direct_message = read_json_frame_until(sock, lambda item: item.get("action") == "sendChatbotMessage")
-        check(direct_message.get("args", {}).get("message") == "Boa noite", "retry real deve carregar a mensagem no pacote cru")
+        alternate_data = json.loads(str(alternate_event.get("data") or "{}"))
+        check(alternate_data.get("action") == "sendChatbotMessage", "evento alternativo deve carregar sendChatbotMessage")
+        check(alternate_data.get("args", {}).get("message") == "Boa noite", "evento alternativo deve carregar a mensagem")
     finally:
         if sock is not None:
             try:
